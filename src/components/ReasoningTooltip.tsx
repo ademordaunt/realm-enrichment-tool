@@ -26,7 +26,7 @@ export function ReasoningTooltip({ text }: { text: string }) {
       </button>
       {visible && (
         <div
-          className="absolute left-full top-1/2 z-50 ml-2 w-72 max-w-[min(90vw,20rem)] -translate-y-1/2 rounded-md border border-zinc-200 bg-white p-3 text-left text-xs leading-relaxed text-zinc-800 shadow-lg dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200"
+          className="absolute left-full top-1/2 z-50 ml-2 w-72 max-w-[min(90vw,var(--container-xs))] -translate-y-1/2 rounded-md border border-zinc-200 bg-white p-3 text-left text-xs leading-relaxed text-zinc-800 shadow-lg dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-200"
           role="tooltip"
         >
           {text}

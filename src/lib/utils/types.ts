@@ -70,16 +70,15 @@ export interface EnrichedContact {
   hubspotAction?: "create" | "update";
 }
 
-/** Event context (later phases) */
+/** Event context passed to AI enrichment (lead source is set at pre-push import). */
 export interface EventContext {
   eventName: string;
+  /** Month and year for prompts, e.g. "March 2026". */
   eventDate: string;
+  /** State / region (full name from state list, or National / International). */
   region: string;
-  industry: string;
   audienceLevel: string;
-  additionalNotes: string;
   listType: "companies" | "contacts";
-  leadSource: string;
 }
 
 /** One segment when a CSV contains multiple header blocks */

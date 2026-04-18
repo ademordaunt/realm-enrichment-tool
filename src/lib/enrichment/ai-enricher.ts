@@ -89,13 +89,7 @@ export async function runClaudeWithWebSearch(
 }
 
 export function buildCompanySystemPrompt(context: EventContext): string {
-  const notes = context.additionalNotes?.trim()
-    ? context.additionalNotes.trim()
-    : "(none)";
   return `You are a B2B data researcher specializing in identifying companies from partial or abbreviated names. You are working with a list from ${context.eventName}, a ${context.audienceLevel} event focused on cybersecurity, held in ${context.region} (${context.eventDate}).
-Primary industry context: ${context.industry?.trim() || "Not specified"}
-Lead source (HubSpot): ${context.leadSource}
-Additional notes: ${notes}
 
 For each company name provided, identify the most likely real company, return its official name, website domain, HQ state, approximate employee count, and LinkedIn company page URL.
 
@@ -116,16 +110,10 @@ export function buildCompanyUserPrompt(batch: RawCompanyRow[]): string {
 }
 
 export function buildContactSystemPrompt(context: EventContext): string {
-  const notes = context.additionalNotes?.trim()
-    ? context.additionalNotes.trim()
-    : "(none)";
   return `You are a B2B contact researcher. Given a person's name, title, and company, find their professional work email, company domain, and LinkedIn profile.
 
 Context — these contacts attended ${context.eventName}, a ${context.audienceLevel} cybersecurity event.
 Region: ${context.region}. Event date: ${context.eventDate}.
-Primary industry: ${context.industry?.trim() || "Not specified"}
-Lead source (HubSpot): ${context.leadSource}
-Additional notes: ${notes}
 
 For each contact:
 - If the email looks personal (gmail, yahoo, hotmail, icloud), find their likely work email based on company email patterns.
@@ -181,7 +169,6 @@ function mapCompanyAiToEnriched(
 function mapContactAiToEnriched(
   raw: Record<string, unknown>,
   row: RawContactRow,
-  context: EventContext,
 ): EnrichedContact {
   const confidenceScore = normalizeConfidence(raw.confidenceScore);
   const rawEmail = row.email?.trim() ?? "";
@@ -201,7 +188,7 @@ function mapContactAiToEnriched(
     linkedinUrl: String(raw.linkedinUrl ?? ""),
     companyDomain: String(raw.companyDomain ?? ""),
     location: row.location?.trim() ?? "",
-    leadSource: row.leadSource?.trim() || context.leadSource,
+    leadSource: row.leadSource?.trim() ?? "",
     leadSourceDescription: row.leadSourceDescription?.trim() ?? "",
     notes: row.notes?.trim() ?? "",
     enrichedByZoomInfo: false,
@@ -243,7 +230,7 @@ export async function enrichContactBatch(
   const parsed = parseJsonArray<Record<string, unknown>>(text);
   return batch.map((row, idx) => {
     const rec = parsed[idx] ?? {};
-    return mapContactAiToEnriched(rec, row, context);
+    return mapContactAiToEnriched(rec, row);
   });
 }
 

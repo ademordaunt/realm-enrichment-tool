@@ -2,6 +2,8 @@
 
 import { EventContextForm } from "@/components/EventContextForm";
 import { EnrichmentProgress } from "@/components/EnrichmentProgress";
+import type { PrePushSettings } from "@/components/PrePushScreen";
+import { PrePushScreen } from "@/components/PrePushScreen";
 import { applyInitialReviewStatus, ReviewTable } from "@/components/ReviewTable";
 import { SuccessScreen } from "@/components/SuccessScreen";
 import type { HubSpotPushDonePayload } from "@/lib/hubspot/push-result";
@@ -14,7 +16,7 @@ import type {
   RawCompanyRow,
   RawContactRow,
 } from "@/lib/utils/types";
-import { useCallback, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const ACCEPT = ".csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
 
@@ -24,8 +26,87 @@ type Step =
   | "enriching"
   | "verifying"
   | "enriched"
+  | "prepush"
   | "pushing"
   | "complete";
+
+const PREVIEW_PAGE_SIZE = 10;
+
+function rowDedupKey(row: RawCompanyRow | RawContactRow, kind: "companies" | "contacts"): string {
+  if (kind === "companies") {
+    return `c:${(row as RawCompanyRow).rawName?.trim().toLowerCase() ?? ""}`;
+  }
+  const c = row as RawContactRow;
+  const em = c.email?.trim().toLowerCase() ?? "";
+  if (em) return `e:${em}`;
+  return `n:${c.firstName?.trim() ?? ""}|${c.lastName?.trim() ?? ""}|${c.company?.trim() ?? ""}`;
+}
+
+function findFirstDuplicatePair(
+  rows: Array<RawCompanyRow | RawContactRow>,
+  kind: "companies" | "contacts",
+  exempt: Set<string>,
+): [number, number] | null {
+  const groups = new Map<string, number[]>();
+  for (let i = 0; i < rows.length; i++) {
+    const k = rowDedupKey(rows[i]!, kind);
+    const list = groups.get(k) ?? [];
+    list.push(i);
+    groups.set(k, list);
+  }
+  for (const indices of groups.values()) {
+    if (indices.length < 2) continue;
+    for (let u = 0; u < indices.length; u++) {
+      for (let v = u + 1; v < indices.length; v++) {
+        const a = indices[u]!;
+        const b = indices[v]!;
+        const sig = `${a}-${b}`;
+        if (!exempt.has(sig)) return [a, b];
+      }
+    }
+  }
+  return null;
+}
+
+function playEnrichmentChime() {
+  try {
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    const ctx = new Ctx();
+    const freqs = [523.25, 659.25, 783.99];
+    let t = 0;
+    for (const freq of freqs) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.value = 0.07;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      const start = ctx.currentTime + t;
+      osc.start(start);
+      osc.stop(start + 0.14);
+      t += 0.11;
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function fireEnrichmentCompleteNotification() {
+  if (typeof window === "undefined" || typeof Notification === "undefined") return;
+  if (Notification.permission === "granted") {
+    try {
+      new Notification("Realm Enrichment Tool", {
+        body: "Enrichment complete — ready for review!",
+        icon: "/favicon.ico",
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+  playEnrichmentChime();
+}
 
 function collectKeys(rows: Array<RawCompanyRow | RawContactRow>, maxScan: number): string[] {
   const keys = new Set<string>();
@@ -203,6 +284,15 @@ export default function Home() {
   );
   const [pushResult, setPushResult] = useState<HubSpotPushDonePayload | null>(null);
   const [pushError, setPushError] = useState<string | null>(null);
+  const [lastPushLeadSource, setLastPushLeadSource] = useState<string | null>(null);
+
+  const [previewRowsOverride, setPreviewRowsOverride] = useState<Array<RawCompanyRow | RawContactRow> | null>(
+    null,
+  );
+  const [duplicateExemptPairs, setDuplicateExemptPairs] = useState<Set<string>>(() => new Set());
+  const [previewPage, setPreviewPage] = useState(0);
+
+  const enrichAbortRef = useRef<AbortController | null>(null);
 
   const approvedRowsForPush = useMemo(
     () => reviewRows.filter((r) => r.status === "approved"),
@@ -254,6 +344,10 @@ export default function Home() {
         setEventContext(null);
         setPushResult(null);
         setPushError(null);
+        setLastPushLeadSource(null);
+        setPreviewRowsOverride(null);
+        setDuplicateExemptPairs(new Set());
+        setPreviewPage(0);
         if (json.listType !== "unknown") {
           setListOverride(null);
         }
@@ -308,14 +402,35 @@ export default function Home() {
     return result.rows;
   }, [result, segmentIndex]);
 
-  const displayTotal = displayRows.length;
+  const workingRows = previewRowsOverride ?? displayRows;
+  const effectiveRowCount = workingRows.length;
 
   const previewKeys = useMemo(
-    () => collectKeys(displayRows, 100),
-    [displayRows],
+    () => collectKeys(workingRows, 100),
+    [workingRows],
   );
 
-  const previewSample = useMemo(() => displayRows.slice(0, 25), [displayRows]);
+  const duplicatePair = useMemo((): [number, number] | null => {
+    if (!resolvedListType) return null;
+    return findFirstDuplicatePair(workingRows, resolvedListType, duplicateExemptPairs);
+  }, [workingRows, resolvedListType, duplicateExemptPairs]);
+
+  const previewTotalPages = Math.max(1, Math.ceil(workingRows.length / PREVIEW_PAGE_SIZE) || 1);
+  const previewPageClamped = Math.min(previewPage, previewTotalPages - 1);
+  const previewSlice = useMemo(() => {
+    const start = previewPageClamped * PREVIEW_PAGE_SIZE;
+    return workingRows.slice(start, start + PREVIEW_PAGE_SIZE);
+  }, [workingRows, previewPageClamped]);
+
+  useEffect(() => {
+    setPreviewPage((p) => Math.min(p, Math.max(0, previewTotalPages - 1)));
+  }, [previewTotalPages]);
+
+  useEffect(() => {
+    setPreviewRowsOverride(null);
+    setDuplicateExemptPairs(new Set());
+    setPreviewPage(0);
+  }, [result, segmentIndex]);
 
   const subtitle = useMemo(() => {
     switch (step) {
@@ -329,8 +444,10 @@ export default function Home() {
         return "Step 4 — ZoomInfo & Common Room";
       case "enriched":
         return "Step 5 — Review & approve";
+      case "prepush":
+        return "Step 6 — Ready to import";
       case "pushing":
-        return "Step 6 — Pushing to HubSpot";
+        return "Step 7 — Pushing to HubSpot";
       case "complete":
         return "Import complete";
       default:
@@ -341,6 +458,7 @@ export default function Home() {
   const runZoomVerify = async (
     aiRows: EnrichedCompany[] | EnrichedContact[],
     listType: "companies" | "contacts",
+    signal?: AbortSignal,
   ): Promise<EnrichedCompany[] | EnrichedContact[]> => {
     setStep("verifying");
     setProgress({
@@ -352,6 +470,7 @@ export default function Home() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rows: aiRows, listType }),
+      signal,
     });
     if (!res.ok) {
       const errBody = (await res.json().catch(() => ({}))) as { error?: string };
@@ -371,18 +490,24 @@ export default function Home() {
     if (!resolvedListType) return;
     setEventContext(context);
     setEnrichError(null);
+    if (typeof window !== "undefined" && "Notification" in window) {
+      void Notification.requestPermission();
+    }
+    const ac = new AbortController();
+    enrichAbortRef.current = ac;
     setStep("enriching");
     setProgress({
       startRow: 1,
-      endRow: Math.min(10, displayRows.length),
-      totalRows: displayRows.length,
+      endRow: Math.min(10, workingRows.length),
+      totalRows: workingRows.length,
     });
     try {
       const res = await fetch("/api/enrich/ai", {
         method: "POST",
+        signal: ac.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          rows: displayRows,
+          rows: workingRows,
           listType: resolvedListType,
           context,
         }),
@@ -407,8 +532,12 @@ export default function Home() {
 
       let finalRows: EnrichedCompany[] | EnrichedContact[] = aiRows;
       try {
-        finalRows = await runZoomVerify(aiRows, resolvedListType);
+        finalRows = await runZoomVerify(aiRows, resolvedListType, ac.signal);
       } catch (verifyErr) {
+        if (verifyErr instanceof Error && verifyErr.name === "AbortError") {
+          setStep("context");
+          return;
+        }
         setEnrichError(
           verifyErr instanceof Error ? verifyErr.message : "ZoomInfo / Common Room step failed.",
         );
@@ -418,10 +547,16 @@ export default function Home() {
       setEnriched(finalRows);
       setEnrichedListType(resolvedListType);
       setStep("enriched");
+      fireEnrichmentCompleteNotification();
     } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") {
+        setStep("context");
+        return;
+      }
       setEnrichError(e instanceof Error ? e.message : "Enrichment failed.");
       setStep("context");
     } finally {
+      enrichAbortRef.current = null;
       setProgress(null);
     }
   };
@@ -438,44 +573,57 @@ export default function Home() {
     setEventContext(null);
     setPushResult(null);
     setPushError(null);
+    setLastPushLeadSource(null);
     setEnrichError(null);
     setError(null);
     setProgress(null);
+    setPreviewRowsOverride(null);
+    setDuplicateExemptPairs(new Set());
+    setPreviewPage(0);
   }, []);
 
-  const runHubSpotPush = useCallback(async () => {
-    if (!enrichedListType || !eventContext) return;
-    const approved = reviewRows.filter((r) => r.status === "approved");
-    if (approved.length === 0) return;
-    setPushError(null);
-    setStep("pushing");
-    setPushProgress({ current: 0, total: approved.length });
-    try {
-      const res = await fetch("/api/hubspot/push", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rows: approved,
-          listType: enrichedListType,
-          eventName: eventContext.eventName,
-        }),
-      });
-      if (!res.ok) {
-        const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(errBody.error ?? `HubSpot push failed (${res.status})`);
+  const runHubSpotPush = useCallback(
+    async (settings: PrePushSettings) => {
+      if (!enrichedListType || !eventContext) return;
+      const approved = reviewRows.filter((r) => r.status === "approved");
+      if (approved.length === 0) return;
+      setPushError(null);
+      setLastPushLeadSource(settings.leadSource);
+      setStep("pushing");
+      setPushProgress({ current: 0, total: approved.length });
+      try {
+        const res = await fetch("/api/hubspot/push", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            rows: approved,
+            listType: enrichedListType,
+            eventName: eventContext.eventName,
+            listName: settings.listName,
+            folderId: settings.folderId,
+            leadSource: settings.leadSource,
+            leadSourceDescription: settings.leadSourceDescription,
+            notes: settings.notes,
+          }),
+        });
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(errBody.error ?? `HubSpot push failed (${res.status})`);
+        }
+        const done = await consumePushNdjson(res, (p) => {
+          setPushProgress({ current: p.current, total: p.total });
+        });
+        setPushResult(done);
+        setStep("complete");
+      } catch (e) {
+        setPushError(e instanceof Error ? e.message : "HubSpot push failed.");
+        setStep("prepush");
+      } finally {
+        setPushProgress(null);
       }
-      const done = await consumePushNdjson(res, (p) => {
-        setPushProgress({ current: p.current, total: p.total });
-      });
-      setPushResult(done);
-      setStep("complete");
-    } catch (e) {
-      setPushError(e instanceof Error ? e.message : "HubSpot push failed.");
-      setStep("enriched");
-    } finally {
-      setPushProgress(null);
-    }
-  }, [enrichedListType, eventContext, reviewRows]);
+    },
+    [enrichedListType, eventContext, reviewRows],
+  );
 
   return (
     <div className="flex min-h-full flex-1 flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
@@ -487,7 +635,7 @@ export default function Home() {
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
         {step === "upload" && (
           <section
-            className={`relative flex min-h-[220px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 transition-colors ${
+            className={`relative flex min-h-55 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 transition-colors ${
               busy
                 ? "border-zinc-200 bg-zinc-100/60 dark:border-zinc-700 dark:bg-zinc-900/40"
                 : "border-zinc-300 bg-white hover:border-zinc-400 hover:bg-zinc-50/80 dark:border-zinc-600 dark:bg-zinc-900/40 dark:hover:border-zinc-500"
@@ -524,7 +672,7 @@ export default function Home() {
             <span className="font-medium text-zinc-700 dark:text-zinc-300">{file.name}</span>
             <span className="text-zinc-500 dark:text-zinc-400">
               {" "}
-              — {displayTotal} rows — {resolvedListType ?? "unknown list type"}
+              — {effectiveRowCount} rows — {resolvedListType ?? "unknown list type"}
             </span>
             <button
               type="button"
@@ -537,6 +685,10 @@ export default function Home() {
                 setEventContext(null);
                 setPushResult(null);
                 setPushError(null);
+                setLastPushLeadSource(null);
+                setPreviewRowsOverride(null);
+                setDuplicateExemptPairs(new Set());
+                setPreviewPage(0);
               }}
             >
               Change file
@@ -568,7 +720,7 @@ export default function Home() {
               </div>
               <div className="text-right">
                 <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Rows parsed</p>
-                <p className="text-base font-semibold tabular-nums">{displayTotal}</p>
+                <p className="text-base font-semibold tabular-nums">{effectiveRowCount}</p>
               </div>
             </div>
 
@@ -643,23 +795,90 @@ export default function Home() {
               </div>
             )}
 
-            {result.warnings.length > 0 && (
-              <div className="flex flex-col gap-2">
-                {result.warnings.map((w) => (
-                  <div
-                    key={w}
-                    className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/80 dark:bg-amber-950/40 dark:text-amber-100"
-                    role="status"
+            {duplicatePair && resolvedListType ? (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-4 dark:border-amber-700/80 dark:bg-amber-950/40">
+                <p className="text-sm font-medium text-amber-950 dark:text-amber-100">
+                  Duplicate rows detected (rows {duplicatePair[0] + 1} and {duplicatePair[1] + 1}). Choose how
+                  to proceed.
+                </p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {[duplicatePair[0], duplicatePair[1]].map((idx) => (
+                    <div
+                      key={idx}
+                      className="overflow-x-auto rounded-lg border border-amber-200 bg-white dark:border-amber-800 dark:bg-zinc-900"
+                    >
+                      <table className="min-w-full text-left text-xs sm:text-sm">
+                        <thead className="bg-zinc-100 dark:bg-zinc-800/80">
+                          <tr>
+                            {previewKeys.map((k) => (
+                              <th
+                                key={k}
+                                className="border-b border-zinc-200 px-2 py-1.5 font-semibold dark:border-zinc-700"
+                              >
+                                {k}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            {previewKeys.map((k) => (
+                              <td
+                                key={k}
+                                className="border-b border-zinc-100 px-2 py-1.5 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200"
+                              >
+                                {(workingRows[idx] as Record<string, string | undefined>)[k] ?? ""}
+                              </td>
+                            ))}
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg bg-amber-800 px-3 py-2 text-sm font-medium text-white hover:bg-amber-900 dark:bg-amber-700 dark:hover:bg-amber-600"
+                    onClick={() => {
+                      const [a, b] = duplicatePair;
+                      const removeIdx = Math.max(a, b);
+                      setPreviewRowsOverride(workingRows.filter((_, i) => i !== removeIdx) as typeof workingRows);
+                    }}
                   >
-                    {w}
-                  </div>
-                ))}
+                    Remove Duplicate
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-zinc-200 px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+                    onClick={() => {
+                      const [a, b] = duplicatePair;
+                      setDuplicateExemptPairs((prev) => new Set(prev).add(`${a}-${b}`));
+                    }}
+                  >
+                    Keep Both
+                  </button>
+                </div>
               </div>
+            ) : (
+              result.warnings.length > 0 && (
+                <div className="flex flex-col gap-2">
+                  {result.warnings.map((w) => (
+                    <div
+                      key={w}
+                      className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/80 dark:bg-amber-950/40 dark:text-amber-100"
+                      role="status"
+                    >
+                      {w}
+                    </div>
+                  ))}
+                </div>
+              )
             )}
 
             <div>
               <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
-                Raw preview (first {previewSample.length} of {displayTotal} rows)
+                Raw preview (page {previewPageClamped + 1} of {previewTotalPages})
               </h2>
               <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
                 Showing effective list type:{" "}
@@ -682,9 +901,9 @@ export default function Home() {
                     </tr>
                   </thead>
                   <tbody>
-                    {previewSample.map((row, ri) => (
+                    {previewSlice.map((row, ri) => (
                       <tr
-                        key={ri}
+                        key={`${previewPageClamped}-${ri}`}
                         className={
                           ri % 2 === 0 ? "bg-white dark:bg-zinc-900" : "bg-zinc-50/80 dark:bg-zinc-900/60"
                         }
@@ -702,12 +921,33 @@ export default function Home() {
                   </tbody>
                 </table>
               </div>
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-sm text-zinc-600 dark:text-zinc-400">
+                <button
+                  type="button"
+                  className="rounded-lg border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-100 disabled:opacity-40 dark:border-zinc-600 dark:hover:bg-zinc-800"
+                  disabled={previewPageClamped <= 0}
+                  onClick={() => setPreviewPage((p) => Math.max(0, p - 1))}
+                >
+                  ← Previous
+                </button>
+                <span className="tabular-nums">
+                  Page {previewPageClamped + 1} of {previewTotalPages}
+                </span>
+                <button
+                  type="button"
+                  className="rounded-lg border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-100 disabled:opacity-40 dark:border-zinc-600 dark:hover:bg-zinc-800"
+                  disabled={previewPageClamped >= previewTotalPages - 1}
+                  onClick={() => setPreviewPage((p) => Math.min(previewTotalPages - 1, p + 1))}
+                >
+                  Next →
+                </button>
+              </div>
             </div>
 
             <div className="flex justify-end border-t border-zinc-100 pt-4 dark:border-zinc-800">
               <button
                 type="button"
-                disabled={!resolvedListType || displayTotal === 0}
+                disabled={!resolvedListType || effectiveRowCount === 0 || duplicatePair !== null}
                 onClick={() => setStep("context")}
                 className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -729,17 +969,28 @@ export default function Home() {
             )}
             <EventContextForm
               listType={resolvedListType}
+              initialValues={eventContext}
+              onBackToUpload={startNewImport}
               onSubmit={(ctx) => void runEnrichment(ctx)}
             />
           </>
         )}
 
         {step === "enriching" && progress && (
-          <EnrichmentProgress
-            startRow={progress.startRow}
-            endRow={progress.endRow}
-            totalRows={progress.totalRows}
-          />
+          <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <EnrichmentProgress
+              startRow={progress.startRow}
+              endRow={progress.endRow}
+              totalRows={progress.totalRows}
+            />
+            <button
+              type="button"
+              className="self-start rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              onClick={() => enrichAbortRef.current?.abort()}
+            >
+              Cancel
+            </button>
+          </div>
         )}
 
         {step === "verifying" && (
@@ -763,10 +1014,6 @@ export default function Home() {
               Pushing record {pushProgress.current} of {pushProgress.total} to HubSpot…
             </p>
           </div>
-        )}
-
-        {step === "complete" && pushResult && (
-          <SuccessScreen result={pushResult} onStartNew={startNewImport} />
         )}
 
         {step === "enriched" && enriched && enrichedListType && (
@@ -800,16 +1047,43 @@ export default function Home() {
                 rows={reviewRows}
                 listType={enrichedListType}
                 onRowsChange={setReviewRows}
+                onApprove={() => {
+                  setPushError(null);
+                  setStep("prepush");
+                }}
               />
             </div>
           </section>
+        )}
+
+        {step === "prepush" &&
+          enriched &&
+          enrichedListType &&
+          eventContext &&
+          approvedRowsForPush.length > 0 && (
+          <PrePushScreen
+            listType={enrichedListType}
+            approvedRows={approvedRowsForPush}
+            defaultListName={eventContext.eventName}
+            defaultLeadSourceDescription={eventContext.eventName}
+            onBack={() => setStep("enriched")}
+            onPush={(settings) => void runHubSpotPush(settings)}
+          />
+        )}
+
+        {step === "complete" && pushResult && (
+          <SuccessScreen
+            result={pushResult}
+            leadSourceUsed={lastPushLeadSource ?? undefined}
+            onStartNew={startNewImport}
+          />
         )}
       </main>
 
       {step === "enriched" && enriched && enrichedListType && (
         <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center border-t border-zinc-200 bg-zinc-50/95 px-4 py-3 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/95">
           <div className="pointer-events-auto flex w-full max-w-6xl flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-h-[1.25rem] text-xs text-amber-800 dark:text-amber-200">
+            <div className="min-h-5 text-xs text-amber-800 dark:text-amber-200">
               {unresolvedApprovedCount > 0 ? (
                 <span>
                   ⚠️ {unresolvedApprovedCount} unresolved record
@@ -817,19 +1091,6 @@ export default function Home() {
                 </span>
               ) : null}
             </div>
-            <button
-              type="button"
-              disabled={approvedRowsForPush.length === 0 || !eventContext}
-              onClick={() => void runHubSpotPush()}
-              className={`rounded-lg px-4 py-2 text-sm font-semibold ${
-                approvedRowsForPush.length > 0 && eventContext
-                  ? "bg-blue-600 text-white hover:bg-blue-700"
-                  : "cursor-not-allowed bg-zinc-300 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"
-              }`}
-            >
-              Push {approvedRowsForPush.length}{" "}
-              {enrichedListType === "companies" ? "companies" : "contacts"} to HubSpot →
-            </button>
           </div>
         </div>
       )}

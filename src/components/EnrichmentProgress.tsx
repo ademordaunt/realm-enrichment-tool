@@ -24,7 +24,7 @@ export function EnrichmentProgress({
         aria-hidden
       >
         <div
-          className="h-full rounded-full bg-blue-600 transition-[width] duration-300 ease-out"
+          className="h-full rounded-full bg-blue-600 transition-[inline-size] duration-300 ease-out"
           style={{ width: `${pct}%` }}
         />
       </div>

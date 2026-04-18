@@ -6,9 +6,11 @@ import { useState } from "react";
 export interface SuccessScreenProps {
   result: HubSpotPushDonePayload;
   onStartNew: () => void;
+  /** Lead source selected on the pre-push screen. */
+  leadSourceUsed?: string;
 }
 
-export function SuccessScreen({ result, onStartNew }: SuccessScreenProps) {
+export function SuccessScreen({ result, onStartNew, leadSourceUsed }: SuccessScreenProps) {
   const [showErrors, setShowErrors] = useState(false);
   const portalId = process.env.NEXT_PUBLIC_HUBSPOT_PORTAL_ID?.trim() ?? "";
   const listUrl =
@@ -28,6 +30,12 @@ export function SuccessScreen({ result, onStartNew }: SuccessScreenProps) {
         {result.totalPushed} records pushed — {result.created} created, {result.updated} updated
       </p>
 
+      {leadSourceUsed ? (
+        <p className="text-sm text-zinc-700 dark:text-zinc-300">
+          Lead Source: {leadSourceUsed}
+        </p>
+      ) : null}
+
       {failed > 0 ? (
         <div className="flex flex-col gap-2">
           <button
@@ -42,7 +50,7 @@ export function SuccessScreen({ result, onStartNew }: SuccessScreenProps) {
           {showErrors ? (
             <ul className="max-h-48 list-inside list-disc overflow-y-auto rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
               {result.errors.map((e) => (
-                <li key={e.rowId} className="break-words py-0.5">
+                <li key={e.rowId} className="wrap-break-word py-0.5">
                   <span className="font-mono">{e.rowId}</span>: {e.error}
                 </li>
               ))}
@@ -52,7 +60,7 @@ export function SuccessScreen({ result, onStartNew }: SuccessScreenProps) {
       ) : null}
 
       <p className="text-sm text-zinc-800 dark:text-zinc-200">
-        📋 HubSpot List Created:{" "}
+        📋 HubSpot Segment Created:{" "}
         {listUrl ? (
           <a
             href={listUrl}

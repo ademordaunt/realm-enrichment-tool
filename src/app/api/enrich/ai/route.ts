@@ -55,20 +55,11 @@ export async function POST(request: Request) {
     eventName: String(context.eventName ?? "").trim(),
     eventDate: String(context.eventDate ?? "").trim(),
     region: String(context.region ?? "").trim(),
-    industry: String(context.industry ?? "").trim(),
     audienceLevel: String(context.audienceLevel ?? "").trim(),
-    additionalNotes: String(context.additionalNotes ?? "").trim(),
     listType: listType === "companies" ? "companies" : "contacts",
-    leadSource: String(context.leadSource ?? "").trim(),
   };
 
-  const required: (keyof EventContext)[] = [
-    "eventName",
-    "eventDate",
-    "region",
-    "audienceLevel",
-    "leadSource",
-  ];
+  const required: (keyof EventContext)[] = ["eventName", "eventDate", "region", "audienceLevel"];
   const missing = required.filter((k) => !String(ctx[k] ?? "").trim());
   if (missing.length > 0) {
     return Response.json(

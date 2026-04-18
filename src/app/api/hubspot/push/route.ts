@@ -1,3 +1,4 @@
+import type { HubSpotCompanyPushExtras } from "@/lib/hubspot/companies";
 import {
   createCompany,
   findExistingCompany,
@@ -8,8 +9,8 @@ import {
   findExistingContact,
   updateContact,
 } from "@/lib/hubspot/contacts";
-import { getHubSpotAccessToken } from "@/lib/hubspot/http";
-import { addRecordsToList, createStaticList } from "@/lib/hubspot/lists";
+import { getHubSpotAccessToken, hubspotFetch, readHubSpotError } from "@/lib/hubspot/http";
+import { addRecordsToList } from "@/lib/hubspot/lists";
 import type { HubSpotPushDonePayload } from "@/lib/hubspot/push-result";
 import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
 
@@ -22,6 +23,43 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 type NdjsonProgress = { type: "progress"; current: number; total: number };
 type NdjsonDone = { type: "done" } & HubSpotPushDonePayload;
 type NdjsonError = { type: "error"; message: string };
+
+async function createStaticListForPush(
+  name: string,
+  objectTypeId: string,
+  folderId?: string,
+): Promise<string> {
+  const payload: Record<string, unknown> = {
+    name,
+    objectTypeId,
+    processingType: "MANUAL",
+  };
+  if (folderId?.trim()) {
+    const raw = folderId.trim();
+    const n = Number(raw);
+    payload.folderId = Number.isFinite(n) && String(n) === raw ? n : raw;
+  }
+
+  const res = await hubspotFetch("/crm/v3/lists", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    throw new Error(await readHubSpotError(res));
+  }
+
+  const json = (await res.json()) as {
+    list?: { listId?: string; id?: string };
+    listId?: string;
+    id?: string;
+  };
+  const listId = json.list?.listId ?? json.list?.id ?? json.listId ?? json.id;
+  if (!listId) {
+    throw new Error("HubSpot did not return listId when creating a list.");
+  }
+  return String(listId);
+}
 
 export async function POST(request: Request) {
   try {
@@ -44,7 +82,16 @@ export async function POST(request: Request) {
     return Response.json({ error: "Expected a JSON object." }, { status: 400 });
   }
 
-  const { rows, listType, eventName } = body;
+  const {
+    rows,
+    listType,
+    eventName,
+    listName: listNameRaw,
+    folderId: folderIdRaw,
+    leadSource: leadSourceRaw,
+    leadSourceDescription: leadSourceDescriptionRaw,
+    notes: notesRaw,
+  } = body;
 
   if (!Array.isArray(rows)) {
     return Response.json({ error: "Expected `rows` array." }, { status: 400 });
@@ -57,10 +104,32 @@ export async function POST(request: Request) {
     );
   }
 
-  const name = String(eventName ?? "").trim();
-  if (!name) {
-    return Response.json({ error: "Expected non-empty `eventName`." }, { status: 400 });
+  const listName =
+    String(listNameRaw ?? "").trim() || String(eventName ?? "").trim();
+  if (!listName) {
+    return Response.json(
+      { error: "Expected non-empty `listName` or `eventName`." },
+      { status: 400 },
+    );
   }
+
+  const folderId =
+    folderIdRaw != null && String(folderIdRaw).trim() !== ""
+      ? String(folderIdRaw).trim()
+      : undefined;
+
+  const leadSource = String(leadSourceRaw ?? "").trim();
+  const leadSourceDescription = String(leadSourceDescriptionRaw ?? "").trim();
+  const notes = String(notesRaw ?? "").trim();
+
+  const pushExtras: HubSpotCompanyPushExtras | undefined =
+    leadSource || leadSourceDescription || notes
+      ? {
+          leadSource: leadSource || undefined,
+          leadSourceDescription: leadSourceDescription || undefined,
+          notes: notes || undefined,
+        }
+      : undefined;
 
   const approved = rows.filter((r) => isRecord(r) && r.status === "approved") as Array<
     EnrichedCompany | EnrichedContact
@@ -90,10 +159,10 @@ export async function POST(request: Request) {
               const existing = await findExistingCompany(c.domain);
               let id: string;
               if (existing) {
-                id = await updateCompany(existing, c);
+                id = await updateCompany(existing, c, pushExtras);
                 updated++;
               } else {
-                id = await createCompany(c);
+                id = await createCompany(c, pushExtras);
                 created++;
               }
               recordIds.push(id);
@@ -102,10 +171,10 @@ export async function POST(request: Request) {
               const existing = await findExistingContact(c.resolvedEmail);
               let id: string;
               if (existing) {
-                id = await updateContact(existing, c);
+                id = await updateContact(existing, c, pushExtras);
                 updated++;
               } else {
-                id = await createContact(c);
+                id = await createContact(c, pushExtras);
                 created++;
               }
               recordIds.push(id);
@@ -120,7 +189,7 @@ export async function POST(request: Request) {
         }
 
         const objectTypeId = listType === "companies" ? "0-2" : "0-1";
-        const listId = await createStaticList(name, objectTypeId);
+        const listId = await createStaticListForPush(listName, objectTypeId, folderId);
         await addRecordsToList(listId, recordIds);
 
         const totalPushed = created + updated;
@@ -131,7 +200,7 @@ export async function POST(request: Request) {
           updated,
           errors,
           listId,
-          listName: name,
+          listName,
           totalPushed,
         };
         write(done);
