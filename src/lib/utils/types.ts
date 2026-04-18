@@ -90,6 +90,12 @@ export interface ParseMultiEventSegment {
   rows: Array<RawCompanyRow | RawContactRow>;
 }
 
+/** JSON body from GET /api/hubspot/folders */
+export interface HubSpotFoldersApiResponse {
+  folders?: Array<{ id: string; name: string }>;
+  error?: string;
+}
+
 /** Successful parse response from POST /api/parse */
 export interface ParseResponse {
   listType: ListType;

@@ -11,12 +11,6 @@ export async function getZoomInfoToken(): Promise<string> {
     return cachedJwt;
   }
 
-  console.log("[ZoomInfo auth] env check:", {
-    hasUsername: !!process.env.ZOOMINFO_USERNAME,
-    hasPassword: !!process.env.ZOOMINFO_PASSWORD,
-    hasClientId: !!process.env.ZOOMINFO_CLIENT_ID,
-  });
-
   // ZOOMINFO_PASSWORD is the user's actual ZoomInfo web account login password (not the API client secret).
   const body = {
     username: process.env.ZOOMINFO_USERNAME,

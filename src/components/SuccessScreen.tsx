@@ -3,6 +3,12 @@
 import type { HubSpotPushDonePayload } from "@/lib/hubspot/push-result";
 import { useState } from "react";
 
+const STAT_CARD =
+  "flex flex-col gap-1 rounded-xl border border-zinc-200 bg-zinc-50 p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/40";
+
+const PRIMARY_ACTION =
+  "rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-(--realm-purple-hover)";
+
 export interface SuccessScreenProps {
   result: HubSpotPushDonePayload;
   onStartNew: () => void;
@@ -26,13 +32,41 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed }: SuccessScr
         ✅ Import Complete
       </h2>
 
-      <p className="text-sm text-zinc-700 dark:text-zinc-300">
-        {result.totalPushed} records pushed — {result.created} created, {result.updated} updated
-      </p>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className={STAT_CARD}>
+          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Created
+          </span>
+          <span className="text-3xl font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
+            {result.created}
+          </span>
+        </div>
+        <div className={STAT_CARD}>
+          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Updated
+          </span>
+          <span className="text-3xl font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
+            {result.updated}
+          </span>
+        </div>
+        <div className={STAT_CARD}>
+          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+            Errors
+          </span>
+          <span
+            className={`text-3xl font-bold tabular-nums ${
+              failed > 0 ? "text-amber-800 dark:text-amber-200" : "text-zinc-900 dark:text-zinc-50"
+            }`}
+          >
+            {failed}
+          </span>
+        </div>
+      </div>
 
       {leadSourceUsed ? (
         <p className="text-sm text-zinc-700 dark:text-zinc-300">
-          Lead Source: {leadSourceUsed}
+          <span className="font-medium text-zinc-900 dark:text-zinc-100">Lead Source: </span>
+          {leadSourceUsed}
         </p>
       ) : null}
 
@@ -60,7 +94,7 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed }: SuccessScr
       ) : null}
 
       <p className="text-sm text-zinc-800 dark:text-zinc-200">
-        📋 HubSpot Segment Created:{" "}
+        HubSpot Segment Created:{" "}
         {listUrl ? (
           <a
             href={listUrl}
@@ -81,11 +115,7 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed }: SuccessScr
       </p>
 
       <div>
-        <button
-          type="button"
-          onClick={onStartNew}
-          className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white"
-        >
+        <button type="button" onClick={onStartNew} className={PRIMARY_ACTION}>
           Start New Import
         </button>
       </div>

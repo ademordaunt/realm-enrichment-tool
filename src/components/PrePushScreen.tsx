@@ -1,8 +1,23 @@
 "use client";
 
 import { ConfidenceBadge } from "@/components/ConfidenceBadge";
-import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
+import type {
+  EnrichedCompany,
+  EnrichedContact,
+  HubSpotFoldersApiResponse,
+} from "@/lib/utils/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
+
+const CARD_PANEL =
+  "rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900";
+
+const FIELD_CONTROL =
+  "rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
+
+const TABLE_HEAD_CELL =
+  "border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700";
+
+const TABLE_ROW = "border-b border-zinc-100 dark:border-zinc-800";
 
 export const LEAD_SOURCE_OPTIONS = [
   "Marketing - Advertisement",
@@ -69,7 +84,7 @@ export function PrePushScreen({
     setFoldersError(false);
     void fetch("/api/hubspot/folders")
       .then(async (res) => {
-        const data = (await res.json()) as { folders?: { id: string; name: string }[]; error?: string };
+        const data = (await res.json()) as HubSpotFoldersApiResponse;
         if (!res.ok) throw new Error(data.error ?? "Failed to load folders");
         if (!cancelled) setFolders(data.folders ?? []);
       })
@@ -86,8 +101,6 @@ export function PrePushScreen({
       cancelled = true;
     };
   }, []);
-
-  const folderValue = foldersError ? folderManual : folderId;
 
   const canPush = useMemo(() => {
     const nameOk = listName.trim().length > 0;
@@ -109,7 +122,7 @@ export function PrePushScreen({
   }, [canPush, listName, folderId, folderManual, foldersError, leadSource, leadSourceDescription, notes, onPush]);
 
   return (
-    <section className="flex flex-col gap-6 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+    <section className="flex flex-col gap-6">
       <div>
         <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">Ready to Import</h2>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
@@ -117,64 +130,59 @@ export function PrePushScreen({
         </p>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-        <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
-          <thead className="bg-zinc-100 dark:bg-zinc-800/80">
-            <tr>
-              <th className="border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700">
-                Name
-              </th>
-              <th className="border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700">
-                Domain
-              </th>
-              <th className="border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700">
-                Confidence
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {listType === "companies"
-              ? (approvedRows as EnrichedCompany[]).map((row) => (
-                  <tr
-                    key={row.id}
-                    className="border-b border-zinc-100 dark:border-zinc-800"
-                  >
-                    <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.resolvedName}</td>
-                    <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                      {row.domain}
-                    </td>
-                    <td className="px-3 py-2">
-                      <ConfidenceBadge score={row.confidenceScore} />
-                    </td>
-                  </tr>
-                ))
-              : (approvedRows as EnrichedContact[]).map((row) => (
-                  <tr
-                    key={row.id}
-                    className="border-b border-zinc-100 dark:border-zinc-800"
-                  >
-                    <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                      {[row.firstName, row.lastName].filter(Boolean).join(" ")}
-                    </td>
-                    <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                      {row.companyDomain || row.resolvedCompany}
-                    </td>
-                    <td className="px-3 py-2">
-                      <ConfidenceBadge score={row.confidenceScore} />
-                    </td>
-                  </tr>
-                ))}
-          </tbody>
-        </table>
+      <div className={CARD_PANEL}>
+        <h3 className="mb-3 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Summary</h3>
+        <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+          <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
+            <thead className="bg-zinc-100 dark:bg-zinc-800/80">
+              <tr>
+                <th className={TABLE_HEAD_CELL}>Name</th>
+                <th className={TABLE_HEAD_CELL}>Domain</th>
+                <th className={TABLE_HEAD_CELL}>Confidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              {listType === "companies"
+                ? (approvedRows as EnrichedCompany[]).map((row) => (
+                    <tr key={row.id} className={TABLE_ROW}>
+                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.resolvedName}</td>
+                      <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        {row.domain}
+                      </td>
+                      <td className="px-3 py-2">
+                        <ConfidenceBadge score={row.confidenceScore} />
+                      </td>
+                    </tr>
+                  ))
+                : (approvedRows as EnrichedContact[]).map((row) => (
+                    <tr key={row.id} className={TABLE_ROW}>
+                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        {[row.firstName, row.lastName].filter(Boolean).join(" ")}
+                      </td>
+                      <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        {row.companyDomain || row.resolvedCompany}
+                      </td>
+                      <td className="px-3 py-2">
+                        <ConfidenceBadge score={row.confidenceScore} />
+                      </td>
+                    </tr>
+                  ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className={`${CARD_PANEL} grid gap-4 sm:grid-cols-2`}>
+        <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 sm:col-span-2">
+          Import Settings
+        </h3>
+
         <label className="flex flex-col gap-1 text-sm sm:col-span-2">
           <span className="font-medium text-zinc-800 dark:text-zinc-200">
-            List/Segment Name <span className="text-red-600">*</span>
+            List Name <span className="text-red-600">*</span>
           </span>
           <input
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+            className={FIELD_CONTROL}
             value={listName}
             onChange={(e) => setListName(e.target.value)}
           />
@@ -182,7 +190,7 @@ export function PrePushScreen({
 
         <label className="flex flex-col gap-1 text-sm sm:col-span-2">
           <span className="font-medium text-zinc-800 dark:text-zinc-200">
-            List/Segment Folder <span className="text-red-600">*</span>
+            HubSpot Folder <span className="text-red-600">*</span>
           </span>
           {foldersLoading ? (
             <span className="text-sm text-zinc-500">Loading folders…</span>
@@ -192,7 +200,7 @@ export function PrePushScreen({
                 Could not load folders — enter manually
               </p>
               <input
-                className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+                className={FIELD_CONTROL}
                 value={folderManual}
                 onChange={(e) => setFolderManual(e.target.value)}
                 placeholder="Folder ID or name per HubSpot"
@@ -200,7 +208,7 @@ export function PrePushScreen({
             </div>
           ) : (
             <select
-              className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+              className={FIELD_CONTROL}
               value={folderId}
               onChange={(e) => setFolderId(e.target.value)}
               required
@@ -220,7 +228,7 @@ export function PrePushScreen({
             Lead Source <span className="text-red-600">*</span>
           </span>
           <select
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+            className={FIELD_CONTROL}
             value={leadSource}
             onChange={(e) => setLeadSource(e.target.value)}
             required
@@ -239,7 +247,7 @@ export function PrePushScreen({
             Lead Source Description <span className="text-red-600">*</span>
           </span>
           <input
-            className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+            className={FIELD_CONTROL}
             value={leadSourceDescription}
             onChange={(e) => setLeadSourceDescription(e.target.value)}
           />
@@ -249,33 +257,39 @@ export function PrePushScreen({
           <span className="font-medium text-zinc-800 dark:text-zinc-200">Notes</span>
           <textarea
             rows={3}
-            className="resize-y rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100"
+            className={`resize-y ${FIELD_CONTROL}`}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
         </label>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
-        <button
-          type="button"
-          onClick={onBack}
-          className="rounded-lg bg-zinc-200 px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
-        >
-          ← Back to Review
-        </button>
-        <button
-          type="button"
-          disabled={!canPush}
-          onClick={handlePush}
-          className={`rounded-lg px-4 py-2 text-sm font-semibold ${
-            canPush
-              ? "bg-blue-600 text-white hover:bg-blue-700"
-              : "cursor-not-allowed bg-zinc-300 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"
-          }`}
-        >
-          Push to HubSpot →
-        </button>
+      <div className="flex flex-col gap-4 border-t border-zinc-100 pt-4 dark:border-zinc-800">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={onBack}
+            className="rounded-lg bg-zinc-200 px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+          >
+            ← Back to Review
+          </button>
+          <button
+            type="button"
+            disabled={!canPush}
+            onClick={handlePush}
+            className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+              canPush
+                ? "bg-blue-600 text-white hover:bg-blue-700"
+                : "cursor-not-allowed bg-zinc-300 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"
+            }`}
+          >
+            Push to HubSpot →
+          </button>
+        </div>
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          💡 After pushing, open the HubSpot list and click &quot;Enrich&quot; to run HubSpot&apos;s native data
+          enrichment.
+        </p>
       </div>
     </section>
   );

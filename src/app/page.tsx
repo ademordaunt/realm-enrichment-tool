@@ -287,16 +287,6 @@ async function consumePushNdjson(
   return result;
 }
 
-function companyRowsMissingCoreFields(rows: EnrichedCompany[]): boolean {
-  return rows.some(
-    (row) =>
-      !("domain" in row) ||
-      !("state" in row) ||
-      !("numberOfEmployees" in row) ||
-      !("linkedinUrl" in row),
-  );
-}
-
 export default function Home() {
   const [step, setStep] = useState<Step>("upload");
   const [file, setFile] = useState<File | null>(null);
@@ -531,7 +521,7 @@ export default function Home() {
         const errBody = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(errBody.error ?? `Enrichment failed (${res.status})`);
       }
-      const { rows: aiRows, rawNdjson } = await consumeEnrichmentNdjson(res, (p) => {
+      const { rows: aiRows } = await consumeEnrichmentNdjson(res, (p) => {
         setProgress({
           startRow: p.start,
           endRow: p.end,
@@ -539,12 +529,6 @@ export default function Home() {
           detail: p.detail ?? null,
         });
       });
-      if (resolvedListType === "companies") {
-        const companyRows = aiRows as EnrichedCompany[];
-        if (companyRowsMissingCoreFields(companyRows)) {
-          console.log("[enrich/ai] full raw NDJSON response (missing domain/state/numberOfEmployees/linkedinUrl on some rows):", rawNdjson);
-        }
-      }
 
       let finalRows: EnrichedCompany[] | EnrichedContact[] = aiRows;
       try {

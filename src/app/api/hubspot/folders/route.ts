@@ -1,6 +1,7 @@
-import { getHubSpotAccessToken, hubspotFetch, readHubSpotError } from "@/lib/hubspot/http";
+import { fetchHubSpotListFolders } from "@/lib/hubspot/list-folders";
+import { getHubSpotAccessToken } from "@/lib/hubspot/http";
 
-export async function GET() {
+export async function GET(): Promise<Response> {
   try {
     getHubSpotAccessToken();
   } catch {
@@ -10,37 +11,10 @@ export async function GET() {
     );
   }
 
-  const res = await hubspotFetch("/contacts/v1/lists/folders");
-
-  if (!res.ok) {
-    const message = await readHubSpotError(res);
-    return Response.json({ error: message, folders: [] }, { status: res.status });
+  const result = await fetchHubSpotListFolders();
+  if (!result.ok) {
+    return Response.json({ error: result.message, folders: [] }, { status: result.status });
   }
 
-  const json = (await res.json()) as unknown;
-  const folders: { id: string; name: string }[] = [];
-
-  if (Array.isArray(json)) {
-    for (const item of json) {
-      if (item && typeof item === "object" && "id" in item && "name" in item) {
-        const o = item as { id: unknown; name: unknown };
-        folders.push({ id: String(o.id), name: String(o.name) });
-      }
-    }
-  } else if (json && typeof json === "object") {
-    const o = json as Record<string, unknown>;
-    const list =
-      (Array.isArray(o.objects) && o.objects) ||
-      (Array.isArray(o.folders) && o.folders) ||
-      (Array.isArray(o.results) && o.results) ||
-      [];
-    for (const item of list) {
-      if (item && typeof item === "object" && "id" in item && "name" in item) {
-        const row = item as { id: unknown; name: unknown };
-        folders.push({ id: String(row.id), name: String(row.name) });
-      }
-    }
-  }
-
-  return Response.json({ folders });
+  return Response.json({ folders: result.folders });
 }
