@@ -1,4 +1,4 @@
-import { enrichCompanyWithCommonRoom, enrichContactWithCommonRoom } from "@/lib/enrichment/commonroom-enricher";
+import { enrichContactWithCommonRoom } from "@/lib/enrichment/commonroom-enricher";
 import { mergeEnrichedCompany, mergeEnrichedContact } from "@/lib/enrichment/merger";
 import {
   delayBetweenZoomInfoCalls,
@@ -46,18 +46,14 @@ export async function POST(request: Request) {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        const total = rows.length;
-        const zoomPartials: Array<
-          Partial<EnrichedCompany> | Partial<EnrichedContact>
-        > = [];
+        const allRows = rows as (EnrichedCompany | EnrichedContact)[];
+        const total = allRows.length;
+        const nonHighTotal = allRows.filter((r) => r.confidenceScore !== "high").length;
+        let nonHighIndex = 0;
 
-        for (let i = 0; i < rows.length; i++) {
-          const row = rows[i];
-          const z =
-            listType === "companies"
-              ? await enrichCompanyWithZoomInfo(row as EnrichedCompany)
-              : await enrichContactWithZoomInfo(row as EnrichedContact);
-          zoomPartials.push(z);
+        const mergedRows: (EnrichedCompany | EnrichedContact)[] = [];
+
+        const emitProgress = (i: number, detail?: string) => {
           controller.enqueue(
             encoder.encode(
               `${JSON.stringify({
@@ -65,10 +61,57 @@ export async function POST(request: Request) {
                 start: i + 1,
                 end: i + 1,
                 total,
+                detail: detail ?? undefined,
               })}\n`,
             ),
           );
-          if (i < rows.length - 1) {
+        };
+
+        for (let i = 0; i < allRows.length; i++) {
+          const row = allRows[i]!;
+
+          if (row.confidenceScore === "high") {
+            mergedRows.push(row);
+            emitProgress(i);
+            continue;
+          }
+
+          nonHighIndex += 1;
+
+          if (listType === "companies") {
+            emitProgress(
+              i,
+              `Checking ZoomInfo… (${nonHighIndex} of ${nonHighTotal} companies)`,
+            );
+            const zi = await enrichCompanyWithZoomInfo(row as EnrichedCompany);
+            mergedRows.push(
+              mergeEnrichedCompany(row as EnrichedCompany, zi, {}),
+            );
+          } else {
+            const contact = row as EnrichedContact;
+            emitProgress(
+              i,
+              `Checking Common Room… (${nonHighIndex} of ${nonHighTotal} contacts)`,
+            );
+            const crResult = await enrichContactWithCommonRoom(contact);
+            const stillNeedsEnrichment =
+              !crResult.linkedinUrl?.trim() && !crResult.resolvedCompany?.trim();
+
+            let ziResult: Partial<EnrichedContact> = {};
+            if (stillNeedsEnrichment) {
+              emitProgress(
+                i,
+                `Checking ZoomInfo… (${nonHighIndex} of ${nonHighTotal} contacts)`,
+              );
+              ziResult = await enrichContactWithZoomInfo(contact);
+            }
+
+            mergedRows.push(
+              mergeEnrichedContact(contact, ziResult, crResult),
+            );
+          }
+
+          if (i < allRows.length - 1) {
             await delayBetweenZoomInfoCalls(200);
           }
         }
@@ -84,35 +127,12 @@ export async function POST(request: Request) {
           ),
         );
 
-        const crPartials = await Promise.all(
-          rows.map((row: EnrichedCompany | EnrichedContact) =>
-            listType === "companies"
-              ? enrichCompanyWithCommonRoom(row as EnrichedCompany)
-              : enrichContactWithCommonRoom(row as EnrichedContact),
-          ),
-        );
-
-        const merged = rows.map((row: EnrichedCompany | EnrichedContact, i: number) => {
-          if (listType === "companies") {
-            return mergeEnrichedCompany(
-              row as EnrichedCompany,
-              zoomPartials[i] as Partial<EnrichedCompany>,
-              crPartials[i] as Partial<EnrichedCompany>,
-            );
-          }
-          return mergeEnrichedContact(
-            row as EnrichedContact,
-            zoomPartials[i] as Partial<EnrichedContact>,
-            crPartials[i] as Partial<EnrichedContact>,
-          );
-        });
-
         controller.enqueue(
           encoder.encode(
             `${JSON.stringify({
               type: "done",
               listType,
-              rows: merged,
+              rows: mergedRows,
             })}\n`,
           ),
         );

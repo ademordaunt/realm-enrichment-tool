@@ -1,26 +1,57 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Realm Brand Colors */
+  --realm-purple: #6c3ce1;
+  --realm-purple-hover: #5c2ed1;
+  --realm-purple-light: #ede9ff;
+  --realm-navy: #0d1b2a;
+  --realm-navy-muted: #3d4f61;
+
+  /* Backgrounds */
+  --bg-page: #f8f9fb;
+  --bg-card: #ffffff;
+  --bg-muted: #f1f3f6;
+
+  /* Borders */
+  --border-default: #e2e6ea;
+  --border-focus: #6c3ce1;
+
+  /* Text */
+  --text-primary: #0d1b2a;
+  --text-secondary: #3d4f61;
+  --text-muted: #8a96a3;
+
+  /* Semantic */
+  --color-success: #16a34a;
+  --color-success-bg: #f0fdf4;
+  --color-warning: #d97706;
+  --color-warning-bg: #fffbeb;
+  --color-error: #dc2626;
+  --color-error-bg: #fef2f2;
+
+  /* Confidence colors */
+  --conf-high: #16a34a;
+  --conf-high-bg: #f0fdf4;
+  --conf-medium: #d97706;
+  --conf-medium-bg: #fffbeb;
+  --conf-low: #ea580c;
+  --conf-low-bg: #fff7ed;
+  --conf-unresolved: #dc2626;
+  --conf-unresolved-bg: #fef2f2;
+
+  /* Shadows */
+  --shadow-card: 0 1px 3px rgba(13, 27, 42, 0.08), 0 1px 2px rgba(13, 27, 42, 0.04);
+  --shadow-card-hover: 0 4px 12px rgba(13, 27, 42, 0.12);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }

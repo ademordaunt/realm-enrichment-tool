@@ -396,150 +396,139 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     return { approvedCount: a, needsReviewCount: n, skippedCount: s };
   }, [rows]);
 
-  const rowShellClass = (r: EnrichedCompany | EnrichedContact) => {
+  const unresolvedApprovedCount = useMemo(
+    () =>
+      rows.filter((r) => r.status === "approved" && r.confidenceScore === "unresolved")
+        .length,
+    [rows],
+  );
+
+  const rowShellClass = (r: EnrichedCompany | EnrichedContact, rowIndex: number) => {
     const conf = r.confidenceScore;
-    const left =
-      conf === "unresolved"
-        ? "border-l-4 border-red-500"
-        : conf === "medium" || conf === "low"
-          ? "border-l-4 border-amber-400"
-          : "border-l-4 border-transparent";
-    const bg =
-      r.status === "approved"
-        ? "bg-emerald-50/90 dark:bg-emerald-950/25"
-        : r.status === "skipped"
-          ? "bg-zinc-100/90 text-zinc-500 dark:bg-zinc-800/50 dark:text-zinc-400"
-          : "bg-white dark:bg-zinc-900/40";
-    return `${left} ${bg}`;
+    let borderClass = "border-l-transparent";
+    if (conf === "unresolved") {
+      borderClass = "border-l-(--conf-unresolved)";
+    } else if (conf === "low") {
+      borderClass = "border-l-(--conf-low)";
+    } else if (conf === "medium") {
+      borderClass = "border-l-(--conf-medium)";
+    }
+
+    const base = `border-b border-(--border-default) border-l-4 ${borderClass}`;
+
+    if (r.status === "approved") {
+      return `${base} bg-(--conf-high-bg)`;
+    }
+    if (r.status === "skipped") {
+      return `${base} bg-(--bg-muted) opacity-70`;
+    }
+    const stripe = rowIndex % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)";
+    return `${base} ${stripe}`;
   };
 
   return (
-    <div className="flex flex-col gap-4 pb-28">
+    <div className="flex flex-col gap-4 pb-24">
+      <h2 className="text-lg font-semibold text-(--realm-navy)">Review &amp; Edit</h2>
+
+      <p className="text-sm text-(--text-muted) bg-(--bg-muted) rounded-lg px-4 py-2">
+        ℹ️ ZoomInfo verification: pending API access · 0 credits estimated for this import
+      </p>
+
+      <p className="text-sm font-medium text-(--text-secondary)">
+        <span>{approvedCount} Approved</span>
+        {" · "}
+        <span>{needsReviewCount} Need Review</span>
+        {" · "}
+        <span>{skippedCount} Skipped</span>
+      </p>
+
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            className="rounded-lg bg-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+            className="rounded-lg border border-(--border-default) bg-white px-3 py-1.5 text-xs font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
             onClick={approveAllHigh}
           >
             Approve All High Confidence
           </button>
           <button
             type="button"
-            className="rounded-lg bg-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+            className="rounded-lg border border-(--border-default) bg-white px-3 py-1.5 text-xs font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
             onClick={selectAll}
           >
             Select All
           </button>
           <button
             type="button"
-            className="rounded-lg bg-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+            className="rounded-lg border border-(--border-default) bg-white px-3 py-1.5 text-xs font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
             onClick={deselectAll}
           >
             Deselect All
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400" htmlFor="rt-filter">
+          <label className="text-xs font-medium text-(--text-secondary)" htmlFor="rt-filter">
             Show
           </label>
           <select
             id="rt-filter"
-            className="rounded-lg border border-zinc-300 bg-white px-2 py-1 text-xs dark:border-zinc-600 dark:bg-zinc-950"
+            className="rounded-lg border border-(--border-default) bg-(--bg-card) px-2 py-1 text-xs text-(--text-primary)"
             value={filter}
             onChange={(e) => setFilter(e.target.value as FilterKey)}
           >
             <option value="all">All</option>
-            <option value="needs_review">Needs review</option>
+            <option value="needs_review">Needs Review</option>
             <option value="approved">Approved</option>
             <option value="skipped">Skipped</option>
           </select>
         </div>
       </div>
 
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">
-        <span className="font-medium text-zinc-800 dark:text-zinc-200">{approvedCount} approved</span>
-        {" · "}
-        <span>{needsReviewCount} need review</span>
-        {" · "}
-        <span>{skippedCount} skipped</span>
-      </p>
-
-      <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+      <div className="overflow-x-auto rounded-lg border border-(--border-default)">
         <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
-          <thead className="bg-zinc-100 dark:bg-zinc-800/80">
+          <thead className="bg-(--bg-muted) text-(--text-secondary) text-sm font-semibold">
             {listType === "companies" ? (
               <tr>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Approve
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Raw Input
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Company Name
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
+                <th className="border-b border-(--border-default) px-2 py-2">Approve</th>
+                <th className="border-b border-(--border-default) px-2 py-2">Raw Input</th>
+                <th className="border-b border-(--border-default) px-2 py-2">Company Name</th>
+                <th className="border-b border-(--border-default) px-2 py-2">
                   Company Domain Name
                 </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  State/Region
+                <th className="border-b border-(--border-default) px-2 py-2">State / Region</th>
+                <th className="border-b border-(--border-default) px-2 py-2">
+                  Number Of Employees
                 </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Number of Employees
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
+                <th className="border-b border-(--border-default) px-2 py-2">
                   LinkedIn Profile
                 </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Confidence
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Reasoning
-                </th>
+                <th className="border-b border-(--border-default) px-2 py-2">Confidence</th>
+                <th className="border-b border-(--border-default) px-2 py-2">Reasoning</th>
               </tr>
             ) : (
               <tr>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Approve
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Name
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Raw Email
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Resolved Email
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Company
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Title
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  State/Region
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
+                <th className="border-b border-(--border-default) px-2 py-2">Approve</th>
+                <th className="border-b border-(--border-default) px-2 py-2">Name</th>
+                <th className="border-b border-(--border-default) px-2 py-2">Raw Email</th>
+                <th className="border-b border-(--border-default) px-2 py-2">Resolved Email</th>
+                <th className="border-b border-(--border-default) px-2 py-2">Company</th>
+                <th className="border-b border-(--border-default) px-2 py-2">Title</th>
+                <th className="border-b border-(--border-default) px-2 py-2">State / Region</th>
+                <th className="border-b border-(--border-default) px-2 py-2">
                   LinkedIn Profile
                 </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Confidence
-                </th>
-                <th className="border-b border-zinc-200 px-2 py-2 font-semibold dark:border-zinc-700">
-                  Reasoning
-                </th>
+                <th className="border-b border-(--border-default) px-2 py-2">Confidence</th>
+                <th className="border-b border-(--border-default) px-2 py-2">Reasoning</th>
               </tr>
             )}
           </thead>
           <tbody>
             {listType === "companies"
-              ? (visibleRows as EnrichedCompany[]).map((row) => {
+              ? (visibleRows as EnrichedCompany[]).map((row, ri) => {
                   const muted = row.status === "skipped";
                   const checked = row.status === "approved";
                   return (
-                    <tr key={row.id} className={`border-b border-zinc-100 dark:border-zinc-800 ${rowShellClass(row)}`}>
+                    <tr key={row.id} className={rowShellClass(row, ri)}>
                       <td className="px-2 py-1.5 align-middle">
                         <input
                           type="checkbox"
@@ -616,7 +605,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="max-w-50 px-2 py-1.5 align-top break-all whitespace-normal">
+                      <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-top break-all whitespace-normal">
                         <div className="flex flex-wrap items-start gap-1">
                           <EditableCell
                             value={row.linkedinUrl}
@@ -641,11 +630,16 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               }
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex shrink-0 text-blue-600 hover:text-blue-800 dark:text-blue-400"
-                              title="Open LinkedIn"
+                              title={
+                                row.linkedinUrl.startsWith("http")
+                                  ? row.linkedinUrl
+                                  : `https://${row.linkedinUrl}`
+                              }
+                              className="inline-flex max-w-48 shrink-0 truncate text-blue-600 hover:text-blue-800 dark:text-blue-400"
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <span aria-hidden className="text-base leading-none">
+                              <span className="truncate">Open profile</span>
+                              <span aria-hidden className="ml-0.5 text-base leading-none">
                                 ↗
                               </span>
                             </a>
@@ -661,12 +655,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                     </tr>
                   );
                 })
-              : (visibleRows as EnrichedContact[]).map((row) => {
+              : (visibleRows as EnrichedContact[]).map((row, ri) => {
                   const muted = row.status === "skipped";
                   const checked = row.status === "approved";
                   const fullName = [row.firstName, row.lastName].filter(Boolean).join(" ");
                   return (
-                    <tr key={row.id} className={`border-b border-zinc-100 dark:border-zinc-800 ${rowShellClass(row)}`}>
+                    <tr key={row.id} className={rowShellClass(row, ri)}>
                       <td className="px-2 py-1.5 align-middle">
                         <input
                           type="checkbox"
@@ -758,7 +752,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="max-w-50 px-2 py-1.5 align-top break-all whitespace-normal">
+                      <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-top break-all whitespace-normal">
                         <div className="flex flex-wrap items-start gap-1">
                           <EditableCell
                             value={row.linkedinUrl}
@@ -783,11 +777,16 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               }
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex shrink-0 text-blue-600 hover:text-blue-800 dark:text-blue-400"
-                              title="Open LinkedIn"
+                              title={
+                                row.linkedinUrl.startsWith("http")
+                                  ? row.linkedinUrl
+                                  : `https://${row.linkedinUrl}`
+                              }
+                              className="inline-flex max-w-48 shrink-0 truncate text-blue-600 hover:text-blue-800 dark:text-blue-400"
                               onClick={(e) => e.stopPropagation()}
                             >
-                              <span aria-hidden className="text-base leading-none">
+                              <span className="truncate">Open profile</span>
+                              <span aria-hidden className="ml-0.5 text-base leading-none">
                                 ↗
                               </span>
                             </a>
@@ -807,19 +806,31 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         </table>
       </div>
 
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center border-t border-zinc-200 bg-zinc-50/95 px-4 py-3 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/95">
-        <div className="pointer-events-auto flex w-full max-w-6xl justify-end">
+      <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50 flex justify-center border-t border-(--border-default) bg-(--bg-card) px-6 py-4">
+        <div className="pointer-events-auto flex w-full max-w-7xl items-center justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-(--text-muted)">
+              {approvedCount} {approvedCount === 1 ? "record" : "records"} selected
+            </p>
+            {unresolvedApprovedCount > 0 ? (
+              <p className="mt-1 text-xs text-(--color-warning)">
+                ⚠️ {unresolvedApprovedCount} unresolved record
+                {unresolvedApprovedCount === 1 ? "" : "s"} included — consider reviewing before
+                pushing
+              </p>
+            ) : null}
+          </div>
           <button
             type="button"
             disabled={approvedCount === 0}
             onClick={() => onApprove?.()}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
               approvedCount > 0
-                ? "bg-blue-600 text-white hover:bg-blue-700"
-                : "cursor-not-allowed bg-zinc-300 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"
+                ? "bg-(--realm-purple) text-white hover:bg-(--realm-purple-hover)"
+                : "cursor-not-allowed bg-(--bg-muted) text-(--text-muted)"
             }`}
           >
-            Approve {approvedCount} records →
+            Approve {approvedCount} Records →
           </button>
         </div>
       </div>

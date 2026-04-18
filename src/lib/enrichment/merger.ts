@@ -82,9 +82,12 @@ export function mergeEnrichedContact(
   );
 
   const resolvedCompany = firstNonEmptyString(
+    commonroom.resolvedCompany,
     zoominfo.resolvedCompany,
     ai.resolvedCompany,
   );
+
+  const title = firstNonEmptyString(zoominfo.title, commonroom.title, ai.title);
 
   let companyDomain = firstNonEmptyString(ai.companyDomain);
   if (!companyDomain && resolvedEmail) {
@@ -94,6 +97,13 @@ export function mergeEnrichedContact(
   let confidenceScore = ai.confidenceScore;
   if (zoominfo.enrichedByZoomInfo) {
     confidenceScore = "high";
+  } else if (
+    commonroom.enrichedByCommonRoom &&
+    (Boolean(commonroom.linkedinUrl?.trim()) ||
+      Boolean(commonroom.resolvedCompany?.trim()) ||
+      Boolean(commonroom.title?.trim()))
+  ) {
+    confidenceScore = "high";
   }
 
   return {
@@ -101,6 +111,7 @@ export function mergeEnrichedContact(
     resolvedEmail,
     linkedinUrl,
     resolvedCompany,
+    title: title || ai.title,
     companyDomain,
     enrichedByZoomInfo: ai.enrichedByZoomInfo || Boolean(zoominfo.enrichedByZoomInfo),
     enrichedByCommonRoom: ai.enrichedByCommonRoom || Boolean(commonroom.enrichedByCommonRoom),

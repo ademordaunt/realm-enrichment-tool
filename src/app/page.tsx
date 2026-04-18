@@ -20,6 +20,38 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 
 const ACCEPT = ".csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
 
+const NAV_STEPS = [
+  "Upload",
+  "Event Context",
+  "Enrichment",
+  "Review & Edit",
+  "Import Settings",
+  "Complete",
+] as const;
+
+const PREVIEW_MAX_ROWS = 50;
+
+function breadcrumbIndex(s: Step): number {
+  switch (s) {
+    case "upload":
+      return 0;
+    case "context":
+      return 1;
+    case "enriching":
+    case "verifying":
+      return 2;
+    case "enriched":
+      return 3;
+    case "prepush":
+    case "pushing":
+      return 4;
+    case "complete":
+      return 5;
+    default:
+      return 0;
+  }
+}
+
 type Step =
   | "upload"
   | "context"
@@ -29,8 +61,6 @@ type Step =
   | "prepush"
   | "pushing"
   | "complete";
-
-const PREVIEW_PAGE_SIZE = 10;
 
 function rowDedupKey(row: RawCompanyRow | RawContactRow, kind: "companies" | "contacts"): string {
   if (kind === "companies") {
@@ -117,7 +147,7 @@ function collectKeys(rows: Array<RawCompanyRow | RawContactRow>, maxScan: number
 }
 
 type NdjsonEvent =
-  | { type: "progress"; start: number; end: number; total: number }
+  | { type: "progress"; start: number; end: number; total: number; detail?: string }
   | {
       type: "done";
       listType: "companies" | "contacts";
@@ -127,7 +157,12 @@ type NdjsonEvent =
 
 async function consumeEnrichmentNdjson(
   res: Response,
-  onProgress: (e: { start: number; end: number; total: number }) => void,
+  onProgress: (e: {
+    start: number;
+    end: number;
+    total: number;
+    detail?: string | null;
+  }) => void,
 ): Promise<{
   rows: EnrichedCompany[] | EnrichedContact[];
   rawNdjson: string;
@@ -146,7 +181,12 @@ async function consumeEnrichmentNdjson(
     if (!t) return;
     const msg = JSON.parse(t) as NdjsonEvent;
     if (msg.type === "progress") {
-      onProgress({ start: msg.start, end: msg.end, total: msg.total });
+      onProgress({
+        start: msg.start,
+        end: msg.end,
+        total: msg.total,
+        detail: msg.detail ?? null,
+      });
     } else if (msg.type === "error") {
       throw new Error(msg.message);
     } else if (msg.type === "done") {
@@ -271,6 +311,7 @@ export default function Home() {
     startRow: number;
     endRow: number;
     totalRows: number;
+    detail?: string | null;
   } | null>(null);
 
   const [enriched, setEnriched] = useState<EnrichedCompany[] | EnrichedContact[] | null>(null);
@@ -290,7 +331,7 @@ export default function Home() {
     null,
   );
   const [duplicateExemptPairs, setDuplicateExemptPairs] = useState<Set<string>>(() => new Set());
-  const [previewPage, setPreviewPage] = useState(0);
+  const [dupFeedback, setDupFeedback] = useState<"removed" | "kept" | null>(null);
 
   const enrichAbortRef = useRef<AbortController | null>(null);
 
@@ -298,11 +339,6 @@ export default function Home() {
     () => reviewRows.filter((r) => r.status === "approved"),
     [reviewRows],
   );
-  const unresolvedApprovedCount = useMemo(
-    () => approvedRowsForPush.filter((r) => r.confidenceScore === "unresolved").length,
-    [approvedRowsForPush],
-  );
-
   useLayoutEffect(() => {
     if (!enriched?.length || !enrichedListType) {
       setReviewRows([]);
@@ -347,7 +383,6 @@ export default function Home() {
         setLastPushLeadSource(null);
         setPreviewRowsOverride(null);
         setDuplicateExemptPairs(new Set());
-        setPreviewPage(0);
         if (json.listType !== "unknown") {
           setListOverride(null);
         }
@@ -415,45 +450,22 @@ export default function Home() {
     return findFirstDuplicatePair(workingRows, resolvedListType, duplicateExemptPairs);
   }, [workingRows, resolvedListType, duplicateExemptPairs]);
 
-  const previewTotalPages = Math.max(1, Math.ceil(workingRows.length / PREVIEW_PAGE_SIZE) || 1);
-  const previewPageClamped = Math.min(previewPage, previewTotalPages - 1);
-  const previewSlice = useMemo(() => {
-    const start = previewPageClamped * PREVIEW_PAGE_SIZE;
-    return workingRows.slice(start, start + PREVIEW_PAGE_SIZE);
-  }, [workingRows, previewPageClamped]);
+  const duplicatePairKey = duplicatePair ? `${duplicatePair[0]}-${duplicatePair[1]}` : null;
 
   useEffect(() => {
-    setPreviewPage((p) => Math.min(p, Math.max(0, previewTotalPages - 1)));
-  }, [previewTotalPages]);
+    if (duplicatePairKey) setDupFeedback(null);
+  }, [duplicatePairKey]);
+
+  const previewRowsForTable = useMemo(
+    () => workingRows.slice(0, PREVIEW_MAX_ROWS),
+    [workingRows],
+  );
 
   useEffect(() => {
     setPreviewRowsOverride(null);
     setDuplicateExemptPairs(new Set());
-    setPreviewPage(0);
+    setDupFeedback(null);
   }, [result, segmentIndex]);
-
-  const subtitle = useMemo(() => {
-    switch (step) {
-      case "upload":
-        return "Step 1 — Upload a lead list (.csv, .xlsx, or .xls)";
-      case "context":
-        return "Step 2 — Event context";
-      case "enriching":
-        return "Step 3 — AI enrichment";
-      case "verifying":
-        return "Step 4 — ZoomInfo & Common Room";
-      case "enriched":
-        return "Step 5 — Review & approve";
-      case "prepush":
-        return "Step 6 — Ready to import";
-      case "pushing":
-        return "Step 7 — Pushing to HubSpot";
-      case "complete":
-        return "Import complete";
-      default:
-        return "";
-    }
-  }, [step]);
 
   const runZoomVerify = async (
     aiRows: EnrichedCompany[] | EnrichedContact[],
@@ -465,6 +477,7 @@ export default function Home() {
       startRow: 1,
       endRow: 1,
       totalRows: aiRows.length,
+      detail: null,
     });
     const res = await fetch("/api/enrich/zoominfo", {
       method: "POST",
@@ -481,6 +494,7 @@ export default function Home() {
         startRow: p.start,
         endRow: p.end,
         totalRows: p.total,
+        detail: p.detail ?? null,
       });
     });
     return rows;
@@ -500,6 +514,7 @@ export default function Home() {
       startRow: 1,
       endRow: Math.min(10, workingRows.length),
       totalRows: workingRows.length,
+      detail: null,
     });
     try {
       const res = await fetch("/api/enrich/ai", {
@@ -521,6 +536,7 @@ export default function Home() {
           startRow: p.start,
           endRow: p.end,
           totalRows: p.total,
+          detail: p.detail ?? null,
         });
       });
       if (resolvedListType === "companies") {
@@ -579,7 +595,6 @@ export default function Home() {
     setProgress(null);
     setPreviewRowsOverride(null);
     setDuplicateExemptPairs(new Set());
-    setPreviewPage(0);
   }, []);
 
   const runHubSpotPush = useCallback(
@@ -625,20 +640,52 @@ export default function Home() {
     [enrichedListType, eventContext, reviewRows],
   );
 
+  const bc = breadcrumbIndex(step);
+
   return (
-    <div className="flex min-h-full flex-1 flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
-      <header className="border-b border-zinc-200 bg-white px-6 py-5 dark:border-zinc-800 dark:bg-zinc-900">
-        <h1 className="text-xl font-semibold tracking-tight">Realm Enrichment Tool</h1>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">{subtitle}</p>
+    <div className="flex min-h-screen flex-1 flex-col bg-(--bg-page)">
+      <header className="fixed top-0 left-0 right-0 z-50 grid h-14 w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 bg-(--realm-navy) px-4 shadow-(--shadow-card) sm:px-6">
+        <div className="min-w-0 font-bold text-lg tracking-tight">
+          <span className="text-(--realm-purple)">Realm</span>
+          <span className="text-white">.Security</span>
+        </div>
+        <nav
+          className="flex max-w-[min(100vw-8rem,40rem)] flex-wrap items-center justify-center gap-x-0.5 gap-y-1 text-center text-[10px] leading-tight sm:max-w-none sm:text-xs md:text-sm"
+          aria-label="Import steps"
+        >
+          {NAV_STEPS.map((label, i) => {
+            const isCurrent = i === bc;
+            const isDone = i < bc;
+            return (
+              <span key={label} className="inline-flex items-center">
+                {i > 0 ? (
+                  <span className="px-0.5 text-white/40 sm:px-1" aria-hidden>
+                    ·
+                  </span>
+                ) : null}
+                <span
+                  className={
+                    isCurrent
+                      ? "font-bold text-white"
+                      : isDone
+                        ? "font-medium text-white/75"
+                        : "font-medium text-(--realm-navy-muted)"
+                  }
+                >
+                  {label}
+                </span>
+              </span>
+            );
+          })}
+        </nav>
+        <div className="min-w-0" aria-hidden />
       </header>
 
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-4 py-8 sm:px-6">
-        {step === "upload" && (
+      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 pb-8 pt-14 sm:px-6">
+        {step === "upload" && !result && (
           <section
-            className={`relative flex min-h-55 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-10 transition-colors ${
-              busy
-                ? "border-zinc-200 bg-zinc-100/60 dark:border-zinc-700 dark:bg-zinc-900/40"
-                : "border-zinc-300 bg-white hover:border-zinc-400 hover:bg-zinc-50/80 dark:border-zinc-600 dark:bg-zinc-900/40 dark:hover:border-zinc-500"
+            className={`relative flex min-h-55 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-(--border-default) bg-(--bg-card) px-6 py-10 transition-colors ${
+              busy ? "opacity-80" : "hover:border-(--realm-purple) hover:bg-(--bg-muted)"
             }`}
             onDragOver={(e) => {
               e.preventDefault();
@@ -659,39 +706,32 @@ export default function Home() {
               aria-label="Upload CSV or Excel file"
             />
             <div className="pointer-events-none text-center">
-              <p className="text-base font-medium">Drop a file here, or click to browse</p>
-              <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+              <p className="text-base font-medium text-(--text-primary)">
+                Drop a file here, or click to browse
+              </p>
+              <p className="mt-2 text-sm text-(--text-muted)">
                 Accepted: .csv, .xlsx, .xls — max 5 MB
               </p>
             </div>
           </section>
         )}
 
-        {step !== "upload" && file && (
-          <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-900">
-            <span className="font-medium text-zinc-700 dark:text-zinc-300">{file.name}</span>
-            <span className="text-zinc-500 dark:text-zinc-400">
-              {" "}
-              — {effectiveRowCount} rows — {resolvedListType ?? "unknown list type"}
+        {step === "upload" && result && file && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-(--border-default) bg-(--bg-card) px-4 py-3 text-sm shadow-(--shadow-card)">
+            <span className="font-semibold text-(--color-success)">File Loaded</span>
+            <span className="text-(--text-secondary)">·</span>
+            <span className="font-medium text-(--text-primary)">{file.name}</span>
+            <span className="text-(--text-muted)">
+              · {effectiveRowCount} {effectiveRowCount === 1 ? "row" : "rows"}
             </span>
             <button
               type="button"
-              className="ml-3 text-blue-600 hover:underline dark:text-blue-400"
+              className="ml-auto text-sm font-medium text-(--realm-purple) hover:text-(--realm-purple-hover) hover:underline"
               onClick={() => {
-                setStep("upload");
-                setEnriched(null);
-                setEnrichedListType(null);
-                setReviewRows([]);
-                setEventContext(null);
-                setPushResult(null);
-                setPushError(null);
-                setLastPushLeadSource(null);
-                setPreviewRowsOverride(null);
-                setDuplicateExemptPairs(new Set());
-                setPreviewPage(0);
+                startNewImport();
               }}
             >
-              Change file
+              × Change File
             </button>
           </div>
         )}
@@ -712,21 +752,23 @@ export default function Home() {
         )}
 
         {result && file && step === "upload" && (
-          <section className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <section className="flex flex-col gap-4 rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card) sm:p-6">
             <div className="flex flex-wrap items-baseline justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">File</p>
-                <p className="text-base font-semibold">{file.name}</p>
+                <p className="text-sm font-medium text-(--text-muted)">File Name</p>
+                <p className="text-base font-semibold text-(--text-primary)">{file.name}</p>
               </div>
               <div className="text-right">
-                <p className="text-sm font-medium text-zinc-600 dark:text-zinc-400">Rows parsed</p>
-                <p className="text-base font-semibold tabular-nums">{effectiveRowCount}</p>
+                <p className="text-sm font-medium text-(--text-muted)">Rows Parsed</p>
+                <p className="text-base font-semibold tabular-nums text-(--text-primary)">
+                  {effectiveRowCount}
+                </p>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              <span className="text-sm text-zinc-600 dark:text-zinc-400">Detected list type:</span>
-              <span className="rounded-full bg-zinc-100 px-3 py-1 text-sm font-medium dark:bg-zinc-800">
+              <span className="text-sm font-medium text-(--text-secondary)">Detected List Type</span>
+              <span className="rounded-full bg-(--bg-muted) px-3 py-1 text-sm font-medium text-(--text-primary)">
                 {result.listType === "unknown" ? "Unknown" : result.listType}
               </span>
             </div>
@@ -796,104 +838,133 @@ export default function Home() {
             )}
 
             {duplicatePair && resolvedListType ? (
-              <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-4 dark:border-amber-700/80 dark:bg-amber-950/40">
-                <p className="text-sm font-medium text-amber-950 dark:text-amber-100">
+              <div
+                className="rounded-xl border border-(--border-default) border-l-4 border-l-(--color-warning) bg-(--color-warning-bg) p-4 shadow-(--shadow-card)"
+                role="region"
+                aria-label="Duplicate rows"
+              >
+                <p className="text-sm font-medium text-(--text-primary)">
                   Duplicate rows detected (rows {duplicatePair[0] + 1} and {duplicatePair[1] + 1}). Choose how
                   to proceed.
                 </p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  {[duplicatePair[0], duplicatePair[1]].map((idx) => (
-                    <div
-                      key={idx}
-                      className="overflow-x-auto rounded-lg border border-amber-200 bg-white dark:border-amber-800 dark:bg-zinc-900"
-                    >
-                      <table className="min-w-full text-left text-xs sm:text-sm">
-                        <thead className="bg-zinc-100 dark:bg-zinc-800/80">
-                          <tr>
-                            {previewKeys.map((k) => (
-                              <th
-                                key={k}
-                                className="border-b border-zinc-200 px-2 py-1.5 font-semibold dark:border-zinc-700"
-                              >
-                                {k}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr>
-                            {previewKeys.map((k) => (
-                              <td
-                                key={k}
-                                className="border-b border-zinc-100 px-2 py-1.5 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200"
-                              >
-                                {(workingRows[idx] as Record<string, string | undefined>)[k] ?? ""}
-                              </td>
-                            ))}
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  ))}
+                  {[duplicatePair[0], duplicatePair[1]].map((idx, col) => {
+                    const isSecond = idx === duplicatePair[1];
+                    return (
+                      <div
+                        key={`${idx}-${col}`}
+                        className="relative overflow-x-auto rounded-lg border border-(--border-default) bg-(--bg-muted)"
+                      >
+                        {isSecond ? (
+                          <span className="absolute right-2 top-2 z-10 rounded bg-(--color-warning) px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                            Duplicate
+                          </span>
+                        ) : null}
+                        <table className="min-w-full text-left text-xs sm:text-sm">
+                          <thead className="bg-(--bg-page)">
+                            <tr>
+                              {previewKeys.map((k) => (
+                                <th
+                                  key={k}
+                                  className="border-b border-(--border-default) px-2 py-1.5 font-semibold text-(--text-secondary)"
+                                >
+                                  {k}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            <tr>
+                              {previewKeys.map((k) => (
+                                <td
+                                  key={k}
+                                  className="border-b border-(--border-default) px-2 py-1.5 text-(--text-primary)"
+                                >
+                                  {(workingRows[idx] as Record<string, string | undefined>)[k] ?? ""}
+                                </td>
+                              ))}
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     type="button"
-                    className="rounded-lg bg-amber-800 px-3 py-2 text-sm font-medium text-white hover:bg-amber-900 dark:bg-amber-700 dark:hover:bg-amber-600"
+                    className="rounded-lg bg-(--color-warning) px-3 py-2 text-sm font-medium text-white transition-colors hover:opacity-90"
                     onClick={() => {
                       const [a, b] = duplicatePair;
                       const removeIdx = Math.max(a, b);
                       setPreviewRowsOverride(workingRows.filter((_, i) => i !== removeIdx) as typeof workingRows);
+                      setDupFeedback("removed");
                     }}
                   >
                     Remove Duplicate
                   </button>
                   <button
                     type="button"
-                    className="rounded-lg bg-zinc-200 px-3 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+                    className="rounded-lg border border-(--border-default) bg-white px-3 py-2 text-sm font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
                     onClick={() => {
                       const [a, b] = duplicatePair;
                       setDuplicateExemptPairs((prev) => new Set(prev).add(`${a}-${b}`));
+                      setDupFeedback("kept");
                     }}
                   >
                     Keep Both
                   </button>
                 </div>
               </div>
-            ) : (
-              result.warnings.length > 0 && (
-                <div className="flex flex-col gap-2">
-                  {result.warnings.map((w) => (
-                    <div
-                      key={w}
-                      className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/80 dark:bg-amber-950/40 dark:text-amber-100"
-                      role="status"
-                    >
-                      {w}
-                    </div>
-                  ))}
-                </div>
-              )
-            )}
+            ) : null}
+
+            {!duplicatePair && dupFeedback === "removed" ? (
+              <div
+                className="rounded-xl border border-(--border-default) border-l-4 border-l-(--color-success) bg-(--color-success-bg) px-4 py-3 text-sm font-medium text-(--text-primary) shadow-(--shadow-card)"
+                role="status"
+              >
+                ✓ Duplicate removed — 1 row cleaned
+              </div>
+            ) : null}
+
+            {!duplicatePair && dupFeedback === "kept" ? (
+              <div
+                className="rounded-xl border border-(--border-default) bg-(--bg-muted) px-4 py-3 text-sm font-medium text-(--text-secondary) shadow-(--shadow-card)"
+                role="status"
+              >
+                Both rows kept
+              </div>
+            ) : null}
+
+            {duplicatePair ? null : result.warnings.length > 0 ? (
+              <div className="flex flex-col gap-2">
+                {result.warnings.map((w) => (
+                  <div
+                    key={w}
+                    className="rounded-lg border border-(--border-default) bg-(--color-warning-bg) px-4 py-3 text-sm text-(--text-primary)"
+                    role="status"
+                  >
+                    {w}
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             <div>
-              <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
-                Raw preview (page {previewPageClamped + 1} of {previewTotalPages})
-              </h2>
-              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                Showing effective list type:{" "}
-                <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                  {effectiveListType}
-                </span>
+              <h2 className="text-sm font-semibold text-(--realm-navy)">Raw Preview</h2>
+              <p className="mt-1 text-xs text-(--text-muted)">
+                Showing all {Math.min(effectiveRowCount, PREVIEW_MAX_ROWS)} rows
+                {effectiveRowCount > PREVIEW_MAX_ROWS ? " (first 50 shown)" : ""} · Effective list type:{" "}
+                <span className="font-medium text-(--text-secondary)">{effectiveListType}</span>
               </p>
-              <div className="mt-3 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+              <div className="mt-3 max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-(--border-default)">
                 <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
-                  <thead className="bg-zinc-100 dark:bg-zinc-800/80">
+                  <thead className="sticky top-0 z-1 bg-(--bg-muted)">
                     <tr>
                       {previewKeys.map((k) => (
                         <th
                           key={k}
-                          className="whitespace-nowrap border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700"
+                          className="whitespace-nowrap border-b border-(--border-default) px-3 py-2 font-semibold text-(--text-secondary)"
                         >
                           {k}
                         </th>
@@ -901,17 +972,17 @@ export default function Home() {
                     </tr>
                   </thead>
                   <tbody>
-                    {previewSlice.map((row, ri) => (
+                    {previewRowsForTable.map((row, ri) => (
                       <tr
-                        key={`${previewPageClamped}-${ri}`}
+                        key={ri}
                         className={
-                          ri % 2 === 0 ? "bg-white dark:bg-zinc-900" : "bg-zinc-50/80 dark:bg-zinc-900/60"
+                          ri % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)"
                         }
                       >
                         {previewKeys.map((k) => (
                           <td
                             key={k}
-                            className="border-b border-zinc-100 px-3 py-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200"
+                            className="border-b border-(--border-default) px-3 py-2 text-(--text-primary)"
                           >
                             {(row as Record<string, string | undefined>)[k] ?? ""}
                           </td>
@@ -921,37 +992,16 @@ export default function Home() {
                   </tbody>
                 </table>
               </div>
-              <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-sm text-zinc-600 dark:text-zinc-400">
-                <button
-                  type="button"
-                  className="rounded-lg border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-100 disabled:opacity-40 dark:border-zinc-600 dark:hover:bg-zinc-800"
-                  disabled={previewPageClamped <= 0}
-                  onClick={() => setPreviewPage((p) => Math.max(0, p - 1))}
-                >
-                  ← Previous
-                </button>
-                <span className="tabular-nums">
-                  Page {previewPageClamped + 1} of {previewTotalPages}
-                </span>
-                <button
-                  type="button"
-                  className="rounded-lg border border-zinc-300 px-3 py-1.5 font-medium hover:bg-zinc-100 disabled:opacity-40 dark:border-zinc-600 dark:hover:bg-zinc-800"
-                  disabled={previewPageClamped >= previewTotalPages - 1}
-                  onClick={() => setPreviewPage((p) => Math.min(previewTotalPages - 1, p + 1))}
-                >
-                  Next →
-                </button>
-              </div>
             </div>
 
-            <div className="flex justify-end border-t border-zinc-100 pt-4 dark:border-zinc-800">
+            <div className="flex justify-end border-t border-(--border-default) pt-4">
               <button
                 type="button"
                 disabled={!resolvedListType || effectiveRowCount === 0 || duplicatePair !== null}
                 onClick={() => setStep("context")}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Continue to event context
+                Continue To Event Context
               </button>
             </div>
           </section>
@@ -969,6 +1019,7 @@ export default function Home() {
             )}
             <EventContextForm
               listType={resolvedListType}
+              sourceFileName={file?.name ?? null}
               initialValues={eventContext}
               onBackToUpload={startNewImport}
               onSubmit={(ctx) => void runEnrichment(ctx)}
@@ -977,35 +1028,36 @@ export default function Home() {
         )}
 
         {step === "enriching" && progress && (
-          <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="flex flex-col gap-4">
             <EnrichmentProgress
+              mode="enriching"
               startRow={progress.startRow}
               endRow={progress.endRow}
               totalRows={progress.totalRows}
             />
             <button
               type="button"
-              className="self-start rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              className="self-center rounded-lg border border-(--border-default) bg-white px-4 py-2 text-sm font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
               onClick={() => enrichAbortRef.current?.abort()}
             >
-              Cancel
+              Cancel Enrichment
             </button>
           </div>
         )}
 
-        {step === "verifying" && (
-          <div className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-            <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100" role="status">
-              Verifying with ZoomInfo and Common Room…
-            </p>
-            {progress && (
-              <EnrichmentProgress
-                startRow={progress.startRow}
-                endRow={progress.endRow}
-                totalRows={progress.totalRows}
-              />
-            )}
-          </div>
+        {step === "verifying" && progress && (
+          <EnrichmentProgress
+            mode="verifying"
+            startRow={progress.startRow}
+            endRow={progress.endRow}
+            totalRows={progress.totalRows}
+            verifyTitle={
+              resolvedListType === "companies"
+                ? "Verifying non-confident companies with ZoomInfo…"
+                : "Verifying non-confident contacts with Common Room and ZoomInfo…"
+            }
+            verifyDetail={progress.detail}
+          />
         )}
 
         {step === "pushing" && pushProgress && (
@@ -1017,10 +1069,7 @@ export default function Home() {
         )}
 
         {step === "enriched" && enriched && enrichedListType && (
-          <section className="rounded-xl border border-zinc-200 bg-white p-5 pb-28 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-            <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-              Review &amp; edit
-            </h2>
+          <section className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 pb-24 shadow-(--shadow-card)">
             {pushError && (
               <div
                 className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-100"
@@ -1080,20 +1129,6 @@ export default function Home() {
         )}
       </main>
 
-      {step === "enriched" && enriched && enrichedListType && (
-        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center border-t border-zinc-200 bg-zinc-50/95 px-4 py-3 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/95">
-          <div className="pointer-events-auto flex w-full max-w-6xl flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-h-5 text-xs text-amber-800 dark:text-amber-200">
-              {unresolvedApprovedCount > 0 ? (
-                <span>
-                  ⚠️ {unresolvedApprovedCount} unresolved record
-                  {unresolvedApprovedCount === 1 ? "" : "s"} included — consider reviewing before pushing
-                </span>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
