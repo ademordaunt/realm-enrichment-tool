@@ -2,6 +2,9 @@
 
 import { EventContextForm } from "@/components/EventContextForm";
 import { EnrichmentProgress } from "@/components/EnrichmentProgress";
+import { applyInitialReviewStatus, ReviewTable } from "@/components/ReviewTable";
+import { SuccessScreen } from "@/components/SuccessScreen";
+import type { HubSpotPushDonePayload } from "@/lib/hubspot/push-result";
 import type {
   EnrichedCompany,
   EnrichedContact,
@@ -11,11 +14,18 @@ import type {
   RawCompanyRow,
   RawContactRow,
 } from "@/lib/utils/types";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 
 const ACCEPT = ".csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
 
-type Step = "upload" | "context" | "enriching" | "verifying" | "enriched";
+type Step =
+  | "upload"
+  | "context"
+  | "enriching"
+  | "verifying"
+  | "enriched"
+  | "pushing"
+  | "complete";
 
 function collectKeys(rows: Array<RawCompanyRow | RawContactRow>, maxScan: number): string[] {
   const keys = new Set<string>();
@@ -23,21 +33,6 @@ function collectKeys(rows: Array<RawCompanyRow | RawContactRow>, maxScan: number
     Object.keys(rows[i] ?? {}).forEach((k) => keys.add(k));
   }
   return Array.from(keys).sort();
-}
-
-function confidenceBadgeClass(score: string): string {
-  switch (score) {
-    case "high":
-      return "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-100";
-    case "medium":
-      return "bg-amber-100 text-amber-950 dark:bg-amber-950/50 dark:text-amber-100";
-    case "low":
-      return "bg-orange-100 text-orange-950 dark:bg-orange-950/50 dark:text-orange-100";
-    case "unresolved":
-      return "bg-red-100 text-red-900 dark:bg-red-950/50 dark:text-red-100";
-    default:
-      return "bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-200";
-  }
 }
 
 type NdjsonEvent =
@@ -103,6 +98,74 @@ async function consumeEnrichmentNdjson(
   return { rows: result, rawNdjson };
 }
 
+type PushNdjsonEvent =
+  | { type: "progress"; current: number; total: number }
+  | {
+      type: "done";
+      created: number;
+      updated: number;
+      errors: { rowId: string; error: string }[];
+      listId: string;
+      listName: string;
+      totalPushed: number;
+    }
+  | { type: "error"; message: string };
+
+async function consumePushNdjson(
+  res: Response,
+  onProgress: (e: { current: number; total: number }) => void,
+): Promise<HubSpotPushDonePayload> {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    throw new Error("No response body from HubSpot push.");
+  }
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: HubSpotPushDonePayload | null = null;
+
+  const handleLine = (line: string) => {
+    const t = line.trim();
+    if (!t) return;
+    const msg = JSON.parse(t) as PushNdjsonEvent;
+    if (msg.type === "progress") {
+      onProgress({ current: msg.current, total: msg.total });
+    } else if (msg.type === "error") {
+      throw new Error(msg.message);
+    } else if (msg.type === "done") {
+      result = {
+        created: msg.created,
+        updated: msg.updated,
+        errors: msg.errors,
+        listId: msg.listId,
+        listName: msg.listName,
+        totalPushed: msg.totalPushed,
+      };
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (value) {
+      buffer += decoder.decode(value, { stream: true });
+    }
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      handleLine(line);
+    }
+    if (done) {
+      break;
+    }
+  }
+  if (buffer.trim()) {
+    handleLine(buffer.trim());
+  }
+  if (!result) {
+    throw new Error("HubSpot push finished without a result payload.");
+  }
+  return result;
+}
+
 function companyRowsMissingCoreFields(rows: EnrichedCompany[]): boolean {
   return rows.some(
     (row) =>
@@ -133,6 +196,30 @@ export default function Home() {
   const [enrichedListType, setEnrichedListType] = useState<"companies" | "contacts" | null>(
     null,
   );
+  const [reviewRows, setReviewRows] = useState<EnrichedCompany[] | EnrichedContact[]>([]);
+  const [eventContext, setEventContext] = useState<EventContext | null>(null);
+  const [pushProgress, setPushProgress] = useState<{ current: number; total: number } | null>(
+    null,
+  );
+  const [pushResult, setPushResult] = useState<HubSpotPushDonePayload | null>(null);
+  const [pushError, setPushError] = useState<string | null>(null);
+
+  const approvedRowsForPush = useMemo(
+    () => reviewRows.filter((r) => r.status === "approved"),
+    [reviewRows],
+  );
+  const unresolvedApprovedCount = useMemo(
+    () => approvedRowsForPush.filter((r) => r.confidenceScore === "unresolved").length,
+    [approvedRowsForPush],
+  );
+
+  useLayoutEffect(() => {
+    if (!enriched?.length || !enrichedListType) {
+      setReviewRows([]);
+      return;
+    }
+    setReviewRows(applyInitialReviewStatus(enriched));
+  }, [enriched, enrichedListType]);
 
   const parseFile = useCallback(
     async (f: File, listType?: "companies" | "contacts") => {
@@ -164,6 +251,9 @@ export default function Home() {
         setStep("upload");
         setEnriched(null);
         setEnrichedListType(null);
+        setEventContext(null);
+        setPushResult(null);
+        setPushError(null);
         if (json.listType !== "unknown") {
           setListOverride(null);
         }
@@ -238,7 +328,11 @@ export default function Home() {
       case "verifying":
         return "Step 4 — ZoomInfo & Common Room";
       case "enriched":
-        return "Step 5 — Enrichment results";
+        return "Step 5 — Review & approve";
+      case "pushing":
+        return "Step 6 — Pushing to HubSpot";
+      case "complete":
+        return "Import complete";
       default:
         return "";
     }
@@ -275,6 +369,7 @@ export default function Home() {
 
   const runEnrichment = async (context: EventContext) => {
     if (!resolvedListType) return;
+    setEventContext(context);
     setEnrichError(null);
     setStep("enriching");
     setProgress({
@@ -330,6 +425,57 @@ export default function Home() {
       setProgress(null);
     }
   };
+
+  const startNewImport = useCallback(() => {
+    setStep("upload");
+    setFile(null);
+    setResult(null);
+    setListOverride(null);
+    setSegmentIndex(0);
+    setEnriched(null);
+    setEnrichedListType(null);
+    setReviewRows([]);
+    setEventContext(null);
+    setPushResult(null);
+    setPushError(null);
+    setEnrichError(null);
+    setError(null);
+    setProgress(null);
+  }, []);
+
+  const runHubSpotPush = useCallback(async () => {
+    if (!enrichedListType || !eventContext) return;
+    const approved = reviewRows.filter((r) => r.status === "approved");
+    if (approved.length === 0) return;
+    setPushError(null);
+    setStep("pushing");
+    setPushProgress({ current: 0, total: approved.length });
+    try {
+      const res = await fetch("/api/hubspot/push", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rows: approved,
+          listType: enrichedListType,
+          eventName: eventContext.eventName,
+        }),
+      });
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errBody.error ?? `HubSpot push failed (${res.status})`);
+      }
+      const done = await consumePushNdjson(res, (p) => {
+        setPushProgress({ current: p.current, total: p.total });
+      });
+      setPushResult(done);
+      setStep("complete");
+    } catch (e) {
+      setPushError(e instanceof Error ? e.message : "HubSpot push failed.");
+      setStep("enriched");
+    } finally {
+      setPushProgress(null);
+    }
+  }, [enrichedListType, eventContext, reviewRows]);
 
   return (
     <div className="flex min-h-full flex-1 flex-col bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
@@ -387,6 +533,10 @@ export default function Home() {
                 setStep("upload");
                 setEnriched(null);
                 setEnrichedListType(null);
+                setReviewRows([]);
+                setEventContext(null);
+                setPushResult(null);
+                setPushError(null);
               }}
             >
               Change file
@@ -607,11 +757,31 @@ export default function Home() {
           </div>
         )}
 
+        {step === "pushing" && pushProgress && (
+          <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100" role="status">
+              Pushing record {pushProgress.current} of {pushProgress.total} to HubSpot…
+            </p>
+          </div>
+        )}
+
+        {step === "complete" && pushResult && (
+          <SuccessScreen result={pushResult} onStartNew={startNewImport} />
+        )}
+
         {step === "enriched" && enriched && enrichedListType && (
-          <section className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+          <section className="rounded-xl border border-zinc-200 bg-white p-5 pb-28 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-              Enrichment results
+              Review &amp; edit
             </h2>
+            {pushError && (
+              <div
+                className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-100"
+                role="alert"
+              >
+                {pushError}
+              </div>
+            )}
             {enrichError && (
               <div
                 className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/80 dark:bg-amber-950/40 dark:text-amber-100"
@@ -625,124 +795,44 @@ export default function Home() {
               enrichment{enrichError ? "" : ", ZoomInfo, and Common Room"} applied
               {enrichError ? " (ZoomInfo / Common Room step failed; showing AI results)." : "."}
             </p>
-            <div className="mt-4 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-              <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
-                <thead className="bg-zinc-100 dark:bg-zinc-800/80">
-                  <tr>
-                    <th className="border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700">
-                      Raw input
-                    </th>
-                    <th className="border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700">
-                      Resolved
-                    </th>
-                    <th className="border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700">
-                      Domain
-                    </th>
-                    <th className="border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700">
-                      State
-                    </th>
-                    <th className="border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700">
-                      Employees
-                    </th>
-                    <th className="border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700">
-                      LinkedIn URL
-                    </th>
-                    <th className="border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700">
-                      Confidence
-                    </th>
-                    <th className="border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700">
-                      AI reasoning
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {enrichedListType === "companies"
-                    ? (enriched as EnrichedCompany[]).map((row) => (
-                        <tr
-                          key={row.id}
-                          className="border-b border-zinc-100 dark:border-zinc-800"
-                        >
-                          <td className="px-3 py-2 align-top text-zinc-800 dark:text-zinc-200">
-                            {row.rawInput}
-                          </td>
-                          <td className="px-3 py-2 align-top text-zinc-800 dark:text-zinc-200">
-                            {row.resolvedName}
-                          </td>
-                          <td className="max-w-[10rem] break-words px-3 py-2 align-top text-zinc-800 dark:text-zinc-200">
-                            {"domain" in row ? row.domain : ""}
-                          </td>
-                          <td className="px-3 py-2 align-top text-zinc-800 dark:text-zinc-200">
-                            {"state" in row ? row.state : ""}
-                          </td>
-                          <td className="px-3 py-2 align-top tabular-nums text-zinc-800 dark:text-zinc-200">
-                            {"numberOfEmployees" in row && row.numberOfEmployees != null
-                              ? row.numberOfEmployees
-                              : ""}
-                          </td>
-                          <td className="max-w-[12rem] break-all px-3 py-2 align-top text-xs text-zinc-800 dark:text-zinc-200">
-                            {"linkedinUrl" in row ? row.linkedinUrl : ""}
-                          </td>
-                          <td className="px-3 py-2 align-top">
-                            <span
-                              className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${confidenceBadgeClass(row.confidenceScore)}`}
-                            >
-                              {row.confidenceScore}
-                            </span>
-                          </td>
-                          <td className="max-w-md px-3 py-2 align-top text-zinc-700 dark:text-zinc-300">
-                            {row.aiReasoning}
-                          </td>
-                        </tr>
-                      ))
-                    : (enriched as EnrichedContact[]).map((row) => (
-                        <tr
-                          key={row.id}
-                          className="border-b border-zinc-100 dark:border-zinc-800"
-                        >
-                          <td className="px-3 py-2 align-top text-zinc-800 dark:text-zinc-200">
-                            {[row.firstName, row.lastName].filter(Boolean).join(" ")}
-                            {row.rawEmail ? (
-                              <>
-                                <br />
-                                <span className="text-zinc-500">{row.rawEmail}</span>
-                              </>
-                            ) : null}
-                          </td>
-                          <td className="px-3 py-2 align-top text-zinc-800 dark:text-zinc-200">
-                            {row.resolvedEmail}
-                            <br />
-                            <span className="text-zinc-500">{row.resolvedCompany}</span>
-                          </td>
-                          <td className="max-w-[10rem] break-words px-3 py-2 align-top text-zinc-800 dark:text-zinc-200">
-                            {"companyDomain" in row ? row.companyDomain : ""}
-                          </td>
-                          <td className="px-3 py-2 align-top text-zinc-800 dark:text-zinc-200">
-                            {"location" in row ? row.location : ""}
-                          </td>
-                          <td className="px-3 py-2 align-top text-zinc-500 dark:text-zinc-400">
-                            —
-                          </td>
-                          <td className="max-w-[12rem] break-all px-3 py-2 align-top text-xs text-zinc-800 dark:text-zinc-200">
-                            {"linkedinUrl" in row ? row.linkedinUrl : ""}
-                          </td>
-                          <td className="px-3 py-2 align-top">
-                            <span
-                              className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${confidenceBadgeClass(row.confidenceScore)}`}
-                            >
-                              {row.confidenceScore}
-                            </span>
-                          </td>
-                          <td className="max-w-md px-3 py-2 align-top text-zinc-700 dark:text-zinc-300">
-                            {row.aiReasoning}
-                          </td>
-                        </tr>
-                      ))}
-                </tbody>
-              </table>
+            <div className="mt-4">
+              <ReviewTable
+                rows={reviewRows}
+                listType={enrichedListType}
+                onRowsChange={setReviewRows}
+              />
             </div>
           </section>
         )}
       </main>
+
+      {step === "enriched" && enriched && enrichedListType && (
+        <div className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center border-t border-zinc-200 bg-zinc-50/95 px-4 py-3 backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-950/95">
+          <div className="pointer-events-auto flex w-full max-w-6xl flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-h-[1.25rem] text-xs text-amber-800 dark:text-amber-200">
+              {unresolvedApprovedCount > 0 ? (
+                <span>
+                  ⚠️ {unresolvedApprovedCount} unresolved record
+                  {unresolvedApprovedCount === 1 ? "" : "s"} included — consider reviewing before pushing
+                </span>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              disabled={approvedRowsForPush.length === 0 || !eventContext}
+              onClick={() => void runHubSpotPush()}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+                approvedRowsForPush.length > 0 && eventContext
+                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  : "cursor-not-allowed bg-zinc-300 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"
+              }`}
+            >
+              Push {approvedRowsForPush.length}{" "}
+              {enrichedListType === "companies" ? "companies" : "contacts"} to HubSpot →
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
