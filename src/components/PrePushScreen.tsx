@@ -1,6 +1,5 @@
 "use client";
 
-import { ConfidenceBadge } from "@/components/ConfidenceBadge";
 import type {
   EnrichedCompany,
   EnrichedContact,
@@ -42,6 +41,62 @@ export type PrePushSettings = {
   notes: string;
 };
 
+function websiteFromDomain(domain: string): string {
+  const d = domain.trim().replace(/^www\./i, "");
+  return d ? `https://www.${d}` : "";
+}
+
+function MembershipNotesCell({
+  rowId,
+  value,
+  onSave,
+}: {
+  rowId: string;
+  value: string;
+  onSave: (id: string, v: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        className={`w-full min-w-40 ${FIELD_CONTROL}`}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => {
+          onSave(rowId, draft);
+          setEditing(false);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.currentTarget.blur();
+          }
+          if (e.key === "Escape") {
+            setDraft(value);
+            setEditing(false);
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="w-full max-w-xs truncate text-left text-zinc-800 underline decoration-zinc-400 decoration-dotted underline-offset-2 hover:text-zinc-950 dark:text-zinc-200 dark:hover:text-zinc-50"
+      onClick={() => setEditing(true)}
+    >
+      {value.trim() ? value : "—"}
+    </button>
+  );
+}
+
 export interface PrePushScreenProps {
   listType: "companies" | "contacts";
   approvedRows: Array<EnrichedCompany | EnrichedContact>;
@@ -49,6 +104,7 @@ export interface PrePushScreenProps {
   defaultLeadSourceDescription: string;
   onBack: () => void;
   onPush: (settings: PrePushSettings) => void;
+  onMembershipNotesChange?: (rowId: string, value: string) => void;
 }
 
 export function PrePushScreen({
@@ -58,6 +114,7 @@ export function PrePushScreen({
   defaultLeadSourceDescription,
   onBack,
   onPush,
+  onMembershipNotesChange,
 }: PrePushScreenProps) {
   const [listName, setListName] = useState(defaultListName);
   const [leadSource, setLeadSource] = useState("");
@@ -104,29 +161,39 @@ export function PrePushScreen({
 
   const canPush = useMemo(() => {
     const nameOk = listName.trim().length > 0;
+    const folderOk = foldersError ? folderManual.trim().length > 0 : folderId.trim().length > 0;
+    if (listType === "companies") {
+      return nameOk && folderOk;
+    }
     const lsOk = leadSource.trim().length > 0;
     const lsdOk = leadSourceDescription.trim().length > 0;
-    const folderOk = foldersError ? folderManual.trim().length > 0 : folderId.trim().length > 0;
     return nameOk && lsOk && lsdOk && folderOk;
-  }, [listName, leadSource, leadSourceDescription, folderId, folderManual, foldersError]);
+  }, [listName, leadSource, leadSourceDescription, folderId, folderManual, foldersError, listType]);
 
   const handlePush = useCallback(() => {
     if (!canPush) return;
     onPush({
       listName: listName.trim(),
       folderId: foldersError ? folderManual.trim() : folderId.trim(),
-      leadSource: leadSource.trim(),
-      leadSourceDescription: leadSourceDescription.trim(),
-      notes: notes.trim(),
+      leadSource: listType === "contacts" ? leadSource.trim() : "",
+      leadSourceDescription: listType === "contacts" ? leadSourceDescription.trim() : "",
+      notes: listType === "contacts" ? notes.trim() : "",
     });
-  }, [canPush, listName, folderId, folderManual, foldersError, leadSource, leadSourceDescription, notes, onPush]);
+  }, [canPush, listName, folderId, folderManual, foldersError, leadSource, leadSourceDescription, notes, listType, onPush]);
+
+  const saveMembershipNotes = useCallback(
+    (rowId: string, v: string) => {
+      onMembershipNotesChange?.(rowId, v);
+    },
+    [onMembershipNotesChange],
+  );
 
   return (
     <section className="flex flex-col gap-6">
       <div>
         <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">Ready to Import</h2>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Review your import settings before pushing to HubSpot
+          Review your import settings before pushing to HubSpot.
         </p>
       </div>
 
@@ -134,40 +201,81 @@ export function PrePushScreen({
         <h3 className="mb-3 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Summary</h3>
         <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
           <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
-            <thead className="bg-zinc-100 dark:bg-zinc-800/80">
-              <tr>
-                <th className={TABLE_HEAD_CELL}>Name</th>
-                <th className={TABLE_HEAD_CELL}>Domain</th>
-                <th className={TABLE_HEAD_CELL}>Confidence</th>
-              </tr>
-            </thead>
-            <tbody>
-              {listType === "companies"
-                ? (approvedRows as EnrichedCompany[]).map((row) => (
+            {listType === "companies" ? (
+              <>
+                <thead className="bg-zinc-100 dark:bg-zinc-800/80">
+                  <tr>
+                    <th className={TABLE_HEAD_CELL}>Name</th>
+                    <th className={TABLE_HEAD_CELL}>Domain</th>
+                    <th className={TABLE_HEAD_CELL}>Website</th>
+                    <th className={TABLE_HEAD_CELL}>LinkedIn</th>
+                    <th className={TABLE_HEAD_CELL}>State/Region</th>
+                    <th className={TABLE_HEAD_CELL}>Number of Employees</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(approvedRows as EnrichedCompany[]).map((row) => (
                     <tr key={row.id} className={TABLE_ROW}>
                       <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.resolvedName}</td>
                       <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
                         {row.domain}
                       </td>
-                      <td className="px-3 py-2">
-                        <ConfidenceBadge score={row.confidenceScore} />
-                      </td>
-                    </tr>
-                  ))
-                : (approvedRows as EnrichedContact[]).map((row) => (
-                    <tr key={row.id} className={TABLE_ROW}>
-                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                        {[row.firstName, row.lastName].filter(Boolean).join(" ")}
-                      </td>
                       <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                        {row.companyDomain || row.resolvedCompany}
+                        {websiteFromDomain(row.domain)}
                       </td>
-                      <td className="px-3 py-2">
-                        <ConfidenceBadge score={row.confidenceScore} />
+                      <td className="max-w-40 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        {row.linkedinUrl || "—"}
+                      </td>
+                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.state || "—"}</td>
+                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        {row.numberOfEmployees != null ? String(row.numberOfEmployees) : "—"}
                       </td>
                     </tr>
                   ))}
-            </tbody>
+                </tbody>
+              </>
+            ) : (
+              <>
+                <thead className="bg-zinc-100 dark:bg-zinc-800/80">
+                  <tr>
+                    <th className={TABLE_HEAD_CELL}>First Name</th>
+                    <th className={TABLE_HEAD_CELL}>Last Name</th>
+                    <th className={TABLE_HEAD_CELL}>Email</th>
+                    <th className={TABLE_HEAD_CELL}>Company</th>
+                    <th className={TABLE_HEAD_CELL}>Title</th>
+                    <th className={TABLE_HEAD_CELL}>LinkedIn</th>
+                    <th className={TABLE_HEAD_CELL}>State/Region</th>
+                    <th className={TABLE_HEAD_CELL}>Membership Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(approvedRows as EnrichedContact[]).map((row) => (
+                    <tr key={row.id} className={TABLE_ROW}>
+                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.firstName}</td>
+                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.lastName}</td>
+                      <td className="max-w-44 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        {row.resolvedEmail}
+                      </td>
+                      <td className="max-w-40 px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        {row.resolvedCompany}
+                      </td>
+                      <td className="max-w-36 px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.title || "—"}</td>
+                      <td className="max-w-36 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        {row.linkedinUrl || "—"}
+                      </td>
+                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.location || "—"}</td>
+                      <td className="px-3 py-2 align-top text-zinc-800 dark:text-zinc-200">
+                        <MembershipNotesCell
+                          rowId={row.id}
+                          value={row.membershipNotes ?? ""}
+                          onSave={saveMembershipNotes}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </>
+            )}
           </table>
         </div>
       </div>
@@ -223,49 +331,53 @@ export function PrePushScreen({
           )}
         </label>
 
-        <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">
-            Lead Source <span className="text-red-600">*</span>
-          </span>
-          <select
-            className={FIELD_CONTROL}
-            value={leadSource}
-            onChange={(e) => setLeadSource(e.target.value)}
-            required
-          >
-            <option value="">Select lead source</option>
-            {LEAD_SOURCE_OPTIONS.map((opt) => (
-              <option key={opt} value={opt}>
-                {opt}
-              </option>
-            ))}
-          </select>
-        </label>
+        {listType === "contacts" ? (
+          <>
+            <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+              <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                Lead Source <span className="text-red-600">*</span>
+              </span>
+              <select
+                className={FIELD_CONTROL}
+                value={leadSource}
+                onChange={(e) => setLeadSource(e.target.value)}
+                required
+              >
+                <option value="">Select lead source</option>
+                {LEAD_SOURCE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-        <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">
-            Lead Source Description <span className="text-red-600">*</span>
-          </span>
-          <input
-            className={FIELD_CONTROL}
-            value={leadSourceDescription}
-            onChange={(e) => setLeadSourceDescription(e.target.value)}
-          />
-        </label>
+            <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+              <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                Lead Source Description <span className="text-red-600">*</span>
+              </span>
+              <input
+                className={FIELD_CONTROL}
+                value={leadSourceDescription}
+                onChange={(e) => setLeadSourceDescription(e.target.value)}
+              />
+            </label>
 
-        <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">Notes</span>
-          <textarea
-            rows={3}
-            className={`resize-y ${FIELD_CONTROL}`}
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-        </label>
+            <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+              <span className="font-medium text-zinc-800 dark:text-zinc-200">Notes</span>
+              <textarea
+                rows={3}
+                className={`resize-y ${FIELD_CONTROL}`}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+              />
+            </label>
+          </>
+        ) : null}
       </div>
 
-      <div className="flex flex-col gap-4 border-t border-zinc-100 pt-4 dark:border-zinc-800">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-col gap-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
+        <div className="flex items-center justify-between">
           <button
             type="button"
             onClick={onBack}
@@ -286,10 +398,11 @@ export function PrePushScreen({
             Push to HubSpot →
           </button>
         </div>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          💡 After pushing, open the HubSpot list and click &quot;Enrich&quot; to run HubSpot&apos;s native data
-          enrichment.
-        </p>
+        <div className="ml-auto max-w-xs text-right text-sm text-(--text-muted)">
+          💡 After pushing, open the HubSpot list
+          <br />
+          and click &quot;Enrich&quot; to run native data enrichment.
+        </div>
       </div>
     </section>
   );

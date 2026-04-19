@@ -1,57 +1,63 @@
 @import "tailwindcss";
 
-:root {
-  /* Realm Brand Colors */
-  --realm-purple: #6c3ce1;
-  --realm-purple-hover: #5c2ed1;
-  --realm-purple-light: #ede9ff;
-  --realm-navy: #0d1b2a;
-  --realm-navy-muted: #3d4f61;
-
-  /* Backgrounds */
-  --bg-page: #f8f9fb;
-  --bg-card: #ffffff;
-  --bg-muted: #f1f3f6;
-
-  /* Borders */
-  --border-default: #e2e6ea;
-  --border-focus: #6c3ce1;
-
-  /* Text */
-  --text-primary: #0d1b2a;
-  --text-secondary: #3d4f61;
-  --text-muted: #8a96a3;
-
-  /* Semantic */
-  --color-success: #16a34a;
-  --color-success-bg: #f0fdf4;
-  --color-warning: #d97706;
-  --color-warning-bg: #fffbeb;
-  --color-error: #dc2626;
-  --color-error-bg: #fef2f2;
-
-  /* Confidence colors */
-  --conf-high: #16a34a;
-  --conf-high-bg: #f0fdf4;
-  --conf-medium: #d97706;
-  --conf-medium-bg: #fffbeb;
-  --conf-low: #ea580c;
-  --conf-low-bg: #fff7ed;
-  --conf-unresolved: #dc2626;
-  --conf-unresolved-bg: #fef2f2;
-
-  /* Shadows */
-  --shadow-card: 0 1px 3px rgba(13, 27, 42, 0.08), 0 1px 2px rgba(13, 27, 42, 0.04);
-  --shadow-card-hover: 0 4px 12px rgba(13, 27, 42, 0.12);
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-@theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+:root {
+  --realm-purple: #7B35C1;
+  --realm-purple-hover: #6A2AAD;
+  --realm-purple-light: #EDE6F5;
+  --realm-blue: #3685B3;
+  --realm-blue-hover: #2A6E99;
+  --realm-cyan: #1FC6DB;
+  --realm-navy: #1E2227;
+  --realm-navy-muted: #7E7F8E;
+  --bg-page: #F8F9FB;
+  --bg-card: #FFFFFF;
+  --bg-muted: #F1F3F6;
+  --border-default: #E2E6EA;
+  --border-focus: #562F80;
+  --text-primary: #1E2227;
+  --text-secondary: #4A4B57;
+  --text-muted: #7E7F8E;
+  --color-success: #16A34A;
+  --color-success-bg: #F0FDF4;
+  --color-warning: #D97706;
+  --color-warning-bg: #FFFBEB;
+  --color-error: #DC2626;
+  --color-error-bg: #FEF2F2;
+  --conf-high: #16A34A;
+  --conf-high-bg: #F0FDF4;
+  --conf-medium: #D97706;
+  --conf-medium-bg: #FFFBEB;
+  --conf-low: #EA580C;
+  --conf-low-bg: #FFF7ED;
+  --conf-unresolved: #DC2626;
+  --conf-unresolved-bg: #FEF2F2;
+  --shadow-card: 0 1px 3px rgba(30, 34, 39, 0.08), 0 1px 2px rgba(30, 34, 39, 0.04);
+  --shadow-card-hover: 0 4px 12px rgba(30, 34, 39, 0.12);
 }
 
 body {
+  font-family: "Golos Text", sans-serif;
   background: var(--bg-page);
   color: var(--text-primary);
-  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: "Onest", sans-serif;
+  letter-spacing: -0.03em;
 }

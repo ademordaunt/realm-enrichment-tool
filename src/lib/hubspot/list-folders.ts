@@ -1,6 +1,14 @@
-import { hubspotFetch, readHubSpotError } from "@/lib/hubspot/http";
+import { hubspotFetch } from "@/lib/hubspot/http";
 
 export type HubSpotFolderRow = { id: string; name: string };
+
+/** Used when the HubSpot API returns nothing or errors so the folder dropdown always works. */
+export const FALLBACK_FOLDERS: HubSpotFolderRow[] = [
+  { id: "cisoexecnet", name: "CISOExecNet" },
+  { id: "cyalliance", name: "CyAlliance" },
+  { id: "cyalliance-post-event", name: "CyAlliance — CyAlliance Post-Event" },
+  { id: "cyalliance-pre-event", name: "CyAlliance — CyAlliance Pre-Event" },
+];
 
 /**
  * Parses HubSpot list folders API JSON into a flat folder list.
@@ -34,18 +42,22 @@ export function parseHubSpotFoldersJson(json: unknown): HubSpotFolderRow[] {
 }
 
 /**
- * Fetches CRM list folders from HubSpot (contacts API path used for list folder tree).
+ * Fetches CRM list folders from HubSpot (CRM v3 lists folders).
+ * On failure or empty results, returns {@link FALLBACK_FOLDERS}.
  */
-export async function fetchHubSpotListFolders(): Promise<
-  { ok: true; folders: HubSpotFolderRow[] } | { ok: false; status: number; message: string }
-> {
-  const res = await hubspotFetch("/contacts/v1/lists/folders");
-
-  if (!res.ok) {
-    const message = await readHubSpotError(res);
-    return { ok: false, status: res.status, message };
+export async function fetchHubSpotListFolders(): Promise<HubSpotFolderRow[]> {
+  try {
+    const res = await hubspotFetch("/crm/v3/lists/folders");
+    if (!res.ok) {
+      return [...FALLBACK_FOLDERS];
+    }
+    const json: unknown = await res.json();
+    const folders = parseHubSpotFoldersJson(json);
+    if (folders.length === 0) {
+      return [...FALLBACK_FOLDERS];
+    }
+    return folders;
+  } catch {
+    return [...FALLBACK_FOLDERS];
   }
-
-  const json: unknown = await res.json();
-  return { ok: true, folders: parseHubSpotFoldersJson(json) };
 }

@@ -27,6 +27,134 @@ const cardClass =
 const inputClass =
   "w-full rounded-lg border border-(--border-default) bg-(--bg-card) px-3 py-2 text-(--text-primary) focus:border-transparent focus:outline-none focus:ring-2 focus:ring-(--realm-purple)";
 
+const inputWithTrailingIconClass = `${inputClass} pr-10`;
+
+const selectClass =
+  `${inputClass} appearance-none pr-10`;
+
+/** 50 states + DC, A–Z (excludes National / International from shared list). */
+const US_STATE_OPTIONS = STATE_REGION_OPTIONS.filter(
+  (x) => x !== "National" && x !== "International",
+);
+
+const MACRO_REGION_OPTIONS = [
+  "Northeast",
+  "Mid-Atlantic",
+  "Southeast",
+  "Midwest",
+  "Southwest",
+  "Mountain West",
+  "Pacific West",
+] as const;
+
+const ROOT_PICK_STATE = "__pick_state__";
+const ROOT_PICK_REGION = "__pick_region__";
+const CHANGE_SELECTION = "__change_selection__";
+
+function StateSubPicker({
+  disabled,
+  onBack,
+  onPick,
+}: {
+  disabled: boolean;
+  onBack: () => void;
+  onPick: (name: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <button
+        type="button"
+        className="self-start text-sm text-(--realm-purple) transition-colors hover:text-(--realm-purple-hover) hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+        onClick={onBack}
+        disabled={disabled}
+      >
+        ← Back
+      </button>
+      <div className="relative">
+        <select
+          key="state-sub"
+          className={selectClass}
+          defaultValue=""
+          onChange={(e) => {
+            const v = e.target.value;
+            if (!v) return;
+            onPick(v);
+          }}
+          disabled={disabled}
+        >
+          <option value="" disabled hidden>
+            Select state
+          </option>
+          {US_STATE_OPTIONS.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <span
+          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
+          aria-hidden
+        >
+          ▾
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function RegionSubPicker({
+  disabled,
+  onBack,
+  onPick,
+}: {
+  disabled: boolean;
+  onBack: () => void;
+  onPick: (name: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <button
+        type="button"
+        className="self-start text-sm text-(--realm-purple) transition-colors hover:text-(--realm-purple-hover) hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+        onClick={onBack}
+        disabled={disabled}
+      >
+        ← Back
+      </button>
+      <div className="relative">
+        <select
+          key="region-sub"
+          className={selectClass}
+          defaultValue=""
+          onChange={(e) => {
+            const v = e.target.value;
+            if (!v) return;
+            onPick(v);
+          }}
+          disabled={disabled}
+        >
+          <option value="" disabled hidden>
+            Select region
+          </option>
+          {MACRO_REGION_OPTIONS.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <span
+          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
+          aria-hidden
+        >
+          ▾
+        </span>
+      </div>
+    </div>
+  );
+}
+
+type LocationPickerView = "root" | "state" | "region";
+
 function eventNameFromFileName(fileName: string): string {
   const base = fileName.replace(/\.[^.]+$/i, "");
   const parts = base.split(/_+/).map((p) => p.trim()).filter(Boolean);
@@ -68,6 +196,7 @@ export function EventContextForm({
   const [monthName, setMonthName] = useState<string>("");
   const [year, setYear] = useState<number | "">("");
   const [region, setRegion] = useState("");
+  const [locationView, setLocationView] = useState<LocationPickerView>("root");
   const [audienceLevel, setAudienceLevel] = useState(DEFAULT_AUDIENCE);
   const [audienceTouched, setAudienceTouched] = useState(false);
 
@@ -84,7 +213,9 @@ export function EventContextForm({
   useEffect(() => {
     if (!initialValues) return;
     setEventName(initialValues.eventName);
-    setRegion(initialValues.region);
+    const r = initialValues.region;
+    setRegion(r);
+    setLocationView("root");
     setAudienceLevel(initialValues.audienceLevel || DEFAULT_AUDIENCE);
     const parsed = parseMonthYearString(initialValues.eventDate);
     if (parsed) {
@@ -101,7 +232,7 @@ export function EventContextForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!monthYearForPrompt.trim()) return;
+    if (!monthYearForPrompt.trim() || !region.trim()) return;
     onSubmit({
       eventName: eventName.trim(),
       eventDate: monthYearForPrompt.trim(),
@@ -117,7 +248,7 @@ export function EventContextForm({
         <button
           type="button"
           onClick={onBackToUpload}
-          className="mb-3 self-start text-sm text-(--text-muted) transition-colors hover:text-(--text-primary) hover:underline"
+          className="mt-6 mb-2 self-start text-sm text-(--text-muted) transition-colors hover:text-(--text-primary) hover:underline"
         >
           ← Back to Upload
         </button>
@@ -136,17 +267,22 @@ export function EventContextForm({
             <span className="font-medium text-(--text-primary)">
               Event Name <span className="text-(--color-error)">*</span>
             </span>
-            <input
-              required
-              className={inputClass}
-              placeholder="CISOExecNet Midwest"
-              value={eventName}
-              onChange={(e) => setEventName(e.target.value)}
-              disabled={disabled}
-            />
-            <span className="text-xs text-(--text-muted)">
-              Auto-filled from file name — edit if needed
-            </span>
+            <div className="relative">
+              <input
+                required
+                className={inputWithTrailingIconClass}
+                placeholder="CISOExecNet Midwest"
+                value={eventName}
+                onChange={(e) => setEventName(e.target.value)}
+                disabled={disabled}
+              />
+              <span
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-(--text-muted) opacity-40"
+                aria-hidden
+              >
+                ✏️
+              </span>
+            </div>
           </label>
 
           <div className="flex flex-col gap-1 text-sm sm:col-span-2">
@@ -154,34 +290,50 @@ export function EventContextForm({
               Event Date <span className="text-(--color-error)">*</span>
             </span>
             <div className="grid gap-3 sm:grid-cols-2">
-              <select
-                required
-                className={inputClass}
-                value={monthName}
-                onChange={(e) => setMonthName(e.target.value)}
-                disabled={disabled}
-              >
-                <option value="">Select Month</option>
-                {MONTH_NAMES.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <select
-                required
-                className={inputClass}
-                value={year === "" ? "" : String(year)}
-                onChange={(e) => setYear(e.target.value ? Number(e.target.value) : "")}
-                disabled={disabled}
-              >
-                <option value="">Select Year</option>
-                {years.map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <select
+                  required
+                  className={selectClass}
+                  value={monthName}
+                  onChange={(e) => setMonthName(e.target.value)}
+                  disabled={disabled}
+                >
+                  <option value="">Select Month</option>
+                  {MONTH_NAMES.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <span
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
+                  aria-hidden
+                >
+                  ▾
+                </span>
+              </div>
+              <div className="relative">
+                <select
+                  required
+                  className={selectClass}
+                  value={year === "" ? "" : String(year)}
+                  onChange={(e) => setYear(e.target.value ? Number(e.target.value) : "")}
+                  disabled={disabled}
+                >
+                  <option value="">Select Year</option>
+                  {years.map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+                <span
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
+                  aria-hidden
+                >
+                  ▾
+                </span>
+              </div>
             </div>
           </div>
 
@@ -189,34 +341,104 @@ export function EventContextForm({
             <span className="font-medium text-(--text-primary)">
               State / Region <span className="text-(--color-error)">*</span>
             </span>
-            <select
-              required
-              className={inputClass}
-              value={region}
-              onChange={(e) => setRegion(e.target.value)}
-              disabled={disabled}
-            >
-              <option value="">Select State</option>
-              {STATE_REGION_OPTIONS.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
-              ))}
-            </select>
+            {region && locationView === "root" ? (
+              <div className="relative">
+                <select
+                  required
+                  className={selectClass}
+                  value={region}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === CHANGE_SELECTION) {
+                      setRegion("");
+                      setLocationView("root");
+                      return;
+                    }
+                    setRegion(v);
+                  }}
+                  disabled={disabled}
+                >
+                  <option value={region}>{region}</option>
+                  <option value={CHANGE_SELECTION}>Choose different…</option>
+                </select>
+                <span
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
+                  aria-hidden
+                >
+                  ▾
+                </span>
+              </div>
+            ) : null}
+
+            {!region && locationView === "root" ? (
+              <div className="relative">
+                <select
+                  required
+                  className={selectClass}
+                  value=""
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === ROOT_PICK_STATE) setLocationView("state");
+                    else if (v === ROOT_PICK_REGION) setLocationView("region");
+                  }}
+                  disabled={disabled}
+                >
+                  <option value="">Select State / Region</option>
+                  <option value={ROOT_PICK_STATE}>Select a State →</option>
+                  <option value={ROOT_PICK_REGION}>Select a Region →</option>
+                </select>
+                <span
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
+                  aria-hidden
+                >
+                  ▾
+                </span>
+              </div>
+            ) : null}
+
+            {locationView === "state" ? (
+              <StateSubPicker
+                disabled={disabled}
+                onBack={() => setLocationView("root")}
+                onPick={(name) => {
+                  setRegion(name);
+                  setLocationView("root");
+                }}
+              />
+            ) : null}
+
+            {locationView === "region" ? (
+              <RegionSubPicker
+                disabled={disabled}
+                onBack={() => setLocationView("root")}
+                onPick={(name) => {
+                  setRegion(name);
+                  setLocationView("root");
+                }}
+              />
+            ) : null}
           </label>
 
           <label className="flex flex-col gap-1 text-sm sm:col-span-2">
             <span className="font-medium text-(--text-primary)">
               Audience Level <span className="text-(--color-error)">*</span>
             </span>
-            <input
-              required
-              className={`${inputClass} ${!audienceTouched ? "text-(--text-muted)" : ""}`}
-              value={audienceLevel}
-              onChange={(e) => setAudienceLevel(e.target.value)}
-              onFocus={() => setAudienceTouched(true)}
-              disabled={disabled}
-            />
+            <div className="relative">
+              <input
+                required
+                className={`${inputWithTrailingIconClass} ${!audienceTouched ? "text-(--text-muted)" : ""}`}
+                value={audienceLevel}
+                onChange={(e) => setAudienceLevel(e.target.value)}
+                onFocus={() => setAudienceTouched(true)}
+                disabled={disabled}
+              />
+              <span
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-(--text-muted) opacity-40"
+                aria-hidden
+              >
+                ✏️
+              </span>
+            </div>
           </label>
         </div>
 

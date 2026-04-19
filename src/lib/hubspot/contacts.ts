@@ -24,7 +24,7 @@ function contactProperties(
   if (ls) props.lead_source = ls;
   const lsd = contact.leadSourceDescription?.trim();
   if (lsd) props.lead_source_description = lsd;
-  const n = contact.notes?.trim();
+  const n = contact.membershipNotes?.trim() || contact.notes?.trim();
   if (n) props.notes = n;
   if (extras?.leadSource?.trim()) props.lead_source = extras.leadSource.trim();
   if (extras?.leadSourceDescription?.trim()) {
@@ -131,8 +131,12 @@ export async function updateContact(
     if (extras.leadSourceDescription?.trim() && isEmpty(ex.lead_source_description)) {
       updates.lead_source_description = extras.leadSourceDescription.trim();
     }
-    if (extras.notes?.trim() && isEmpty(ex.notes)) {
-      updates.notes = extras.notes.trim();
+    const noteCandidate =
+      extras.notes?.trim() ||
+      contact.membershipNotes?.trim() ||
+      contact.notes?.trim();
+    if (noteCandidate && isEmpty(ex.notes)) {
+      updates.notes = noteCandidate;
     }
   } else {
     if (contact.leadSource?.trim() && isEmpty(ex.lead_source)) {
@@ -141,8 +145,9 @@ export async function updateContact(
     if (contact.leadSourceDescription?.trim() && isEmpty(ex.lead_source_description)) {
       updates.lead_source_description = contact.leadSourceDescription.trim();
     }
-    if (contact.notes?.trim() && isEmpty(ex.notes)) {
-      updates.notes = contact.notes.trim();
+    const noteCandidate = contact.membershipNotes?.trim() || contact.notes?.trim();
+    if (noteCandidate && isEmpty(ex.notes)) {
+      updates.notes = noteCandidate;
     }
   }
 

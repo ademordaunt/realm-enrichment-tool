@@ -11,10 +11,6 @@ export async function GET(): Promise<Response> {
     );
   }
 
-  const result = await fetchHubSpotListFolders();
-  if (!result.ok) {
-    return Response.json({ error: result.message, folders: [] }, { status: result.status });
-  }
-
-  return Response.json({ folders: result.folders });
+  const folders = await fetchHubSpotListFolders();
+  return Response.json({ folders });
 }

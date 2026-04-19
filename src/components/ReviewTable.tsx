@@ -55,11 +55,12 @@ function EditableCell(props: {
   onSave: (next: string) => void;
 }) {
   const { value, edited, muted, align = "left", inputMode, breakAll, onSave } = props;
+  const normalized = value == null ? "" : String(value);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
+  const [draft, setDraft] = useState(normalized);
 
   useEffect(() => {
-    if (!editing) setDraft(value);
+    if (!editing) setDraft(value == null ? "" : String(value));
   }, [value, editing]);
 
   const wrap = breakAll ? "break-all whitespace-normal" : "wrap-break-word";
@@ -82,7 +83,7 @@ function EditableCell(props: {
               setEditing(false);
             }
             if (e.key === "Escape") {
-              setDraft(value);
+              setDraft(normalized);
               setEditing(false);
             }
           }}
@@ -104,12 +105,16 @@ function EditableCell(props: {
   return (
     <button
       type="button"
-      className={`relative w-full max-w-50 rounded px-1.5 py-0.5 text-left text-xs sm:text-sm ${wrap} ${
+      className={`relative min-h-5 w-full max-w-50 rounded px-1.5 py-0.5 text-left text-xs sm:text-sm ${wrap} ${
         align === "right" ? "text-right tabular-nums" : ""
       } ${muted ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100"} hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
       onClick={() => setEditing(true)}
     >
-      {value}
+      {normalized === "" ? (
+        <span className="text-zinc-400">—</span>
+      ) : (
+        normalized
+      )}
       {edited ? (
         <span
           className="pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-blue-500"
@@ -127,17 +132,18 @@ function StateRegionCell(props: {
   onSave: (next: string) => void;
 }) {
   const { value, edited, muted, onSave } = props;
+  const normalized = value == null ? "" : String(value);
   const [editing, setEditing] = useState(false);
 
   const options = useMemo(() => {
     const o = [...STATE_REGION_OPTIONS];
-    if (value && !o.includes(value)) {
-      return [value, ...o];
+    if (normalized && !o.includes(normalized)) {
+      return [normalized, ...o];
     }
     return o;
-  }, [value]);
+  }, [normalized]);
 
-  const selectValue = options.includes(value) || value === "" ? value : value;
+  const selectValue = options.includes(normalized) || normalized === "" ? normalized : normalized;
 
   if (editing) {
     return (
@@ -179,12 +185,16 @@ function StateRegionCell(props: {
   return (
     <button
       type="button"
-      className={`relative max-w-56 rounded px-1.5 py-0.5 text-left text-xs wrap-break-word sm:text-sm ${
+      className={`relative min-h-5 w-full max-w-56 rounded px-1.5 py-0.5 text-left text-xs wrap-break-word sm:text-sm ${
         muted ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100"
       } hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
       onClick={() => setEditing(true)}
     >
-      {value}
+      {normalized === "" ? (
+        <span className="text-zinc-400">—</span>
+      ) : (
+        normalized
+      )}
       {edited ? (
         <span
           className="pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-blue-500"
@@ -271,6 +281,108 @@ function EmployeesCell(props: {
         />
       ) : null}
     </button>
+  );
+}
+
+function LinkedInProfileCell(props: {
+  value: string;
+  edited: boolean;
+  muted?: boolean;
+  breakAll?: boolean;
+  onSave: (next: string) => void;
+}) {
+  const { value, edited, muted, breakAll, onSave } = props;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(() => (value == null ? "" : String(value)));
+
+  useEffect(() => {
+    if (!editing) setDraft(value == null ? "" : String(value));
+  }, [value, editing]);
+
+  const wrap = breakAll ? "break-all whitespace-normal" : "wrap-break-word";
+
+  if (editing) {
+    return (
+      <div className={`relative min-w-24 max-w-50 ${wrap}`}>
+        <input
+          className={`w-full rounded border border-blue-500 bg-white px-1.5 py-0.5 text-xs outline-none ring-1 ring-blue-500/30 dark:bg-zinc-950 sm:text-sm ${
+            muted ? "text-zinc-500" : ""
+          } ${wrap}`}
+          value={draft}
+          autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onSave(draft.trim());
+              setEditing(false);
+            }
+            if (e.key === "Escape") {
+              setDraft(value == null ? "" : String(value));
+              setEditing(false);
+            }
+          }}
+          onBlur={() => {
+            onSave(draft.trim());
+            setEditing(false);
+          }}
+        />
+        {edited ? (
+          <span
+            className="pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-blue-500"
+            aria-hidden
+          />
+        ) : null}
+      </div>
+    );
+  }
+
+  const t = (value == null ? "" : String(value)).trim();
+  if (!t) {
+    return (
+      <button
+        type="button"
+        className={`relative w-full rounded px-1.5 py-0.5 text-left text-xs sm:text-sm ${wrap} ${
+          muted ? "text-zinc-500" : "text-zinc-400"
+        } hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
+        onClick={() => setEditing(true)}
+      >
+        —
+        {edited ? (
+          <span
+            className="pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-blue-500"
+            aria-hidden
+          />
+        ) : null}
+      </button>
+    );
+  }
+
+  const href = t.startsWith("http") ? t : `https://${t}`;
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Double-click to edit URL"
+      className={`relative inline-flex min-w-0 max-w-full items-baseline gap-0.5 break-all text-blue-600 hover:text-blue-800 dark:text-blue-400 ${wrap}`}
+      onDoubleClick={(e) => {
+        e.preventDefault();
+        setEditing(true);
+      }}
+    >
+      <span className="min-w-0 break-all">{t}</span>
+      <span className="shrink-0 text-base leading-none" aria-hidden>
+        ↗
+      </span>
+      {edited ? (
+        <span
+          className="pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-blue-500"
+          aria-hidden
+        />
+      ) : null}
+    </a>
   );
 }
 
@@ -404,21 +516,19 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   );
 
   const rowShellClass = (r: EnrichedCompany | EnrichedContact, rowIndex: number) => {
+    if (r.status === "approved") {
+      return "border-b border-(--border-default) bg-(--conf-high-bg)";
+    }
+
     const conf = r.confidenceScore;
     let borderClass = "border-l-transparent";
     if (conf === "unresolved") {
-      borderClass = "border-l-(--conf-unresolved)";
+      borderClass = "border-l-[var(--conf-unresolved)]";
     } else if (conf === "low") {
-      borderClass = "border-l-(--conf-low)";
-    } else if (conf === "medium") {
-      borderClass = "border-l-(--conf-medium)";
+      borderClass = "border-l-[var(--conf-low)]";
     }
 
     const base = `border-b border-(--border-default) border-l-4 ${borderClass}`;
-
-    if (r.status === "approved") {
-      return `${base} bg-(--conf-high-bg)`;
-    }
     if (r.status === "skipped") {
       return `${base} bg-(--bg-muted) opacity-70`;
     }
@@ -429,10 +539,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   return (
     <div className="flex flex-col gap-4 pb-24">
       <h2 className="text-lg font-semibold text-(--realm-navy)">Review &amp; Edit</h2>
-
-      <p className="text-sm text-(--text-muted) bg-(--bg-muted) rounded-lg px-4 py-2">
-        ℹ️ ZoomInfo verification: pending API access · 0 credits estimated for this import
-      </p>
 
       <p className="text-sm font-medium text-(--text-secondary)">
         <span>{approvedCount} Approved</span>
@@ -470,22 +576,30 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
           <label className="text-xs font-medium text-(--text-secondary)" htmlFor="rt-filter">
             Show
           </label>
-          <select
-            id="rt-filter"
-            className="rounded-lg border border-(--border-default) bg-(--bg-card) px-2 py-1 text-xs text-(--text-primary)"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value as FilterKey)}
-          >
-            <option value="all">All</option>
-            <option value="needs_review">Needs Review</option>
-            <option value="approved">Approved</option>
-            <option value="skipped">Skipped</option>
-          </select>
+          <div className="relative">
+            <select
+              id="rt-filter"
+              className="appearance-none rounded-lg border border-(--border-default) bg-(--bg-card) py-1 pl-2 pr-8 text-xs text-(--text-primary)"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value as FilterKey)}
+            >
+              <option value="all">All</option>
+              <option value="needs_review">Needs Review</option>
+              <option value="approved">Approved</option>
+              <option value="skipped">Skipped</option>
+            </select>
+            <span
+              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
+              aria-hidden
+            >
+              ▾
+            </span>
+          </div>
         </div>
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-(--border-default)">
-        <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
+        <table className="min-w-full border-separate border-spacing-0 text-left text-xs sm:text-sm">
           <thead className="bg-(--bg-muted) text-(--text-secondary) text-sm font-semibold">
             {listType === "companies" ? (
               <tr>
@@ -606,45 +720,20 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         />
                       </td>
                       <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-top break-all whitespace-normal">
-                        <div className="flex flex-wrap items-start gap-1">
-                          <EditableCell
-                            value={row.linkedinUrl}
-                            edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
-                            muted={muted}
-                            breakAll
-                            onSave={(v) => {
-                              markEdited(row.id, "linkedinUrl");
-                              setRows(
-                                (rows as EnrichedCompany[]).map((r) =>
-                                  r.id === row.id ? { ...r, linkedinUrl: v.trim() } : r,
-                                ),
-                              );
-                            }}
-                          />
-                          {row.linkedinUrl.trim() ? (
-                            <a
-                              href={
-                                row.linkedinUrl.startsWith("http")
-                                  ? row.linkedinUrl
-                                  : `https://${row.linkedinUrl}`
-                              }
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title={
-                                row.linkedinUrl.startsWith("http")
-                                  ? row.linkedinUrl
-                                  : `https://${row.linkedinUrl}`
-                              }
-                              className="inline-flex max-w-48 shrink-0 truncate text-blue-600 hover:text-blue-800 dark:text-blue-400"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <span className="truncate">Open profile</span>
-                              <span aria-hidden className="ml-0.5 text-base leading-none">
-                                ↗
-                              </span>
-                            </a>
-                          ) : null}
-                        </div>
+                        <LinkedInProfileCell
+                          value={row.linkedinUrl}
+                          edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
+                          muted={muted}
+                          breakAll
+                          onSave={(v) => {
+                            markEdited(row.id, "linkedinUrl");
+                            setRows(
+                              (rows as EnrichedCompany[]).map((r) =>
+                                r.id === row.id ? { ...r, linkedinUrl: v } : r,
+                              ),
+                            );
+                          }}
+                        />
                       </td>
                       <td className="px-2 py-1.5 align-middle">
                         <ConfidenceBadge score={row.confidenceScore} />
@@ -753,45 +842,20 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         />
                       </td>
                       <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-top break-all whitespace-normal">
-                        <div className="flex flex-wrap items-start gap-1">
-                          <EditableCell
-                            value={row.linkedinUrl}
-                            edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
-                            muted={muted}
-                            breakAll
-                            onSave={(v) => {
-                              markEdited(row.id, "linkedinUrl");
-                              setRows(
-                                (rows as EnrichedContact[]).map((r) =>
-                                  r.id === row.id ? { ...r, linkedinUrl: v.trim() } : r,
-                                ),
-                              );
-                            }}
-                          />
-                          {row.linkedinUrl.trim() ? (
-                            <a
-                              href={
-                                row.linkedinUrl.startsWith("http")
-                                  ? row.linkedinUrl
-                                  : `https://${row.linkedinUrl}`
-                              }
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title={
-                                row.linkedinUrl.startsWith("http")
-                                  ? row.linkedinUrl
-                                  : `https://${row.linkedinUrl}`
-                              }
-                              className="inline-flex max-w-48 shrink-0 truncate text-blue-600 hover:text-blue-800 dark:text-blue-400"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <span className="truncate">Open profile</span>
-                              <span aria-hidden className="ml-0.5 text-base leading-none">
-                                ↗
-                              </span>
-                            </a>
-                          ) : null}
-                        </div>
+                        <LinkedInProfileCell
+                          value={row.linkedinUrl}
+                          edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
+                          muted={muted}
+                          breakAll
+                          onSave={(v) => {
+                            markEdited(row.id, "linkedinUrl");
+                            setRows(
+                              (rows as EnrichedContact[]).map((r) =>
+                                r.id === row.id ? { ...r, linkedinUrl: v } : r,
+                              ),
+                            );
+                          }}
+                        />
                       </td>
                       <td className="px-2 py-1.5 align-middle">
                         <ConfidenceBadge score={row.confidenceScore} />

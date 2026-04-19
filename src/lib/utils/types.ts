@@ -16,6 +16,8 @@ export interface RawContactRow {
   company?: string;
   location?: string;
   notes?: string;
+  /** CSV "Membership Notes" / notes columns mapped for import review. */
+  membershipNotes?: string;
   leadSource?: string;
   leadSourceDescription?: string;
   [key: string]: string | undefined;
@@ -62,6 +64,7 @@ export interface EnrichedContact {
   leadSource: string;
   leadSourceDescription: string;
   notes: string;
+  membershipNotes: string;
   enrichedByZoomInfo: boolean;
   enrichedByCommonRoom: boolean;
   enrichedByAI: boolean;

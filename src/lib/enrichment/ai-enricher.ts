@@ -8,7 +8,9 @@ import type {
   RawContactRow,
 } from "@/lib/utils/types";
 
-const BATCH_SIZE = 10;
+/** Batch size for AI enrichment streaming progress (keep in sync with progress UI). */
+export const ENRICHMENT_BATCH_SIZE = 10;
+const BATCH_SIZE = ENRICHMENT_BATCH_SIZE;
 
 export const COMPANY_MODEL = "claude-sonnet-4-6" as const;
 
@@ -191,6 +193,7 @@ function mapContactAiToEnriched(
     leadSource: row.leadSource?.trim() ?? "",
     leadSourceDescription: row.leadSourceDescription?.trim() ?? "",
     notes: row.notes?.trim() ?? "",
+    membershipNotes: row.membershipNotes?.trim() ?? "",
     enrichedByZoomInfo: false,
     enrichedByCommonRoom: false,
     enrichedByAI: true,

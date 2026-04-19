@@ -4,8 +4,7 @@ export interface EnrichmentProgressProps {
   startRow: number;
   endRow: number;
   totalRows: number;
-  mode: "enriching" | "verifying";
-  /** Shown above the bar when `mode === "verifying"`. */
+  /** Shown above the bar. */
   verifyTitle?: string;
   /** Sub-line below the bar for verifying (e.g. Common Room / ZoomInfo status). */
   verifyDetail?: string | null;
@@ -15,7 +14,6 @@ export function EnrichmentProgress({
   startRow,
   endRow,
   totalRows,
-  mode,
   verifyTitle,
   verifyDetail,
 }: EnrichmentProgressProps) {
@@ -24,7 +22,7 @@ export function EnrichmentProgress({
 
   return (
     <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
-      {mode === "verifying" && verifyTitle ? (
+      {verifyTitle ? (
         <p
           className="text-center text-sm font-semibold text-(--text-primary)"
           role="status"
@@ -34,12 +32,10 @@ export function EnrichmentProgress({
       ) : null}
       <p
         className={`text-center text-sm font-medium text-(--text-primary) ${
-          mode === "verifying" && verifyTitle ? "mt-2" : ""
+          verifyTitle ? "mt-2" : ""
         }`}
+        role="status"
       >
-        {pct}% complete
-      </p>
-      <p className="mt-1 text-center text-sm text-(--text-secondary)" role="status">
         Analyzing rows {startRow}–{endRow} of {totalRows}…
       </p>
       <div
@@ -51,11 +47,7 @@ export function EnrichmentProgress({
           style={{ width: `${pct}%` }}
         />
       </div>
-      {mode === "enriching" ? (
-        <p className="mt-2 text-center text-sm text-(--text-muted)">
-          You can leave this tab — we&apos;ll notify you when enrichment is complete
-        </p>
-      ) : verifyDetail ? (
+      {verifyDetail ? (
         <p className="mt-2 text-center text-sm text-(--text-muted)">{verifyDetail}</p>
       ) : null}
     </div>
