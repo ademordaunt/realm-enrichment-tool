@@ -1,5 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { v4 as uuidv4 } from "uuid";
+import {
+  getCachedCompany,
+  getCachedContact,
+  setCachedCompany,
+  setCachedContact,
+} from "@/lib/cache/enrichment-cache";
 import type {
   EnrichedCompany,
   EnrichedContact,
@@ -8,8 +14,8 @@ import type {
   RawContactRow,
 } from "@/lib/utils/types";
 
-/** Batch size for AI enrichment streaming progress (keep in sync with progress UI). */
-export const ENRICHMENT_BATCH_SIZE = 10;
+/** Batch size for AI enrichment (client batched requests + streaming generator; keep in sync with progress UI). */
+export const ENRICHMENT_BATCH_SIZE = 5;
 const BATCH_SIZE = ENRICHMENT_BATCH_SIZE;
 
 export const COMPANY_MODEL = "claude-sonnet-4-6" as const;
@@ -90,8 +96,23 @@ export async function runClaudeWithWebSearch(
   return text;
 }
 
+/** Location/date clause for company prompts — avoids a blank region when none was provided. */
+function companyEventLocationClause(context: EventContext): string {
+  const r = String(context.region ?? "").trim();
+  const d = context.eventDate;
+  if (r) return `held in ${r} (${d})`;
+  return `(${d}). This is a virtual/national event with no specific region`;
+}
+
+/** Region line for contact prompts — explicit copy when region is omitted. */
+function contactRegionContextLine(context: EventContext): string {
+  const r = String(context.region ?? "").trim();
+  if (r) return `Region: ${r}.`;
+  return "This is a virtual/national event with no specific region.";
+}
+
 export function buildCompanySystemPrompt(context: EventContext): string {
-  return `You are a B2B data researcher specializing in identifying companies from partial or abbreviated names. You are working with a list from ${context.eventName}, a ${context.audienceLevel} event focused on cybersecurity, held in ${context.region} (${context.eventDate}).
+  return `You are a B2B data researcher specializing in identifying companies from partial or abbreviated names. You are working with a list from ${context.eventName}, a ${context.audienceLevel} event focused on cybersecurity, ${companyEventLocationClause(context)}.
 
 For each company name provided, identify the most likely real company, return its official name, website domain, HQ state, approximate employee count, and LinkedIn company page URL.
 
@@ -112,18 +133,18 @@ export function buildCompanyUserPrompt(batch: RawCompanyRow[]): string {
 }
 
 export function buildContactSystemPrompt(context: EventContext): string {
-  return `You are a B2B contact researcher. Given a person's name, title, and company, find their professional work email, company domain, and LinkedIn profile.
+  return `You are a B2B contact researcher. Given a person's name, title, and company (and the email from the source list), enrich company name, company domain, and LinkedIn profile. Do not suggest or output a different email than the one provided — the CSV email is always kept as-is downstream.
 
 Context — these contacts attended ${context.eventName}, a ${context.audienceLevel} cybersecurity event.
-Region: ${context.region}. Event date: ${context.eventDate}.
+${contactRegionContextLine(context)} Event date: ${context.eventDate}.
 
 For each contact:
-- If the email looks personal (gmail, yahoo, hotmail, icloud), find their likely work email based on company email patterns.
 - Find the LinkedIn profile URL using name + company + title.
 - Return confidence score and reasoning.
+- You may set isPersonalEmail to true if the provided email looks like a personal domain (gmail, yahoo, hotmail, icloud, etc.).
 
 Return a JSON array only. No markdown, no preamble. Each element must be an object with keys:
-resolvedEmail (string), isPersonalEmail (boolean), resolvedCompany (string), companyDomain (string), linkedinUrl (string), confidenceScore ("high"|"medium"|"low"|"unresolved"), aiReasoning (string), enrichedByAI (boolean, always true).`;
+isPersonalEmail (boolean), resolvedCompany (string), companyDomain (string), linkedinUrl (string), confidenceScore ("high"|"medium"|"low"|"unresolved"), aiReasoning (string), enrichedByAI (boolean, always true).`;
 }
 
 export function buildContactUserPrompt(batch: RawContactRow[]): string {
@@ -180,7 +201,7 @@ function mapContactAiToEnriched(
     lastName: row.lastName,
     rawEmail,
     rawCompany: row.company?.trim() ?? "",
-    resolvedEmail: String(raw.resolvedEmail ?? rawEmail),
+    resolvedEmail: rawEmail,
     isPersonalEmail: Boolean(raw.isPersonalEmail),
     resolvedCompany: String(raw.resolvedCompany ?? row.company ?? ""),
     confidenceScore,
@@ -237,13 +258,150 @@ export async function enrichContactBatch(
   });
 }
 
+async function resolveCompanyBatchFromKv(batch: RawCompanyRow[]): Promise<{
+  partial: (EnrichedCompany | undefined)[];
+  toEnrich: RawCompanyRow[];
+  enrichPositions: number[];
+  allCacheHits: boolean;
+}> {
+  const partial: (EnrichedCompany | undefined)[] = new Array(batch.length);
+  const toEnrich: RawCompanyRow[] = [];
+  const enrichPositions: number[] = [];
+  for (let i = 0; i < batch.length; i++) {
+    const row = batch[i]!;
+    const cached = await getCachedCompany(row.rawName);
+    if (cached) {
+      console.log(`[Cache] HIT for company: ${row.rawName}`);
+      const rowId = (row as { id?: string }).id;
+      partial[i] = {
+        ...cached,
+        id: typeof rowId === "string" && rowId ? rowId : cached.id,
+      };
+    } else {
+      toEnrich.push(row);
+      enrichPositions.push(i);
+    }
+  }
+  const allCacheHits = batch.length > 0 && toEnrich.length === 0;
+  return { partial, toEnrich, enrichPositions, allCacheHits };
+}
+
+async function fillCompanyBatchFromAi(
+  client: Anthropic,
+  context: EventContext,
+  partial: (EnrichedCompany | undefined)[],
+  toEnrich: RawCompanyRow[],
+  enrichPositions: number[],
+): Promise<EnrichedCompany[]> {
+  if (toEnrich.length === 0) {
+    return partial.map((r) => r!);
+  }
+  const aiPart = await enrichCompanyBatch(client, toEnrich, context);
+  for (let j = 0; j < toEnrich.length; j++) {
+    const row = toEnrich[j]!;
+    const enrichedRow = aiPart[j]!;
+    await setCachedCompany(row.rawName, enrichedRow);
+    partial[enrichPositions[j]!] = enrichedRow;
+  }
+  return partial.map((r) => r!);
+}
+
+export async function enrichCompanyBatchWithCache(
+  client: Anthropic,
+  batch: RawCompanyRow[],
+  context: EventContext,
+): Promise<{ rows: EnrichedCompany[]; allCacheHits: boolean }> {
+  const resolved = await resolveCompanyBatchFromKv(batch);
+  const rows = await fillCompanyBatchFromAi(
+    client,
+    context,
+    resolved.partial,
+    resolved.toEnrich,
+    resolved.enrichPositions,
+  );
+  return { rows, allCacheHits: resolved.allCacheHits };
+}
+
+async function resolveContactBatchFromKv(batch: RawContactRow[]): Promise<{
+  partial: (EnrichedContact | undefined)[];
+  toEnrich: RawContactRow[];
+  enrichPositions: number[];
+  allCacheHits: boolean;
+}> {
+  const partial: (EnrichedContact | undefined)[] = new Array(batch.length);
+  const toEnrich: RawContactRow[] = [];
+  const enrichPositions: number[] = [];
+  for (let i = 0; i < batch.length; i++) {
+    const row = batch[i]!;
+    const email = row.email?.trim() ?? "";
+    if (!email) {
+      toEnrich.push(row);
+      enrichPositions.push(i);
+      continue;
+    }
+    const cached = await getCachedContact(email);
+    if (cached) {
+      console.log(`[Cache] HIT for contact: ${email}`);
+      const rowId = (row as { id?: string }).id;
+      partial[i] = {
+        ...cached,
+        id: typeof rowId === "string" && rowId ? rowId : cached.id,
+      };
+    } else {
+      toEnrich.push(row);
+      enrichPositions.push(i);
+    }
+  }
+  const allCacheHits = batch.length > 0 && toEnrich.length === 0;
+  return { partial, toEnrich, enrichPositions, allCacheHits };
+}
+
+async function fillContactBatchFromAi(
+  client: Anthropic,
+  context: EventContext,
+  partial: (EnrichedContact | undefined)[],
+  toEnrich: RawContactRow[],
+  enrichPositions: number[],
+): Promise<EnrichedContact[]> {
+  if (toEnrich.length === 0) {
+    return partial.map((r) => r!);
+  }
+  const aiPart = await enrichContactBatch(client, toEnrich, context);
+  for (let j = 0; j < toEnrich.length; j++) {
+    const row = toEnrich[j]!;
+    const enrichedRow = aiPart[j]!;
+    const cacheEmail = row.email?.trim() ?? "";
+    if (cacheEmail) {
+      await setCachedContact(cacheEmail, enrichedRow);
+    }
+    partial[enrichPositions[j]!] = enrichedRow;
+  }
+  return partial.map((r) => r!);
+}
+
+export async function enrichContactBatchWithCache(
+  client: Anthropic,
+  batch: RawContactRow[],
+  context: EventContext,
+): Promise<{ rows: EnrichedContact[]; allCacheHits: boolean }> {
+  const resolved = await resolveContactBatchFromKv(batch);
+  const rows = await fillContactBatchFromAi(
+    client,
+    context,
+    resolved.partial,
+    resolved.toEnrich,
+    resolved.enrichPositions,
+  );
+  return { rows, allCacheHits: resolved.allCacheHits };
+}
+
 export async function* enrichRowsWithProgress(
   client: Anthropic,
   rows: RawCompanyRow[] | RawContactRow[],
   listType: "companies" | "contacts",
   context: EventContext,
 ): AsyncGenerator<
-  | { type: "progress"; start: number; end: number; total: number }
+  | { type: "progress"; start: number; end: number; total: number; fromCache?: boolean }
   | {
       type: "done";
       listType: "companies" | "contacts";
@@ -276,20 +434,41 @@ export async function* enrichRowsWithProgress(
     for (const batch of batches) {
       const start = offset + 1;
       const end = offset + batch.length;
-      yield { type: "progress", start, end, total };
 
       if (listType === "companies") {
-        const part = await enrichCompanyBatch(
+        const rawBatch = batch as RawCompanyRow[];
+        const resolved = await resolveCompanyBatchFromKv(rawBatch);
+        yield {
+          type: "progress",
+          start,
+          end,
+          total,
+          fromCache: resolved.allCacheHits,
+        };
+        const part = await fillCompanyBatchFromAi(
           client,
-          batch as RawCompanyRow[],
           context,
+          resolved.partial,
+          resolved.toEnrich,
+          resolved.enrichPositions,
         );
         (accumulated as EnrichedCompany[]).push(...part);
       } else {
-        const part = await enrichContactBatch(
+        const rawBatch = batch as RawContactRow[];
+        const resolved = await resolveContactBatchFromKv(rawBatch);
+        yield {
+          type: "progress",
+          start,
+          end,
+          total,
+          fromCache: resolved.allCacheHits,
+        };
+        const part = await fillContactBatchFromAi(
           client,
-          batch as RawContactRow[],
           context,
+          resolved.partial,
+          resolved.toEnrich,
+          resolved.enrichPositions,
         );
         (accumulated as EnrichedContact[]).push(...part);
       }

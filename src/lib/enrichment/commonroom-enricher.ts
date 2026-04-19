@@ -1,14 +1,21 @@
 import type { EnrichedContact } from "@/lib/utils/types";
 
-type MemberRecord = {
-  linkedin?: string;
+interface MemberRecord {
+  fullName?: string;
   organization?: string;
+  organization_domain?: string;
   title?: string;
-};
+  linkedin?: string[] | string;
+  email?: Array<{ email: string; sources: string[] }> | string;
+  location?: { raw?: string; city?: string; region?: string; country?: string };
+  [key: string]: unknown;
+}
 
 function parseMembersJson(data: unknown): MemberRecord[] {
   if (!Array.isArray(data)) return [];
-  return data.filter((m): m is MemberRecord => typeof m === "object" && m !== null) as MemberRecord[];
+  return data.filter(
+    (m): m is MemberRecord => typeof m === "object" && m !== null,
+  ) as MemberRecord[];
 }
 
 /**
@@ -61,16 +68,41 @@ export async function enrichContactWithCommonRoom(
   const member = members[0]!;
   const result: Partial<EnrichedContact> = { enrichedByCommonRoom: true };
 
-  if (member.linkedin) {
-    result.linkedinUrl = member.linkedin.startsWith("http")
-      ? member.linkedin
-      : `https://www.linkedin.com/${member.linkedin.replace(/^\//, "")}`;
+  const linkedinRaw =
+    Array.isArray(member.linkedin) && member.linkedin.length > 0
+      ? member.linkedin[0]
+      : typeof member.linkedin === "string"
+        ? member.linkedin
+        : null;
+
+  if (linkedinRaw && typeof linkedinRaw === "string" && linkedinRaw.trim()) {
+    const li = linkedinRaw.trim();
+    result.linkedinUrl = li.startsWith("http")
+      ? li
+      : `https://www.linkedin.com/${li.replace(/^\//, "")}`;
   }
-  if (member.organization && contact.confidenceScore !== "high") {
+
+  const emailEntry =
+    Array.isArray(member.email) && member.email.length > 0
+      ? member.email[0]
+      : null;
+  const emailValue =
+    emailEntry?.email ??
+    (typeof member.email === "string" ? member.email : null);
+  if (emailValue && typeof emailValue === "string" && contact.isPersonalEmail) {
+    result.resolvedEmail = emailValue;
+  }
+
+  if (member.organization && typeof member.organization === "string") {
     result.resolvedCompany = member.organization;
   }
-  if (member.title && !contact.title) {
+
+  if (member.title && typeof member.title === "string") {
     result.title = member.title;
+  }
+
+  if (member.location?.region && typeof member.location.region === "string") {
+    result.location = member.location.region;
   }
 
   return result;

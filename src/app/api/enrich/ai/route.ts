@@ -1,8 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { enrichRowsWithProgress } from "@/lib/enrichment/ai-enricher";
+import {
+  enrichCompanyBatchWithCache,
+  enrichContactBatchWithCache,
+  enrichRowsWithProgress,
+} from "@/lib/enrichment/ai-enricher";
 import type { EventContext, RawCompanyRow, RawContactRow } from "@/lib/utils/types";
 
-export const maxDuration = 300;
+/** Per-batch ceiling (Vercel hobby ~10s); batched JSON requests should finish within this window. */
+export const maxDuration = 9;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -59,7 +64,7 @@ export async function POST(request: Request): Promise<Response> {
     listType: listType === "companies" ? "companies" : "contacts",
   };
 
-  const required: (keyof EventContext)[] = ["eventName", "eventDate", "region", "audienceLevel"];
+  const required: (keyof EventContext)[] = ["eventName", "eventDate", "audienceLevel"];
   const missing = required.filter((k) => !String(ctx[k] ?? "").trim());
   if (missing.length > 0) {
     return Response.json(
@@ -72,6 +77,47 @@ export async function POST(request: Request): Promise<Response> {
     listType === "companies"
       ? (rows as RawCompanyRow[])
       : (rows as RawContactRow[]);
+
+  const batchIndexRaw = body.batchIndex;
+  const batchSizeRaw = body.batchSize;
+  const isBatchMode =
+    typeof batchIndexRaw === "number" &&
+    Number.isInteger(batchIndexRaw) &&
+    batchIndexRaw >= 0;
+
+  if (isBatchMode) {
+    const batchSize =
+      typeof batchSizeRaw === "number" && batchSizeRaw > 0 ? batchSizeRaw : 5;
+    const client = new Anthropic({ apiKey });
+    try {
+      const { rows: enriched, allCacheHits } =
+        listType === "companies"
+          ? await enrichCompanyBatchWithCache(
+              client,
+              typedRows as RawCompanyRow[],
+              ctx,
+            )
+          : await enrichContactBatchWithCache(
+              client,
+              typedRows as RawContactRow[],
+              ctx,
+            );
+      return Response.json({
+        mode: "batch" as const,
+        batchIndex: batchIndexRaw,
+        batchSize,
+        listType,
+        rows: enriched,
+        allCacheHits,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Enrichment failed.";
+      return Response.json(
+        { error: message, batchIndex: batchIndexRaw },
+        { status: 500 },
+      );
+    }
+  }
 
   const client = new Anthropic({ apiKey });
   const encoder = new TextEncoder();

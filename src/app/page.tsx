@@ -276,6 +276,57 @@ async function consumeEnrichmentNdjson(
   return { rows: result, rawNdjson };
 }
 
+function fallbackAiCompanyRows(rows: RawCompanyRow[], errMsg: string): EnrichedCompany[] {
+  return rows.map((row) => ({
+    id: crypto.randomUUID(),
+    rawInput: row.rawName,
+    resolvedName: row.rawName,
+    confidenceScore: "unresolved" as const,
+    aiReasoning: errMsg,
+    needsReview: true,
+    domain: "",
+    website: "",
+    state: "",
+    numberOfEmployees: null,
+    linkedinUrl: "",
+    enrichedByZoomInfo: false,
+    enrichedByCommonRoom: false,
+    enrichedByAI: false,
+    status: "pending" as const,
+  }));
+}
+
+function fallbackAiContactRows(rows: RawContactRow[], errMsg: string): EnrichedContact[] {
+  return rows.map((row) => {
+    const rawEmail = row.email?.trim() ?? "";
+    return {
+      id: crypto.randomUUID(),
+      firstName: row.firstName,
+      lastName: row.lastName,
+      rawEmail,
+      rawCompany: row.company?.trim() ?? "",
+      resolvedEmail: rawEmail,
+      isPersonalEmail: false,
+      resolvedCompany: row.company?.trim() ?? "",
+      confidenceScore: "unresolved" as const,
+      aiReasoning: errMsg,
+      needsReview: true,
+      title: row.title?.trim() ?? "",
+      linkedinUrl: "",
+      companyDomain: "",
+      location: row.location?.trim() ?? "",
+      leadSource: row.leadSource?.trim() ?? "",
+      leadSourceDescription: row.leadSourceDescription?.trim() ?? "",
+      notes: row.notes?.trim() ?? "",
+      membershipNotes: row.membershipNotes?.trim() ?? "",
+      enrichedByZoomInfo: false,
+      enrichedByCommonRoom: false,
+      enrichedByAI: false,
+      status: "pending" as const,
+    };
+  });
+}
+
 type PushNdjsonEvent =
   | { type: "progress"; current: number; total: number }
   | {
@@ -359,6 +410,8 @@ export default function Home() {
     endRow: number;
     totalRows: number;
     detail?: string | null;
+    /** True when the current batch was served entirely from KV cache (AI skipped). */
+    fromCache?: boolean;
   } | null>(null);
 
   const [enriched, setEnriched] = useState<EnrichedCompany[] | EnrichedContact[] | null>(null);
@@ -606,35 +659,114 @@ export default function Home() {
     const ac = new AbortController();
     enrichAbortRef.current = ac;
     setStep("enriching");
+    const batchSize = ENRICHMENT_BATCH_SIZE;
+    const totalRows = workingRows.length;
+    const numBatches = Math.max(1, Math.ceil(totalRows / batchSize));
     setProgress({
       startRow: 1,
-      endRow: Math.min(10, workingRows.length),
-      totalRows: workingRows.length,
+      endRow: Math.min(batchSize, totalRows),
+      totalRows,
       detail: null,
+      fromCache: false,
     });
     try {
-      const res = await fetch("/api/enrich/ai", {
-        method: "POST",
-        signal: ac.signal,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rows: workingRows,
-          listType: resolvedListType,
-          context,
-        }),
-      });
-      if (!res.ok) {
-        const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(errBody.error ?? `Enrichment failed (${res.status})`);
-      }
-      const { rows: aiRows } = await consumeEnrichmentNdjson(res, (p) => {
+      const batchErrors: string[] = [];
+      const aiRowsMerged =
+        resolvedListType === "companies"
+          ? ([] as EnrichedCompany[])
+          : ([] as EnrichedContact[]);
+
+      for (let i = 0; i < numBatches; i++) {
+        const start = i * batchSize;
+        const batchSlice = workingRows.slice(start, start + batchSize);
         setProgress({
-          startRow: p.start,
-          endRow: p.end,
-          totalRows: p.total,
-          detail: p.detail ?? null,
+          startRow: start + 1,
+          endRow: Math.min(start + batchSlice.length, totalRows),
+          totalRows,
+          detail: null,
+          fromCache: false,
         });
-      });
+
+        let res: Response;
+        try {
+          res = await fetch("/api/enrich/ai", {
+            method: "POST",
+            signal: ac.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              rows: batchSlice,
+              listType: resolvedListType,
+              context,
+              batchIndex: i,
+              batchSize,
+            }),
+          });
+        } catch (fetchErr) {
+          if (fetchErr instanceof Error && fetchErr.name === "AbortError") {
+            throw fetchErr;
+          }
+          const msg =
+            fetchErr instanceof Error ? fetchErr.message : "Network error";
+          const label = `Batch ${i + 1} of ${numBatches}: ${msg}`;
+          batchErrors.push(label);
+          setEnrichError(batchErrors.join(" · "));
+          if (resolvedListType === "companies") {
+            (aiRowsMerged as EnrichedCompany[]).push(
+              ...fallbackAiCompanyRows(batchSlice as RawCompanyRow[], label),
+            );
+          } else {
+            (aiRowsMerged as EnrichedContact[]).push(
+              ...fallbackAiContactRows(batchSlice as RawContactRow[], label),
+            );
+          }
+          continue;
+        }
+
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          const msg = errBody.error ?? `Enrichment failed (${res.status})`;
+          const label = `Batch ${i + 1} of ${numBatches}: ${msg}`;
+          batchErrors.push(label);
+          setEnrichError(batchErrors.join(" · "));
+          if (resolvedListType === "companies") {
+            (aiRowsMerged as EnrichedCompany[]).push(
+              ...fallbackAiCompanyRows(batchSlice as RawCompanyRow[], label),
+            );
+          } else {
+            (aiRowsMerged as EnrichedContact[]).push(
+              ...fallbackAiContactRows(batchSlice as RawContactRow[], label),
+            );
+          }
+          continue;
+        }
+
+        const payload = (await res.json()) as {
+          rows: EnrichedCompany[] | EnrichedContact[];
+          allCacheHits?: boolean;
+        };
+        setProgress({
+          startRow: start + 1,
+          endRow: Math.min(start + batchSlice.length, totalRows),
+          totalRows,
+          detail: null,
+          fromCache: payload.allCacheHits === true,
+        });
+        if (resolvedListType === "companies") {
+          (aiRowsMerged as EnrichedCompany[]).push(
+            ...(payload.rows as EnrichedCompany[]),
+          );
+        } else {
+          (aiRowsMerged as EnrichedContact[]).push(
+            ...(payload.rows as EnrichedContact[]),
+          );
+        }
+      }
+
+      const aiRows = aiRowsMerged as
+        | EnrichedCompany[]
+        | EnrichedContact[];
 
       let finalRows: EnrichedCompany[] | EnrichedContact[] = aiRows;
       try {
@@ -725,7 +857,7 @@ export default function Home() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            rows: approved,
+            rows: settings.contactRowsOverride ?? approved,
             listType: enrichedListType,
             eventName: eventContext.eventName,
             listName: settings.listName,
@@ -1059,7 +1191,9 @@ export default function Home() {
           <div className="flex flex-col gap-4">
             <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
               <p className="text-center text-sm font-medium text-(--text-primary)" role="status">
-                Analyzing rows {progress.startRow}–{progress.endRow} of {progress.totalRows}…
+                {progress.fromCache
+                  ? `Loaded from cache: rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}…`
+                  : `Analyzing rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}…`}
               </p>
               <div
                 className="mt-3 h-2 w-full overflow-hidden rounded-full bg-(--bg-muted)"
@@ -1157,14 +1291,6 @@ export default function Home() {
             }
             onBack={() => setStep("enriched")}
             onPush={(settings) => void runHubSpotPush(settings)}
-            onMembershipNotesChange={(rowId, value) => {
-              setReviewRows((prev) => {
-                if (enrichedListType !== "contacts") return prev;
-                return (prev as EnrichedContact[]).map((r) =>
-                  r.id === rowId ? { ...r, membershipNotes: value } : r,
-                );
-              });
-            }}
           />
         )}
 

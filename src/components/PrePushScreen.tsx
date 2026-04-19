@@ -5,7 +5,7 @@ import type {
   EnrichedContact,
   HubSpotFoldersApiResponse,
 } from "@/lib/utils/types";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 const CARD_PANEL =
   "rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900";
@@ -13,10 +13,79 @@ const CARD_PANEL =
 const FIELD_CONTROL =
   "rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
 
+/** Collapse duplicated trailing "Mon. YYYY Mon. YYYY" when the parent string already ended with that date. */
+function dedupeLeadSourceDescriptionTail(s: string): string {
+  const t = s.trim();
+  return t.replace(
+    /\s+((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\.\s*\d{4})\s+\1$/i,
+    " $1",
+  );
+}
+
+const SELECT_WITH_CARET =
+  "w-full appearance-none rounded-lg border border-zinc-300 bg-white py-2 pl-3 pr-10 text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
+
 const TABLE_HEAD_CELL =
   "border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700";
 
 const TABLE_ROW = "border-b border-zinc-100 dark:border-zinc-800";
+
+/** Mirrors `EditableCell` in ReviewTable — click to edit, Enter/blur saves. */
+function PrePushEditableCell(props: {
+  value: string;
+  muted?: boolean;
+  breakAll?: boolean;
+  onSave: (next: string) => void;
+}) {
+  const { value, muted, breakAll, onSave } = props;
+  const normalized = value == null ? "" : String(value);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(normalized);
+
+  useEffect(() => {
+    if (!editing) setDraft(value == null ? "" : String(value));
+  }, [value, editing]);
+
+  const wrap = breakAll ? "break-all whitespace-normal" : "wrap-break-word";
+
+  if (editing) {
+    return (
+      <div className={`relative min-w-24 w-full max-w-50 ${wrap}`}>
+        <input
+          className={`w-full rounded border border-blue-500 bg-white px-1.5 py-0.5 text-xs outline-none ring-1 ring-blue-500/30 dark:bg-zinc-950 sm:text-sm ${muted ? "text-zinc-500" : ""} ${wrap}`}
+          value={draft}
+          autoFocus
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onSave(draft);
+              setEditing(false);
+            }
+            if (e.key === "Escape") {
+              setDraft(normalized);
+              setEditing(false);
+            }
+          }}
+          onBlur={() => {
+            onSave(draft);
+            setEditing(false);
+          }}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className={`relative min-h-5 w-full max-w-50 rounded px-1.5 py-0.5 text-left text-xs sm:text-sm ${wrap} ${muted ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100"} hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
+      onClick={() => setEditing(true)}
+    >
+      {normalized === "" ? <span className="text-zinc-400">—</span> : normalized}
+    </button>
+  );
+}
 
 export const LEAD_SOURCE_OPTIONS = [
   "Marketing - Advertisement",
@@ -39,62 +108,27 @@ export type PrePushSettings = {
   leadSource: string;
   leadSourceDescription: string;
   notes: string;
+  /** When set, HubSpot push uses these rows instead of parent-approved rows (contact import edits). */
+  contactRowsOverride?: EnrichedContact[];
 };
+
+function SelectCaretWrap({ children }: { children: ReactNode }) {
+  return (
+    <div className="relative">
+      {children}
+      <span
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
+        aria-hidden
+      >
+        ▾
+      </span>
+    </div>
+  );
+}
 
 function websiteFromDomain(domain: string): string {
   const d = domain.trim().replace(/^www\./i, "");
   return d ? `https://www.${d}` : "";
-}
-
-function MembershipNotesCell({
-  rowId,
-  value,
-  onSave,
-}: {
-  rowId: string;
-  value: string;
-  onSave: (id: string, v: string) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value);
-
-  useEffect(() => {
-    setDraft(value);
-  }, [value]);
-
-  if (editing) {
-    return (
-      <input
-        autoFocus
-        className={`w-full min-w-40 ${FIELD_CONTROL}`}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          onSave(rowId, draft);
-          setEditing(false);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.currentTarget.blur();
-          }
-          if (e.key === "Escape") {
-            setDraft(value);
-            setEditing(false);
-          }
-        }}
-      />
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      className="w-full max-w-xs truncate text-left text-zinc-800 underline decoration-zinc-400 decoration-dotted underline-offset-2 hover:text-zinc-950 dark:text-zinc-200 dark:hover:text-zinc-50"
-      onClick={() => setEditing(true)}
-    >
-      {value.trim() ? value : "—"}
-    </button>
-  );
 }
 
 export interface PrePushScreenProps {
@@ -104,7 +138,6 @@ export interface PrePushScreenProps {
   defaultLeadSourceDescription: string;
   onBack: () => void;
   onPush: (settings: PrePushSettings) => void;
-  onMembershipNotesChange?: (rowId: string, value: string) => void;
 }
 
 export function PrePushScreen({
@@ -114,12 +147,12 @@ export function PrePushScreen({
   defaultLeadSourceDescription,
   onBack,
   onPush,
-  onMembershipNotesChange,
 }: PrePushScreenProps) {
   const [listName, setListName] = useState(defaultListName);
   const [leadSource, setLeadSource] = useState("");
-  const [leadSourceDescription, setLeadSourceDescription] = useState(defaultLeadSourceDescription);
-  const [notes, setNotes] = useState("");
+  const [leadSourceDescription, setLeadSourceDescription] = useState(() =>
+    dedupeLeadSourceDescriptionTail(defaultLeadSourceDescription),
+  );
 
   const [folders, setFolders] = useState<{ id: string; name: string }[] | null>(null);
   const [foldersLoading, setFoldersLoading] = useState(true);
@@ -127,13 +160,23 @@ export function PrePushScreen({
   const [folderId, setFolderId] = useState("");
   const [folderManual, setFolderManual] = useState("");
 
+  const [contactEditRows, setContactEditRows] = useState<EnrichedContact[] | null>(null);
+
   useEffect(() => {
     setListName(defaultListName);
   }, [defaultListName]);
 
   useEffect(() => {
-    setLeadSourceDescription(defaultLeadSourceDescription);
+    setLeadSourceDescription(dedupeLeadSourceDescriptionTail(defaultLeadSourceDescription));
   }, [defaultLeadSourceDescription]);
+
+  useEffect(() => {
+    if (listType !== "contacts") {
+      setContactEditRows(null);
+      return;
+    }
+    setContactEditRows((approvedRows as EnrichedContact[]).map((r) => ({ ...r })));
+  }, [listType, approvedRows]);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,14 +204,13 @@ export function PrePushScreen({
 
   const canPush = useMemo(() => {
     const nameOk = listName.trim().length > 0;
-    const folderOk = foldersError ? folderManual.trim().length > 0 : folderId.trim().length > 0;
     if (listType === "companies") {
-      return nameOk && folderOk;
+      return nameOk;
     }
     const lsOk = leadSource.trim().length > 0;
     const lsdOk = leadSourceDescription.trim().length > 0;
-    return nameOk && lsOk && lsdOk && folderOk;
-  }, [listName, leadSource, leadSourceDescription, folderId, folderManual, foldersError, listType]);
+    return nameOk && lsOk && lsdOk;
+  }, [listName, leadSource, leadSourceDescription, listType]);
 
   const handlePush = useCallback(() => {
     if (!canPush) return;
@@ -177,16 +219,30 @@ export function PrePushScreen({
       folderId: foldersError ? folderManual.trim() : folderId.trim(),
       leadSource: listType === "contacts" ? leadSource.trim() : "",
       leadSourceDescription: listType === "contacts" ? leadSourceDescription.trim() : "",
-      notes: listType === "contacts" ? notes.trim() : "",
+      notes: "",
+      contactRowsOverride:
+        listType === "contacts" && contactEditRows ? contactEditRows : undefined,
     });
-  }, [canPush, listName, folderId, folderManual, foldersError, leadSource, leadSourceDescription, notes, listType, onPush]);
+  }, [
+    canPush,
+    listName,
+    folderId,
+    folderManual,
+    foldersError,
+    leadSource,
+    leadSourceDescription,
+    listType,
+    contactEditRows,
+    onPush,
+  ]);
 
-  const saveMembershipNotes = useCallback(
-    (rowId: string, v: string) => {
-      onMembershipNotesChange?.(rowId, v);
-    },
-    [onMembershipNotesChange],
-  );
+  const patchContact = useCallback((id: string, partial: Partial<EnrichedContact>) => {
+    setContactEditRows((prev) =>
+      prev ? prev.map((r) => (r.id === id ? { ...r, ...partial } : r)) : prev,
+    );
+  }, []);
+
+  const contactRowsForTable = contactEditRows ?? (approvedRows as EnrichedContact[]);
 
   return (
     <section className="flex flex-col gap-6">
@@ -241,35 +297,48 @@ export function PrePushScreen({
                     <th className={TABLE_HEAD_CELL}>First Name</th>
                     <th className={TABLE_HEAD_CELL}>Last Name</th>
                     <th className={TABLE_HEAD_CELL}>Email</th>
-                    <th className={TABLE_HEAD_CELL}>Company</th>
+                    <th className={TABLE_HEAD_CELL}>Company Name</th>
                     <th className={TABLE_HEAD_CELL}>Title</th>
                     <th className={TABLE_HEAD_CELL}>LinkedIn</th>
-                    <th className={TABLE_HEAD_CELL}>State/Region</th>
                     <th className={TABLE_HEAD_CELL}>Membership Notes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(approvedRows as EnrichedContact[]).map((row) => (
+                  {contactRowsForTable.map((row) => (
                     <tr key={row.id} className={TABLE_ROW}>
                       <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.firstName}</td>
                       <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.lastName}</td>
                       <td className="max-w-44 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                        {row.resolvedEmail}
+                        {row.rawEmail}
                       </td>
-                      <td className="max-w-40 px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                        {row.resolvedCompany}
-                      </td>
-                      <td className="max-w-36 px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.title || "—"}</td>
-                      <td className="max-w-36 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                        {row.linkedinUrl || "—"}
-                      </td>
-                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.location || "—"}</td>
-                      <td className="px-3 py-2 align-top text-zinc-800 dark:text-zinc-200">
-                        <MembershipNotesCell
-                          rowId={row.id}
-                          value={row.membershipNotes ?? ""}
-                          onSave={saveMembershipNotes}
+                      <td className="max-w-40 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
+                        <PrePushEditableCell
+                          value={row.resolvedCompany}
+                          onSave={(v) => patchContact(row.id, { resolvedCompany: v })}
                         />
+                      </td>
+                      <td className="max-w-36 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
+                        <PrePushEditableCell
+                          value={row.title}
+                          onSave={(v) => patchContact(row.id, { title: v })}
+                        />
+                      </td>
+                      <td className="max-w-36 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
+                        <PrePushEditableCell
+                          value={row.linkedinUrl}
+                          breakAll
+                          onSave={(v) => patchContact(row.id, { linkedinUrl: v })}
+                        />
+                      </td>
+                      <td className="align-middle px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        <div className="flex min-h-9 w-full items-center">
+                          <div className="w-full min-w-0">
+                            <PrePushEditableCell
+                              value={row.membershipNotes ?? ""}
+                              onSave={(v) => patchContact(row.id, { membershipNotes: v })}
+                            />
+                          </div>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -297,9 +366,7 @@ export function PrePushScreen({
         </label>
 
         <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">
-            HubSpot Folder <span className="text-red-600">*</span>
-          </span>
+          <span className="font-medium text-zinc-800 dark:text-zinc-200">HubSpot Folder</span>
           {foldersLoading ? (
             <span className="text-sm text-zinc-500">Loading folders…</span>
           ) : foldersError ? (
@@ -315,19 +382,20 @@ export function PrePushScreen({
               />
             </div>
           ) : (
-            <select
-              className={FIELD_CONTROL}
-              value={folderId}
-              onChange={(e) => setFolderId(e.target.value)}
-              required
-            >
-              <option value="">Select a folder</option>
-              {(folders ?? []).map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
+            <SelectCaretWrap>
+              <select
+                className={SELECT_WITH_CARET}
+                value={folderId}
+                onChange={(e) => setFolderId(e.target.value)}
+              >
+                <option value="">Select Folder</option>
+                {(folders ?? []).map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+            </SelectCaretWrap>
           )}
         </label>
 
@@ -337,19 +405,21 @@ export function PrePushScreen({
               <span className="font-medium text-zinc-800 dark:text-zinc-200">
                 Lead Source <span className="text-red-600">*</span>
               </span>
-              <select
-                className={FIELD_CONTROL}
-                value={leadSource}
-                onChange={(e) => setLeadSource(e.target.value)}
-                required
-              >
-                <option value="">Select lead source</option>
-                {LEAD_SOURCE_OPTIONS.map((opt) => (
-                  <option key={opt} value={opt}>
-                    {opt}
-                  </option>
-                ))}
-              </select>
+              <SelectCaretWrap>
+                <select
+                  className={SELECT_WITH_CARET}
+                  value={leadSource}
+                  onChange={(e) => setLeadSource(e.target.value)}
+                  required
+                >
+                  <option value="">Select lead source</option>
+                  {LEAD_SOURCE_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+              </SelectCaretWrap>
             </label>
 
             <label className="flex flex-col gap-1 text-sm sm:col-span-2">
@@ -360,16 +430,6 @@ export function PrePushScreen({
                 className={FIELD_CONTROL}
                 value={leadSourceDescription}
                 onChange={(e) => setLeadSourceDescription(e.target.value)}
-              />
-            </label>
-
-            <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-              <span className="font-medium text-zinc-800 dark:text-zinc-200">Notes</span>
-              <textarea
-                rows={3}
-                className={`resize-y ${FIELD_CONTROL}`}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
               />
             </label>
           </>

@@ -623,11 +623,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
               <tr>
                 <th className="border-b border-(--border-default) px-2 py-2">Approve</th>
                 <th className="border-b border-(--border-default) px-2 py-2">Name</th>
-                <th className="border-b border-(--border-default) px-2 py-2">Raw Email</th>
-                <th className="border-b border-(--border-default) px-2 py-2">Resolved Email</th>
+                <th className="border-b border-(--border-default) px-2 py-2">Email</th>
                 <th className="border-b border-(--border-default) px-2 py-2">Company</th>
                 <th className="border-b border-(--border-default) px-2 py-2">Title</th>
-                <th className="border-b border-(--border-default) px-2 py-2">State / Region</th>
                 <th className="border-b border-(--border-default) px-2 py-2">
                   LinkedIn Profile
                 </th>
@@ -777,23 +775,10 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`max-w-48 break-all px-2 py-1.5 align-top ${muted ? "text-zinc-500" : ""}`}>
+                      <td
+                        className={`max-w-48 break-all px-2 py-1.5 align-top ${muted ? "text-zinc-500" : ""}`}
+                      >
                         {row.rawEmail}
-                      </td>
-                      <td className="max-w-48 px-2 py-1.5 align-top wrap-break-word">
-                        <EditableCell
-                          value={row.resolvedEmail}
-                          edited={editedKeys.has(rowKey(row.id, "resolvedEmail"))}
-                          muted={muted}
-                          onSave={(v) => {
-                            markEdited(row.id, "resolvedEmail");
-                            setRows(
-                              (rows as EnrichedContact[]).map((r) =>
-                                r.id === row.id ? { ...r, resolvedEmail: v.trim() } : r,
-                              ),
-                            );
-                          }}
-                        />
                       </td>
                       <td className="max-w-48 px-2 py-1.5 align-top wrap-break-word">
                         <EditableCell
@@ -820,22 +805,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
                                 r.id === row.id ? { ...r, title: v } : r,
-                              ),
-                            );
-                          }}
-                        />
-                      </td>
-                      <td className="max-w-56 px-2 py-1.5 align-top">
-                        <StateRegionCell
-                          value={row.location}
-                          edited={editedKeys.has(rowKey(row.id, "location"))}
-                          muted={muted}
-                          onSave={(v) => {
-                            markEdited(row.id, "location");
-                            const full = expandStateAbbreviation(v);
-                            setRows(
-                              (rows as EnrichedContact[]).map((r) =>
-                                r.id === row.id ? { ...r, location: full } : r,
                               ),
                             );
                           }}

@@ -52,6 +52,10 @@ export async function POST(request: Request) {
         let nonHighIndex = 0;
 
         const mergedRows: (EnrichedCompany | EnrichedContact)[] = [];
+        const prospectorEndpoint = new URL(
+          "/api/enrich/prospector",
+          request.url,
+        ).href;
 
         const emitProgress = (i: number, detail?: string) => {
           controller.enqueue(
@@ -94,8 +98,62 @@ export async function POST(request: Request) {
               `Checking Common Room… (${nonHighIndex} of ${nonHighTotal} contacts)`,
             );
             const crResult = await enrichContactWithCommonRoom(contact);
-            const stillNeedsEnrichment =
-              !crResult.linkedinUrl?.trim() && !crResult.resolvedCompany?.trim();
+
+            let prospectorPartial: Partial<EnrichedContact> = {};
+            let prospectorFound = false;
+            try {
+              const prospectorRes = await fetch(prospectorEndpoint, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  contacts: [
+                    {
+                      id: contact.id,
+                      firstName: contact.firstName,
+                      lastName: contact.lastName,
+                      rawEmail: contact.rawEmail,
+                      resolvedCompany: contact.resolvedCompany,
+                      companyDomain: contact.companyDomain,
+                    },
+                  ],
+                }),
+              });
+              if (prospectorRes.ok) {
+                const prospectorJson = (await prospectorRes.json()) as {
+                  results?: Array<{
+                    id: string;
+                    title?: string;
+                    linkedInUrl?: string;
+                    location?: string;
+                    seniority?: string;
+                    found: boolean;
+                  }>;
+                };
+                const pr =
+                  prospectorJson.results?.find((r) => r.id === contact.id) ??
+                  prospectorJson.results?.[0];
+                prospectorFound = pr?.found === true;
+                if (pr?.found) {
+                  prospectorPartial = {
+                    title: pr.title,
+                    linkedinUrl: pr.linkedInUrl,
+                    location: pr.location,
+                  };
+                }
+              } else {
+                console.error(
+                  "[ZoomInfo] Prospector HTTP error:",
+                  prospectorRes.status,
+                );
+              }
+            } catch (e) {
+              console.error("[ZoomInfo] Prospector request failed:", e);
+            }
+
+            const crEnough =
+              Boolean(crResult.linkedinUrl?.trim()) ||
+              Boolean(crResult.resolvedCompany?.trim());
+            const stillNeedsEnrichment = !crEnough && !prospectorFound;
 
             let ziResult: Partial<EnrichedContact> = {};
             if (stillNeedsEnrichment) {
@@ -107,7 +165,12 @@ export async function POST(request: Request) {
             }
 
             mergedRows.push(
-              mergeEnrichedContact(contact, ziResult, crResult),
+              mergeEnrichedContact(
+                contact,
+                ziResult,
+                crResult,
+                prospectorPartial,
+              ),
             );
           }
 

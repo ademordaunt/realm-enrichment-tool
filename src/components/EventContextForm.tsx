@@ -49,6 +49,8 @@ const MACRO_REGION_OPTIONS = [
 
 const ROOT_PICK_STATE = "__pick_state__";
 const ROOT_PICK_REGION = "__pick_region__";
+/** Root dropdown: explicit "no location" — stored `region` is "". */
+const ROOT_NO_STATE_REGION = "__no_state_region__";
 const CHANGE_SELECTION = "__change_selection__";
 
 function StateSubPicker({
@@ -196,6 +198,8 @@ export function EventContextForm({
   const [monthName, setMonthName] = useState<string>("");
   const [year, setYear] = useState<number | "">("");
   const [region, setRegion] = useState("");
+  /** True when user chose "No State / Region" (valid submit with empty `region`). */
+  const [noStateRegionSelected, setNoStateRegionSelected] = useState(false);
   const [locationView, setLocationView] = useState<LocationPickerView>("root");
   const [audienceLevel, setAudienceLevel] = useState(DEFAULT_AUDIENCE);
   const [audienceTouched, setAudienceTouched] = useState(false);
@@ -215,6 +219,7 @@ export function EventContextForm({
     setEventName(initialValues.eventName);
     const r = initialValues.region;
     setRegion(r);
+    setNoStateRegionSelected(!String(r ?? "").trim());
     setLocationView("root");
     setAudienceLevel(initialValues.audienceLevel || DEFAULT_AUDIENCE);
     const parsed = parseMonthYearString(initialValues.eventDate);
@@ -232,11 +237,12 @@ export function EventContextForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!monthYearForPrompt.trim() || !region.trim()) return;
+    if (!monthYearForPrompt.trim()) return;
+    if (!region.trim() && !noStateRegionSelected) return;
     onSubmit({
       eventName: eventName.trim(),
       eventDate: monthYearForPrompt.trim(),
-      region,
+      region: region.trim(),
       audienceLevel: audienceLevel.trim(),
       listType,
     });
@@ -351,10 +357,12 @@ export function EventContextForm({
                     const v = e.target.value;
                     if (v === CHANGE_SELECTION) {
                       setRegion("");
+                      setNoStateRegionSelected(false);
                       setLocationView("root");
                       return;
                     }
                     setRegion(v);
+                    setNoStateRegionSelected(false);
                   }}
                   disabled={disabled}
                 >
@@ -373,17 +381,28 @@ export function EventContextForm({
             {!region && locationView === "root" ? (
               <div className="relative">
                 <select
-                  required
                   className={selectClass}
-                  value=""
+                  value={noStateRegionSelected ? ROOT_NO_STATE_REGION : ""}
                   onChange={(e) => {
                     const v = e.target.value;
+                    if (v === "") {
+                      setRegion("");
+                      setNoStateRegionSelected(false);
+                      return;
+                    }
+                    if (v === ROOT_NO_STATE_REGION) {
+                      setRegion("");
+                      setNoStateRegionSelected(true);
+                      return;
+                    }
+                    setNoStateRegionSelected(false);
                     if (v === ROOT_PICK_STATE) setLocationView("state");
                     else if (v === ROOT_PICK_REGION) setLocationView("region");
                   }}
                   disabled={disabled}
                 >
                   <option value="">Select State / Region</option>
+                  <option value={ROOT_NO_STATE_REGION}>No State / Region</option>
                   <option value={ROOT_PICK_STATE}>Select a State →</option>
                   <option value={ROOT_PICK_REGION}>Select a Region →</option>
                 </select>

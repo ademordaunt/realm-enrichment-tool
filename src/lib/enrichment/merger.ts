@@ -69,14 +69,14 @@ export function mergeEnrichedContact(
   ai: EnrichedContact,
   zoominfo: Partial<EnrichedContact>,
   commonroom: Partial<EnrichedContact>,
+  prospector?: Partial<EnrichedContact>,
 ): EnrichedContact {
-  const resolvedEmail = firstNonEmptyString(
-    zoominfo.resolvedEmail,
-    ai.resolvedEmail,
-  );
+  /** CSV email is canonical; never use AI/ZoomInfo/Common Room suggestions for the stored email. */
+  const resolvedEmail = ai.rawEmail?.trim() ?? "";
 
   const linkedinUrl = firstNonEmptyString(
     commonroom.linkedinUrl,
+    prospector?.linkedinUrl,
     ai.linkedinUrl,
     zoominfo.linkedinUrl,
   );
@@ -87,7 +87,19 @@ export function mergeEnrichedContact(
     ai.resolvedCompany,
   );
 
-  const title = firstNonEmptyString(zoominfo.title, commonroom.title, ai.title);
+  const title = firstNonEmptyString(
+    commonroom.title,
+    prospector?.title,
+    zoominfo.title,
+    ai.title,
+  );
+
+  const location = firstNonEmptyString(
+    commonroom.location,
+    prospector?.location,
+    zoominfo.location,
+    ai.location,
+  );
 
   let companyDomain = firstNonEmptyString(ai.companyDomain);
   if (!companyDomain && resolvedEmail) {
@@ -104,6 +116,13 @@ export function mergeEnrichedContact(
       Boolean(commonroom.title?.trim()))
   ) {
     confidenceScore = "high";
+  } else if (
+    prospector &&
+    (Boolean(prospector.linkedinUrl?.trim()) ||
+      Boolean(prospector.title?.trim()) ||
+      Boolean(prospector.location?.trim()))
+  ) {
+    confidenceScore = "high";
   }
 
   return {
@@ -112,6 +131,7 @@ export function mergeEnrichedContact(
     linkedinUrl,
     resolvedCompany,
     title: title || ai.title,
+    location: location || ai.location,
     companyDomain,
     enrichedByZoomInfo: ai.enrichedByZoomInfo || Boolean(zoominfo.enrichedByZoomInfo),
     enrichedByCommonRoom: ai.enrichedByCommonRoom || Boolean(commonroom.enrichedByCommonRoom),
