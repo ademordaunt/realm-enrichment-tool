@@ -8,6 +8,7 @@ import type { EventContext, RawCompanyRow, RawContactRow } from "@/lib/utils/typ
 
 /** Per-batch ceiling (Vercel hobby ~10s); batched JSON requests should finish within this window. */
 export const maxDuration = 9;
+export const LINKEDIN_SEARCH_ROUTE = "/api/enrich/linkedin-search";
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -87,7 +88,7 @@ export async function POST(request: Request): Promise<Response> {
 
   if (isBatchMode) {
     const batchSize =
-      typeof batchSizeRaw === "number" && batchSizeRaw > 0 ? batchSizeRaw : 5;
+      typeof batchSizeRaw === "number" && batchSizeRaw > 0 ? batchSizeRaw : 3;
     const client = new Anthropic({ apiKey });
     try {
       const { rows: enriched, allCacheHits } =

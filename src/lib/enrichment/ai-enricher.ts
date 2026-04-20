@@ -15,10 +15,14 @@ import type {
 } from "@/lib/utils/types";
 
 /** Batch size for AI enrichment (client batched requests + streaming generator; keep in sync with progress UI). */
-export const ENRICHMENT_BATCH_SIZE = 5;
+export const ENRICHMENT_BATCH_SIZE = 3;
 const BATCH_SIZE = ENRICHMENT_BATCH_SIZE;
 
 export const COMPANY_MODEL = "claude-sonnet-4-6" as const;
+
+export function needsLinkedInLookup(contact: EnrichedContact): boolean {
+  return !String(contact.linkedinUrl ?? "").trim();
+}
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -392,15 +396,46 @@ async function findLinkedInOnlyForContact(
   const lastName = row.lastName?.trim() ?? "";
   const title = row.title?.trim() ?? "";
   const company = row.resolvedCompany?.trim() || row.company?.trim() || "";
-  const userText = `Find the LinkedIn profile URL for ${firstName} ${lastName}, ${title} at ${company}. Return only JSON: { linkedInUrl: string | null }`;
+  const userText = `Find the LinkedIn profile URL for ${firstName} ${lastName}, ${title} at ${company}.
+Return ONLY valid JSON: {"linkedInUrl": "https://www.linkedin.com/in/..." or null}
+No other text.`;
   const text = await runClaudeWithWebSearch(
     client,
-    "Return only a valid JSON object with key linkedInUrl.",
+    "Return only valid JSON with key linkedInUrl.",
     userText,
   );
   const parsed = parseJsonObject<Record<string, unknown>>(text);
-  const linkedInUrl = String(parsed.linkedInUrl ?? parsed.linkedinUrl ?? "").trim();
+  const rawUrl = parsed.linkedInUrl ?? parsed.linkedinUrl;
+  const linkedInUrl = rawUrl == null ? "" : String(rawUrl).trim();
   return linkedInUrl;
+}
+
+function isFullyPopulatedContactRow(row: RawContactRow): boolean {
+  const firstName = row.firstName?.trim() ?? "";
+  const lastName = row.lastName?.trim() ?? "";
+  const title = row.title?.trim() ?? "";
+  const email = row.email?.trim() ?? "";
+  const company = row.resolvedCompany?.trim() || row.company?.trim() || "";
+  return Boolean(firstName && lastName && email && company && title);
+}
+
+async function ensureLinkedInForEnrichedContact(
+  client: Anthropic,
+  row: RawContactRow,
+  enriched: EnrichedContact,
+): Promise<EnrichedContact> {
+  if (enriched.linkedinUrl?.trim()) {
+    return enriched;
+  }
+  const linkedInUrl = await findLinkedInOnlyForContact(client, row);
+  if (!linkedInUrl) {
+    return enriched;
+  }
+  return {
+    ...enriched,
+    linkedinUrl: linkedInUrl,
+    enrichedByAI: true,
+  };
 }
 
 function contactMissingFieldList(row: RawContactRow): string[] {
@@ -424,8 +459,10 @@ async function enrichSingleContact(
   const company = row.resolvedCompany?.trim() || row.company?.trim() || "";
   const existingLinkedIn = row.linkedinUrl?.trim() || row.linkedInUrl?.trim() || "";
 
-  const corePopulated = Boolean(firstName && lastName && email && company && title);
-  if (corePopulated) {
+  if (isFullyPopulatedContactRow(row)) {
+    console.log(
+      `[AI Enricher] Skipping fully populated contact: ${firstName} ${lastName}`,
+    );
     if (existingLinkedIn) {
       return mapPresetContactRow(row, existingLinkedIn, false);
     }
@@ -596,6 +633,17 @@ async function resolveContactBatchFromKv(batch: RawContactRow[]): Promise<{
   const enrichPositions: number[] = [];
   for (let i = 0; i < batch.length; i++) {
     const row = batch[i]!;
+    if (isFullyPopulatedContactRow(row)) {
+      const firstName = row.firstName?.trim() ?? "";
+      const lastName = row.lastName?.trim() ?? "";
+      console.log(
+        `[AI Enricher] Skipping fully populated contact: ${firstName} ${lastName}`,
+      );
+      const existingLinkedIn =
+        row.linkedinUrl?.trim() || row.linkedInUrl?.trim() || "";
+      partial[i] = mapPresetContactRow(row, existingLinkedIn, false);
+      continue;
+    }
     const email = row.email?.trim() ?? "";
     if (!email) {
       toEnrich.push(row);
@@ -621,13 +669,18 @@ async function resolveContactBatchFromKv(batch: RawContactRow[]): Promise<{
 
 async function fillContactBatchFromAi(
   client: Anthropic,
+  batch: RawContactRow[],
   context: EventContext,
   partial: (EnrichedContact | undefined)[],
   toEnrich: RawContactRow[],
   enrichPositions: number[],
 ): Promise<EnrichedContact[]> {
   if (toEnrich.length === 0) {
-    return partial.map((r) => r!);
+    const complete = partial.map((r) => r!);
+    for (let i = 0; i < complete.length; i++) {
+      complete[i] = await ensureLinkedInForEnrichedContact(client, batch[i]!, complete[i]!);
+    }
+    return complete;
   }
   const aiPart = await enrichContactBatch(client, toEnrich, context);
   for (let j = 0; j < toEnrich.length; j++) {
@@ -639,7 +692,11 @@ async function fillContactBatchFromAi(
     }
     partial[enrichPositions[j]!] = enrichedRow;
   }
-  return partial.map((r) => r!);
+  const complete = partial.map((r) => r!);
+  for (let i = 0; i < complete.length; i++) {
+    complete[i] = await ensureLinkedInForEnrichedContact(client, batch[i]!, complete[i]!);
+  }
+  return complete;
 }
 
 export async function enrichContactBatchWithCache(
@@ -650,6 +707,7 @@ export async function enrichContactBatchWithCache(
   const resolved = await resolveContactBatchFromKv(batch);
   const rows = await fillContactBatchFromAi(
     client,
+    batch,
     context,
     resolved.partial,
     resolved.toEnrich,
@@ -728,6 +786,7 @@ export async function* enrichRowsWithProgress(
         };
         const part = await fillContactBatchFromAi(
           client,
+          rawBatch,
           context,
           resolved.partial,
           resolved.toEnrich,

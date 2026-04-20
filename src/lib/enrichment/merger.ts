@@ -22,47 +22,73 @@ function domainFromEmail(email: string): string {
   return email.slice(at + 1).toLowerCase().trim();
 }
 
+type CompanyZoomInfoInput = Partial<EnrichedCompany> & {
+  originalConfidence?: EnrichedCompany["confidenceScore"];
+};
+
 export function mergeEnrichedCompany(
   ai: EnrichedCompany,
-  zoominfo: Partial<EnrichedCompany>,
+  zoominfo: CompanyZoomInfoInput,
   commonroom: Partial<EnrichedCompany>,
 ): EnrichedCompany {
-  const domain = firstNonEmptyString(zoominfo.domain, ai.domain, commonroom.domain);
-  const website = websiteFromDomain(domain);
+  const { originalConfidence, ...zi } = zoominfo;
+  const modeIn = originalConfidence ?? ai.confidenceScore;
+  const isHighConfidence = modeIn === "high";
 
-  const linkedinUrl = firstNonEmptyString(
-    zoominfo.linkedinUrl,
-    ai.linkedinUrl,
-    commonroom.linkedinUrl,
+  console.log(
+    "[Merger] ZoomInfo merge mode:",
+    isHighConfidence ? "fill-gaps" : "ZI-wins",
+    "for",
+    ai.resolvedName,
   );
 
-  const state = firstNonEmptyString(zoominfo.state, ai.state);
-  const numberOfEmployees =
-    zoominfo.numberOfEmployees != null &&
-    !Number.isNaN(Number(zoominfo.numberOfEmployees))
-      ? Number(zoominfo.numberOfEmployees)
-      : ai.numberOfEmployees;
+  const merged: EnrichedCompany = { ...ai };
 
-  const resolvedName = firstNonEmptyString(zoominfo.resolvedName, ai.resolvedName);
-
-  let confidenceScore = ai.confidenceScore;
-  if (zoominfo.enrichedByZoomInfo) {
-    confidenceScore = "high";
+  if (isHighConfidence) {
+    merged.linkedinUrl =
+      ai.linkedinUrl?.trim() ||
+      zi.linkedinUrl?.trim() ||
+      commonroom.linkedinUrl?.trim() ||
+      "";
+    merged.numberOfEmployees = (ai.numberOfEmployees || zi.numberOfEmployees) ?? null;
+    merged.state = ai.state?.trim() || zi.state?.trim() || "";
+    merged.domain =
+      ai.domain?.trim() || zi.domain?.trim() || commonroom.domain?.trim() || "";
+    merged.resolvedName = ai.resolvedName?.trim() || zi.resolvedName?.trim() || "";
+    merged.revenue = ai.revenue || zi.revenue;
+    merged.industry = ai.industry?.trim() || zi.industry || "";
+    merged.city = ai.city?.trim() || zi.city || "";
+    merged.description = ai.description?.trim() || zi.description || "";
+    merged.confidenceScore = "high";
+  } else {
+    merged.linkedinUrl =
+      zi.linkedinUrl?.trim() ||
+      ai.linkedinUrl?.trim() ||
+      commonroom.linkedinUrl?.trim() ||
+      "";
+    merged.numberOfEmployees = (zi.numberOfEmployees || ai.numberOfEmployees) ?? null;
+    merged.state = zi.state?.trim() || ai.state?.trim() || "";
+    merged.domain =
+      zi.domain?.trim() || ai.domain?.trim() || commonroom.domain?.trim() || "";
+    merged.resolvedName = zi.resolvedName?.trim() || ai.resolvedName?.trim() || "";
+    merged.revenue = zi.revenue || ai.revenue;
+    merged.industry = zi.industry || ai.industry || "";
+    merged.city = zi.city || ai.city || "";
+    merged.description = zi.description || ai.description || "";
+    merged.confidenceScore = zi.enrichedByZoomInfo ? "high" : ai.confidenceScore;
   }
 
-  return {
-    ...ai,
-    resolvedName,
-    domain,
-    website,
-    state,
-    numberOfEmployees,
-    linkedinUrl,
-    enrichedByZoomInfo: ai.enrichedByZoomInfo || Boolean(zoominfo.enrichedByZoomInfo),
-    enrichedByCommonRoom: ai.enrichedByCommonRoom || Boolean(commonroom.enrichedByCommonRoom),
-    confidenceScore,
-    needsReview: confidenceScore === "high" ? false : ai.needsReview,
-  };
+  merged.website = websiteFromDomain(merged.domain);
+  merged.enrichedByZoomInfo = ai.enrichedByZoomInfo || Boolean(zi.enrichedByZoomInfo);
+  merged.enrichedByCommonRoom =
+    ai.enrichedByCommonRoom || Boolean(commonroom.enrichedByCommonRoom);
+  merged.needsReview = merged.confidenceScore === "high" ? false : ai.needsReview;
+
+  merged.industry = merged.industry?.trim() || undefined;
+  merged.city = merged.city?.trim() || undefined;
+  merged.description = merged.description?.trim() || undefined;
+
+  return merged;
 }
 
 export function mergeEnrichedContact(

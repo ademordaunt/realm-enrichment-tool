@@ -7,7 +7,7 @@ import {
 } from "@/lib/enrichment/zoominfo-enricher";
 import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
 
-export const maxDuration = 300;
+export const maxDuration = 9;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -52,6 +52,7 @@ export async function POST(request: Request) {
         let nonHighIndex = 0;
 
         const mergedRows: (EnrichedCompany | EnrichedContact)[] = [];
+        let enrichedCount = 0;
         const prospectorEndpoint = new URL(
           "/api/enrich/prospector",
           request.url,
@@ -85,9 +86,12 @@ export async function POST(request: Request) {
           if (listType === "companies") {
             emitProgress(
               i,
-              `Checking ZoomInfo… (${nonHighIndex} of ${nonHighTotal} companies)`,
+              `ZoomInfo enriching ${nonHighIndex} of ${nonHighTotal} companies…`,
             );
             const zi = await enrichCompanyWithZoomInfo(row as EnrichedCompany);
+            if (zi.enrichedByZoomInfo) {
+              enrichedCount += 1;
+            }
             mergedRows.push(
               mergeEnrichedCompany(row as EnrichedCompany, zi, {}),
             );
@@ -159,9 +163,12 @@ export async function POST(request: Request) {
             if (stillNeedsEnrichment) {
               emitProgress(
                 i,
-                `Checking ZoomInfo… (${nonHighIndex} of ${nonHighTotal} contacts)`,
+                `ZoomInfo enriching ${nonHighIndex} of ${nonHighTotal} contacts…`,
               );
               ziResult = await enrichContactWithZoomInfo(contact);
+              if (ziResult.enrichedByZoomInfo) {
+                enrichedCount += 1;
+              }
             }
 
             mergedRows.push(
@@ -196,14 +203,26 @@ export async function POST(request: Request) {
               type: "done",
               listType,
               rows: mergedRows,
+              enrichedCount,
+              creditsUsed: enrichedCount,
             })}\n`,
           ),
         );
         controller.close();
       } catch (e) {
         const message = e instanceof Error ? e.message : "Enrichment failed.";
+        const zoomInfoAuthFailure =
+          message.includes("ZoomInfo credentials missing") ||
+          message.includes("ZoomInfo token request failed") ||
+          message.includes("ZoomInfo token response missing access_token");
         controller.enqueue(
-          encoder.encode(`${JSON.stringify({ type: "error", message })}\n`),
+          encoder.encode(
+            `${JSON.stringify({
+              type: "error",
+              message,
+              ...(zoomInfoAuthFailure ? { zoomInfoAuthFailure: true } : {}),
+            })}\n`,
+          ),
         );
         controller.close();
       }

@@ -56,6 +56,18 @@ function companyProperties(
   if (company.numberOfEmployees != null && !Number.isNaN(company.numberOfEmployees)) {
     props.numberofemployees = String(company.numberOfEmployees);
   }
+  if (company.revenue != null && !Number.isNaN(Number(company.revenue))) {
+    props.annualrevenue = String(company.revenue * 1000);
+  }
+  if (company.industry?.trim()) {
+    props.industry = company.industry.trim();
+  }
+  if (company.description?.trim()) {
+    props.description = company.description.trim();
+  }
+  if (company.city?.trim()) {
+    props.city = company.city.trim();
+  }
   mergeLeadExtras(props, extras);
   return props;
 }
@@ -117,7 +129,7 @@ export async function updateCompany(
   extras?: HubSpotCompanyPushExtras,
 ): Promise<string> {
   const res = await hubspotFetch(
-    `/crm/v3/objects/companies/${encodeURIComponent(id)}?properties=name,domain,website,state,numberofemployees,linkedin_company_page,lead_source,lead_source_description,notes`,
+    `/crm/v3/objects/companies/${encodeURIComponent(id)}?properties=name,domain,website,state,numberofemployees,linkedin_company_page,lead_source,lead_source_description,notes,annualrevenue,industry,description,city`,
   );
 
   if (!res.ok) {
@@ -148,6 +160,20 @@ export async function updateCompany(
   }
   if (isEmpty(ex.linkedin_company_page)) {
     updates.linkedin_company_page = company.linkedinUrl?.trim() ?? "";
+  }
+  if (isEmpty(ex.annualrevenue)) {
+    if (company.revenue != null && !Number.isNaN(Number(company.revenue))) {
+      updates.annualrevenue = String(company.revenue * 1000);
+    }
+  }
+  if (isEmpty(ex.industry) && company.industry?.trim()) {
+    updates.industry = company.industry.trim();
+  }
+  if (isEmpty(ex.description) && company.description?.trim()) {
+    updates.description = company.description.trim();
+  }
+  if (isEmpty(ex.city) && company.city?.trim()) {
+    updates.city = company.city.trim();
   }
   if (extras) {
     if (extras.leadSource?.trim() && isEmpty(ex.lead_source)) {

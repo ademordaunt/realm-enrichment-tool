@@ -33,6 +33,29 @@ const CONFIDENCE_ORDER: Record<EnrichedCompany["confidenceScore"], number> = {
   high: 3,
 };
 
+/** Critical gaps → treat as unresolved for sort + badge (does not mutate stored enrichment). */
+function getDisplayConfidence(
+  row: EnrichedCompany | EnrichedContact,
+  listType: "companies" | "contacts",
+): EnrichedCompany["confidenceScore"] {
+  if (listType === "companies") {
+    const c = row as EnrichedCompany;
+    const missingCritical =
+      !c.resolvedName?.trim() ||
+      !c.domain?.trim() ||
+      !c.linkedinUrl?.trim() ||
+      c.numberOfEmployees == null ||
+      !c.state?.trim();
+    if (missingCritical) return "unresolved";
+    return c.confidenceScore;
+  }
+  const c = row as EnrichedContact;
+  const missingCritical =
+    !c.rawEmail?.trim() || !c.resolvedCompany?.trim() || !c.title?.trim();
+  if (missingCritical) return "unresolved";
+  return c.confidenceScore;
+}
+
 function initialStatus(
   confidence: EnrichedCompany["confidenceScore"],
 ): EnrichedCompany["status"] {
@@ -289,9 +312,10 @@ function LinkedInProfileCell(props: {
   edited: boolean;
   muted?: boolean;
   breakAll?: boolean;
+  missingSearchUrl?: string;
   onSave: (next: string) => void;
 }) {
-  const { value, edited, muted, breakAll, onSave } = props;
+  const { value, edited, muted, breakAll, missingSearchUrl, onSave } = props;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => (value == null ? "" : String(value)));
 
@@ -340,49 +364,78 @@ function LinkedInProfileCell(props: {
   const t = (value == null ? "" : String(value)).trim();
   if (!t) {
     return (
-      <button
-        type="button"
-        className={`relative w-full rounded px-1.5 py-0.5 text-left text-xs sm:text-sm ${wrap} ${
-          muted ? "text-zinc-500" : "text-zinc-400"
-        } hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
-        onClick={() => setEditing(true)}
-      >
-        —
+      <div className={`relative flex min-w-0 max-w-full items-center gap-1 ${wrap}`}>
+        <span className={`min-w-0 flex-1 text-xs sm:text-sm ${muted ? "text-zinc-500" : "text-zinc-400"}`}>
+          —
+        </span>
+        {missingSearchUrl ? (
+          <a
+            href={missingSearchUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Search LinkedIn on Google"
+            className="shrink-0 text-xs text-(--realm-purple) hover:underline"
+          >
+            🔍
+          </a>
+        ) : null}
+        <button
+          type="button"
+          className="shrink-0 rounded p-0.5 text-sm text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          aria-label="Edit LinkedIn URL"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setEditing(true);
+          }}
+        >
+          ✏️
+        </button>
         {edited ? (
           <span
             className="pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-blue-500"
             aria-hidden
           />
         ) : null}
-      </button>
+      </div>
     );
   }
 
   const href = t.startsWith("http") ? t : `https://${t}`;
 
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      title="Double-click to edit URL"
-      className={`relative inline-flex min-w-0 max-w-full items-baseline gap-0.5 break-all text-blue-600 hover:text-blue-800 dark:text-blue-400 ${wrap}`}
-      onDoubleClick={(e) => {
-        e.preventDefault();
-        setEditing(true);
-      }}
-    >
-      <span className="min-w-0 break-all">{t}</span>
-      <span className="shrink-0 text-base leading-none" aria-hidden>
-        ↗
-      </span>
+    <div className={`relative flex min-w-0 max-w-full items-center gap-1 ${wrap}`}>
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={t}
+        className="flex min-w-0 flex-1 items-center gap-0.5 truncate text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 sm:text-sm"
+      >
+        <span className="min-w-0 truncate">{t}</span>
+        <span className="shrink-0 text-[0.65rem] leading-none opacity-80" aria-hidden>
+          ↗
+        </span>
+      </a>
+      <button
+        type="button"
+        className="shrink-0 rounded p-0.5 text-sm text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        aria-label="Edit LinkedIn URL"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setEditing(true);
+        }}
+      >
+        ✏️
+      </button>
       {edited ? (
         <span
-          className="pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-blue-500"
+          className="pointer-events-none absolute right-6 top-0 h-1.5 w-1.5 rounded-full bg-blue-500"
           aria-hidden
         />
       ) : null}
-    </a>
+    </div>
   );
 }
 
@@ -413,18 +466,35 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   const sortedRows = useMemo(() => {
     if (listType === "companies") {
       return [...(rows as EnrichedCompany[])].sort((a, b) => {
-        const oa = CONFIDENCE_ORDER[a.confidenceScore] ?? 99;
-        const ob = CONFIDENCE_ORDER[b.confidenceScore] ?? 99;
+        const da = getDisplayConfidence(a, "companies");
+        const db = getDisplayConfidence(b, "companies");
+        const oa = CONFIDENCE_ORDER[da] ?? 99;
+        const ob = CONFIDENCE_ORDER[db] ?? 99;
         if (oa !== ob) return oa - ob;
+        if (da === "unresolved" && db === "unresolved") {
+          const ka = (a.resolvedName || a.rawInput || "").toLowerCase();
+          const kb = (b.resolvedName || b.rawInput || "").toLowerCase();
+          return ka.localeCompare(kb, undefined, { sensitivity: "base" });
+        }
         return (a.resolvedName || "").localeCompare(b.resolvedName || "", undefined, {
           sensitivity: "base",
         });
       });
     }
     return [...(rows as EnrichedContact[])].sort((a, b) => {
-      const oa = CONFIDENCE_ORDER[a.confidenceScore] ?? 99;
-      const ob = CONFIDENCE_ORDER[b.confidenceScore] ?? 99;
+      const da = getDisplayConfidence(a, "contacts");
+      const db = getDisplayConfidence(b, "contacts");
+      const oa = CONFIDENCE_ORDER[da] ?? 99;
+      const ob = CONFIDENCE_ORDER[db] ?? 99;
       if (oa !== ob) return oa - ob;
+      if (da === "unresolved" && db === "unresolved") {
+        const ka = (a.resolvedCompany || a.rawEmail || "").toLowerCase();
+        const kb = (b.resolvedCompany || b.rawEmail || "").toLowerCase();
+        return ka.localeCompare(kb, undefined, { sensitivity: "base" });
+      }
+      const aMissingLinkedIn = !a.linkedinUrl?.trim();
+      const bMissingLinkedIn = !b.linkedinUrl?.trim();
+      if (aMissingLinkedIn !== bMissingLinkedIn) return aMissingLinkedIn ? -1 : 1;
       return (a.resolvedCompany || "").localeCompare(b.resolvedCompany || "", undefined, {
         sensitivity: "base",
       });
@@ -510,9 +580,10 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
 
   const unresolvedApprovedCount = useMemo(
     () =>
-      rows.filter((r) => r.status === "approved" && r.confidenceScore === "unresolved")
-        .length,
-    [rows],
+      rows.filter(
+        (r) => r.status === "approved" && getDisplayConfidence(r, listType) === "unresolved",
+      ).length,
+    [rows, listType],
   );
 
   const rowShellClass = (r: EnrichedCompany | EnrichedContact, rowIndex: number) => {
@@ -520,7 +591,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
       return "border-b border-(--border-default) bg-(--conf-high-bg)";
     }
 
-    const conf = r.confidenceScore;
+    const conf = getDisplayConfidence(r, listType);
     let borderClass = "border-l-transparent";
     if (conf === "unresolved") {
       borderClass = "border-l-[var(--conf-unresolved)]";
@@ -734,7 +805,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         />
                       </td>
                       <td className="px-2 py-1.5 align-middle">
-                        <ConfidenceBadge score={row.confidenceScore} />
+                        <ConfidenceBadge score={getDisplayConfidence(row, "companies")} />
                       </td>
                       <td className="max-w-56 px-2 py-1.5 align-middle wrap-break-word">
                         <ReasoningTooltip text={row.aiReasoning} />
@@ -746,6 +817,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   const muted = row.status === "skipped";
                   const checked = row.status === "approved";
                   const fullName = [row.firstName, row.lastName].filter(Boolean).join(" ");
+                  const searchLinkedInUrl = `https://www.google.com/search?q=${encodeURIComponent(
+                    `"${fullName}" "${row.resolvedCompany || row.rawCompany}" LinkedIn`,
+                  )}`;
                   return (
                     <tr key={row.id} className={rowShellClass(row, ri)}>
                       <td className="px-2 py-1.5 align-middle">
@@ -816,6 +890,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
                           muted={muted}
                           breakAll
+                          missingSearchUrl={searchLinkedInUrl}
                           onSave={(v) => {
                             markEdited(row.id, "linkedinUrl");
                             setRows(
@@ -827,7 +902,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         />
                       </td>
                       <td className="px-2 py-1.5 align-middle">
-                        <ConfidenceBadge score={row.confidenceScore} />
+                        <ConfidenceBadge score={getDisplayConfidence(row, "contacts")} />
                       </td>
                       <td className="max-w-56 px-2 py-1.5 align-middle wrap-break-word">
                         <ReasoningTooltip text={row.aiReasoning} />

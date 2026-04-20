@@ -16,7 +16,7 @@ import type {
   RawCompanyRow,
   RawContactRow,
 } from "@/lib/utils/types";
-import { ENRICHMENT_BATCH_SIZE } from "@/lib/enrichment/ai-enricher";
+import { ENRICHMENT_BATCH_SIZE, needsLinkedInLookup } from "@/lib/enrichment/ai-enricher";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const ACCEPT = ".csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
@@ -31,6 +31,7 @@ const NAV_STEPS = [
 ] as const;
 
 const PREVIEW_MAX_ROWS = 50;
+const SESSION_STORAGE_KEY = "realm-enrichment-session-v1";
 
 const MONTH_LONG_TO_ABBREV: Record<string, string> = {
   january: "Jan.",
@@ -97,6 +98,15 @@ type Step =
   | "prepush"
   | "pushing"
   | "complete";
+
+type PersistedSession = {
+  step: Step;
+  enrichedData: EnrichedCompany[] | EnrichedContact[] | null;
+  approvedRows: Array<EnrichedCompany | EnrichedContact>;
+  eventContext: EventContext | null;
+  listType: "companies" | "contacts" | null;
+  parseResult: ParseResponse | null;
+};
 
 function rowDedupKey(row: RawCompanyRow | RawContactRow, kind: "companies" | "contacts"): string {
   if (kind === "companies") {
@@ -224,8 +234,30 @@ type NdjsonEvent =
       type: "done";
       listType: "companies" | "contacts";
       rows: EnrichedCompany[] | EnrichedContact[];
+      enrichedCount?: number;
+      creditsUsed?: number;
     }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; zoomInfoAuthFailure?: boolean };
+
+class ZoomInfoVerifyError extends Error {
+  readonly zoomInfoAuthFailure: boolean;
+
+  constructor(message: string, options?: { zoomInfoAuthFailure?: boolean }) {
+    super(message);
+    this.name = "ZoomInfoVerifyError";
+    this.zoomInfoAuthFailure = Boolean(options?.zoomInfoAuthFailure);
+  }
+}
+
+type ZoomInfoVerifySummary =
+  | {
+      kind: "success";
+      enrichedCount: number;
+      creditsUsed: number;
+      listType: "companies" | "contacts";
+    }
+  | { kind: "no_matches" }
+  | { kind: "credentials" };
 
 async function consumeEnrichmentNdjson(
   res: Response,
@@ -238,6 +270,8 @@ async function consumeEnrichmentNdjson(
 ): Promise<{
   rows: EnrichedCompany[] | EnrichedContact[];
   rawNdjson: string;
+  enrichedCount: number;
+  creditsUsed: number;
 }> {
   const reader = res.body?.getReader();
   if (!reader) {
@@ -247,6 +281,8 @@ async function consumeEnrichmentNdjson(
   let buffer = "";
   let rawNdjson = "";
   let result: EnrichedCompany[] | EnrichedContact[] | null = null;
+  let enrichedCount = 0;
+  let creditsUsed = 0;
 
   const handleLine = (line: string) => {
     const t = line.trim();
@@ -260,9 +296,19 @@ async function consumeEnrichmentNdjson(
         detail: msg.detail ?? null,
       });
     } else if (msg.type === "error") {
-      throw new Error(msg.message);
+      throw new ZoomInfoVerifyError(msg.message, {
+        zoomInfoAuthFailure: msg.zoomInfoAuthFailure === true,
+      });
     } else if (msg.type === "done") {
       result = msg.rows;
+      enrichedCount =
+        typeof msg.enrichedCount === "number" && Number.isFinite(msg.enrichedCount)
+          ? msg.enrichedCount
+          : 0;
+      creditsUsed =
+        typeof msg.creditsUsed === "number" && Number.isFinite(msg.creditsUsed)
+          ? msg.creditsUsed
+          : enrichedCount;
     }
   };
 
@@ -288,7 +334,50 @@ async function consumeEnrichmentNdjson(
   if (!result) {
     throw new Error("Enrichment finished without a result payload.");
   }
-  return { rows: result, rawNdjson };
+  return { rows: result, rawNdjson, enrichedCount, creditsUsed };
+}
+
+async function runLinkedInLookupPass(
+  contacts: EnrichedContact[],
+  signal: AbortSignal,
+  onProgress: (done: number, total: number) => void,
+): Promise<EnrichedContact[]> {
+  const missingIndices: number[] = [];
+  for (let i = 0; i < contacts.length; i++) {
+    if (needsLinkedInLookup(contacts[i]!)) {
+      missingIndices.push(i);
+    }
+  }
+  const total = missingIndices.length;
+  if (total === 0) {
+    return contacts;
+  }
+
+  const out = contacts.slice();
+  let done = 0;
+  for (const idx of missingIndices) {
+    const row = out[idx]!;
+    const res = await fetch("/api/enrich/linkedin-search", {
+      method: "POST",
+      signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contact: row }),
+    });
+    if (res.ok) {
+      const payload = (await res.json()) as { linkedInUrl?: string | null };
+      const linkedInUrl = String(payload.linkedInUrl ?? "").trim();
+      if (linkedInUrl) {
+        out[idx] = {
+          ...row,
+          linkedinUrl: linkedInUrl,
+          enrichedByAI: true,
+        };
+      }
+    }
+    done += 1;
+    onProgress(done, total);
+  }
+  return out;
 }
 
 function fallbackAiCompanyRows(rows: RawCompanyRow[], errMsg: string): EnrichedCompany[] {
@@ -416,6 +505,9 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [enrichError, setEnrichError] = useState<string | null>(null);
+  const [zoomInfoVerifySummary, setZoomInfoVerifySummary] = useState<ZoomInfoVerifySummary | null>(
+    null,
+  );
   const [result, setResult] = useState<ParseResponse | null>(null);
   const [listOverride, setListOverride] = useState<"companies" | "contacts" | null>(null);
   const [segmentIndex, setSegmentIndex] = useState(0);
@@ -454,6 +546,8 @@ export default function Home() {
   const enrichAbortRef = useRef<AbortController | null>(null);
   const uploadFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enrichmentBannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restoredApprovedIdsRef = useRef<Set<string> | null>(null);
+  const sessionHydratedRef = useRef(false);
 
   const [showEnrichmentCompleteBanner, setShowEnrichmentCompleteBanner] = useState(false);
   const [completionBannerText, setCompletionBannerText] = useState(
@@ -469,7 +563,18 @@ export default function Home() {
       setReviewRows([]);
       return;
     }
-    setReviewRows(applyInitialReviewStatus(enriched));
+    const seeded = applyInitialReviewStatus(enriched);
+    const approvedIds = restoredApprovedIdsRef.current;
+    if (!approvedIds || approvedIds.size === 0) {
+      setReviewRows(seeded);
+      return;
+    }
+    const withRestoredApproval = seeded.map((row) => ({
+      ...row,
+      status: approvedIds.has(row.id) ? ("approved" as const) : row.status,
+    })) as EnrichedCompany[] | EnrichedContact[];
+    setReviewRows(withRestoredApproval);
+    restoredApprovedIdsRef.current = null;
   }, [enriched, enrichedListType]);
 
   useEffect(() => {
@@ -484,6 +589,53 @@ export default function Home() {
       }
     };
   }, []);
+
+  const clearSessionSnapshot = useCallback(() => {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || sessionHydratedRef.current) return;
+    sessionHydratedRef.current = true;
+    const raw = window.sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return;
+    try {
+      const saved = JSON.parse(raw) as PersistedSession;
+      if (saved.parseResult) {
+        setResult(saved.parseResult);
+      }
+      if (saved.eventContext) {
+        setEventContext(saved.eventContext);
+      }
+      if (saved.enrichedData) {
+        setEnriched(saved.enrichedData);
+      }
+      if (saved.listType) {
+        setEnrichedListType(saved.listType);
+        setListOverride(saved.listType);
+      }
+      if (Array.isArray(saved.approvedRows)) {
+        restoredApprovedIdsRef.current = new Set(saved.approvedRows.map((r) => r.id));
+      }
+      setStep(saved.step ?? "upload");
+    } catch {
+      clearSessionSnapshot();
+    }
+  }, [clearSessionSnapshot]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !sessionHydratedRef.current) return;
+    const payload: PersistedSession = {
+      step,
+      enrichedData: enriched,
+      approvedRows: approvedRowsForPush,
+      eventContext,
+      listType: enrichedListType,
+      parseResult: result,
+    };
+    window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+  }, [step, enriched, approvedRowsForPush, eventContext, enrichedListType, result]);
 
   const parseFile = useCallback(
     async (f: File, listType?: "companies" | "contacts") => {
@@ -656,7 +808,7 @@ export default function Home() {
       const errBody = (await res.json().catch(() => ({}))) as { error?: string };
       throw new Error(errBody.error ?? `Verification failed (${res.status})`);
     }
-    const { rows } = await consumeEnrichmentNdjson(res, (p) => {
+    const { rows, enrichedCount, creditsUsed } = await consumeEnrichmentNdjson(res, (p) => {
       setProgress({
         startRow: p.start,
         endRow: p.end,
@@ -664,6 +816,11 @@ export default function Home() {
         detail: p.detail ?? null,
       });
     });
+    setZoomInfoVerifySummary(
+      enrichedCount > 0
+        ? { kind: "success", enrichedCount, creditsUsed, listType }
+        : { kind: "no_matches" },
+    );
     return rows;
   };
 
@@ -671,6 +828,7 @@ export default function Home() {
     if (!resolvedListType) return;
     setEventContext(context);
     setEnrichError(null);
+    setZoomInfoVerifySummary(null);
     if (typeof window !== "undefined" && "Notification" in window) {
       void Notification.requestPermission();
     }
@@ -794,10 +952,44 @@ export default function Home() {
           setStep("context");
           return;
         }
-        setEnrichError(
-          verifyErr instanceof Error ? verifyErr.message : "ZoomInfo / Common Room step failed.",
-        );
+        if (verifyErr instanceof ZoomInfoVerifyError && verifyErr.zoomInfoAuthFailure) {
+          setZoomInfoVerifySummary({ kind: "credentials" });
+          setEnrichError(null);
+        } else {
+          setZoomInfoVerifySummary(null);
+          setEnrichError(
+            verifyErr instanceof Error
+              ? verifyErr.message
+              : "ZoomInfo / Common Room step failed.",
+          );
+        }
         finalRows = aiRows;
+      }
+
+      if (resolvedListType === "contacts") {
+        const contactRows = finalRows as EnrichedContact[];
+        const missingLinkedInTotal = contactRows.filter((r) =>
+          needsLinkedInLookup(r),
+        ).length;
+        setStep("verifying");
+        setProgress({
+          startRow: 1,
+          endRow: contactRows.length,
+          totalRows: contactRows.length,
+          detail: `Finding LinkedIn URLs: 0 of ${missingLinkedInTotal}...`,
+        });
+        finalRows = await runLinkedInLookupPass(
+          contactRows,
+          ac.signal,
+          (done, total) => {
+            setProgress({
+              startRow: 1,
+              endRow: contactRows.length,
+              totalRows: contactRows.length,
+              detail: `Finding LinkedIn URLs: ${done} of ${total}...`,
+            });
+          },
+        );
       }
 
       setEnriched(finalRows);
@@ -832,35 +1024,60 @@ export default function Home() {
     }
   };
 
-  const startNewImport = useCallback(() => {
-    if (uploadFlashTimeoutRef.current) {
-      clearTimeout(uploadFlashTimeoutRef.current);
-      uploadFlashTimeoutRef.current = null;
-    }
-    setShowSuccessFlash(false);
-    setShowEnrichmentCompleteBanner(false);
-    if (enrichmentBannerTimeoutRef.current) {
-      clearTimeout(enrichmentBannerTimeoutRef.current);
-      enrichmentBannerTimeoutRef.current = null;
-    }
-    setStep("upload");
-    setFile(null);
-    setResult(null);
-    setListOverride(null);
-    setSegmentIndex(0);
-    setEnriched(null);
-    setEnrichedListType(null);
-    setReviewRows([]);
-    setEventContext(null);
-    setPushResult(null);
-    setPushError(null);
-    setLastPushLeadSource(null);
-    setEnrichError(null);
-    setError(null);
+  const cancelEnrichmentToContext = useCallback(() => {
+    enrichAbortRef.current?.abort();
     setProgress(null);
-    setPreviewRowsOverride(null);
-    setDuplicateExemptPairs(new Set());
+    setStep("context");
   }, []);
+
+  const resetToUpload = useCallback(
+    (clearSession = false) => {
+      if (clearSession) {
+        clearSessionSnapshot();
+      }
+      enrichAbortRef.current?.abort();
+      enrichAbortRef.current = null;
+      restoredApprovedIdsRef.current = null;
+      if (sessionHydratedRef.current && clearSession) {
+        window.sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      }
+      if (enrichmentBannerTimeoutRef.current) {
+        clearTimeout(enrichmentBannerTimeoutRef.current);
+        enrichmentBannerTimeoutRef.current = null;
+      }
+      if (uploadFlashTimeoutRef.current) {
+        clearTimeout(uploadFlashTimeoutRef.current);
+        uploadFlashTimeoutRef.current = null;
+      }
+      setShowSuccessFlash(false);
+      setShowEnrichmentCompleteBanner(false);
+      setStep("upload");
+      setFile(null);
+      setResult(null);
+      setListOverride(null);
+      setSegmentIndex(0);
+      setEnriched(null);
+      setEnrichedListType(null);
+      setReviewRows([]);
+      setEventContext(null);
+      setPushResult(null);
+      setPushError(null);
+      setLastPushLeadSource(null);
+      setEnrichError(null);
+      setZoomInfoVerifySummary(null);
+      setError(null);
+      setProgress(null);
+      setPreviewRowsOverride(null);
+      setDuplicateExemptPairs(new Set());
+      setDupFeedback(null);
+      setDuplicateSessionTotal(null);
+    },
+    [clearSessionSnapshot],
+  );
+
+  const startNewImport = useCallback(() => {
+    resetToUpload(true);
+  }, [resetToUpload]);
 
   const runHubSpotPush = useCallback(
     async (settings: PrePushSettings) => {
@@ -998,6 +1215,18 @@ export default function Home() {
       </header>
 
       <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 pb-8 pt-22 sm:px-6">
+        {step === "context" ||
+        step === "enriched" ||
+        step === "prepush" ? (
+          <button
+            type="button"
+            onClick={() => resetToUpload(true)}
+            className="self-start text-sm text-(--text-muted) hover:text-(--text-primary)"
+          >
+            ← Start Over
+          </button>
+        ) : null}
+
         {step === "upload" && (
           <div className="flex min-h-[calc(100vh-3.5rem)] w-full flex-col items-center justify-center py-12">
             {!result && (
@@ -1232,7 +1461,6 @@ export default function Home() {
               listType={resolvedListType}
               sourceFileName={file?.name ?? null}
               initialValues={eventContext}
-              onBackToUpload={startNewImport}
               onSubmit={(ctx) => void runEnrichment(ctx)}
             />
           </>
@@ -1241,13 +1469,8 @@ export default function Home() {
         {step === "enriching" && progress && (
           <div className="flex flex-col gap-4">
             <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
-              <p className="text-center text-sm font-medium text-(--text-primary)" role="status">
-                {progress.fromCache
-                  ? `Loaded from cache: rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}…`
-                  : `Analyzing rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}…`}
-              </p>
               <div
-                className="mt-3 h-2 w-full overflow-hidden rounded-full bg-(--bg-muted)"
+                className="h-2 w-full overflow-hidden rounded-full bg-(--bg-muted)"
                 aria-hidden
               >
                 <div
@@ -1262,23 +1485,17 @@ export default function Home() {
             <button
               type="button"
               className="self-center rounded-lg border border-(--border-default) bg-white px-4 py-2 text-sm font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
-              onClick={() => enrichAbortRef.current?.abort()}
+              onClick={cancelEnrichmentToContext}
             >
-              Cancel Enrichment
+              Cancel
             </button>
           </div>
         )}
 
         {step === "verifying" && progress && (
           <EnrichmentProgress
-            startRow={progress.startRow}
             endRow={progress.endRow}
             totalRows={progress.totalRows}
-            verifyTitle={
-              resolvedListType === "companies"
-                ? "Verifying non-confident companies with ZoomInfo…"
-                : "Verifying non-confident contacts with Common Room and ZoomInfo…"
-            }
             verifyDetail={progress.detail}
           />
         )}
@@ -1312,9 +1529,29 @@ export default function Home() {
                 {enrichError}
               </div>
             )}
-            <p className="mt-3 text-sm text-(--text-muted) bg-(--bg-muted) rounded-lg px-4 py-2">
-              ℹ️ ZoomInfo verification: pending API access · 0 credits estimated for this import
-            </p>
+            {zoomInfoVerifySummary?.kind === "credentials" ? (
+              <div
+                className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/80 dark:bg-amber-950/40 dark:text-amber-100"
+                role="alert"
+              >
+                ZoomInfo: credentials not configured
+              </div>
+            ) : null}
+            {zoomInfoVerifySummary?.kind === "success" ? (
+              <p
+                className="mt-3 rounded-lg border border-(--border-default) bg-(--bg-muted) px-4 py-2 text-sm text-(--text-primary)"
+                role="status"
+              >
+                ✓ ZoomInfo enriched {zoomInfoVerifySummary.enrichedCount}{" "}
+                {zoomInfoVerifySummary.listType === "companies" ? "companies" : "contacts"}, ~
+                {zoomInfoVerifySummary.creditsUsed} credits used
+              </p>
+            ) : null}
+            {zoomInfoVerifySummary?.kind === "no_matches" ? (
+              <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">
+                ZoomInfo: no matches found for this import
+              </p>
+            ) : null}
             <div className="mt-4">
               <ReviewTable
                 rows={reviewRows}

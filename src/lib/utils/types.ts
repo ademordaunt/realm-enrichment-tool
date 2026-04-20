@@ -43,6 +43,10 @@ export interface EnrichedCompany {
   status: "pending" | "approved" | "skipped" | "error";
   hubspotId?: string;
   hubspotAction?: "create" | "update";
+  revenue?: number;
+  industry?: string;
+  description?: string;
+  city?: string;
 }
 
 /** Enriched Contact Record */

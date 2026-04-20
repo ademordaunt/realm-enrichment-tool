@@ -46,6 +46,16 @@ const MACRO_REGION_OPTIONS = [
   "Mountain West",
   "Pacific West",
 ] as const;
+const REGION_PICKER_OPTIONS = [...MACRO_REGION_OPTIONS, "National"] as const;
+const REGION_VALUES = [
+  "Midwest",
+  "Northeast",
+  "Southeast",
+  "Southwest",
+  "Pacific West",
+  "Mountain West",
+  "National",
+] as const;
 
 const ROOT_PICK_STATE = "__pick_state__";
 const ROOT_PICK_REGION = "__pick_region__";
@@ -254,47 +264,34 @@ const CITY_TO_STATE: Record<string, string> = {
   wy: "Wyoming",
 
   // Macro keywords
+  "mid-west": "Midwest",
   midwest: "Midwest",
-  southeast: "Southeast",
+  "mid west": "Midwest",
+  "north-east": "Northeast",
   northeast: "Northeast",
+  "south-east": "Southeast",
+  southeast: "Southeast",
+  "south-west": "Southwest",
   southwest: "Southwest",
+  pacific: "Pacific West",
+  mountain: "Mountain West",
   national: "National",
   virtual: "National",
   online: "National",
   rsa: "California",
 };
 
-const LOCATION_MATCH_KEYS = Object.keys(CITY_TO_STATE).sort((a, b) => {
-  const aWords = a.trim().split(/\s+/).length;
-  const bWords = b.trim().split(/\s+/).length;
-  if (aWords !== bWords) return bWords - aWords;
-  return b.length - a.length;
-});
-
-function normalizeForLocationMatch(input: string): string {
-  return input
-    .toLowerCase()
-    .replace(/[.,/#!$%^&*;:{}=_`~()[\]"'|\\]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function containsStandaloneTwoLetterCode(haystack: string, code: string): boolean {
-  const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`(^|[\\s-])${escaped}(?=$|[\\s-])`, "i");
-  return pattern.test(haystack);
-}
+const LOCATION_MATCH_KEYS = Object.keys(CITY_TO_STATE).sort((a, b) => b.length - a.length);
 
 function detectRegionFromEventName(input: string): string | null {
-  const normalized = normalizeForLocationMatch(input);
+  const normalized = input
+    .toLowerCase()
+    .replace(/-/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!normalized) return null;
   for (const key of LOCATION_MATCH_KEYS) {
-    const target = key.toLowerCase();
-    const match =
-      /^[a-z]{2}$/.test(target)
-        ? containsStandaloneTwoLetterCode(normalized, target)
-        : normalized.includes(target);
-    if (match) {
+    if (normalized.includes(key)) {
       return CITY_TO_STATE[key] ?? null;
     }
   }
@@ -490,14 +487,32 @@ export function EventContextForm({
   useEffect(() => {
     if (regionManuallySelected.current) return;
     const detected = detectRegionFromEventName(eventName);
-    if (!detected || !STATE_REGION_OPTIONS.includes(detected)) return;
+    if (
+      !detected ||
+      (!STATE_REGION_OPTIONS.includes(detected) &&
+        !REGION_VALUES.includes(detected as (typeof REGION_VALUES)[number]))
+    ) {
+      return;
+    }
     if (region === detected && !noStateRegionSelected) {
       setAutoDetectedRegion(true);
       return;
     }
-    setRegion(detected);
+    const isDetectedRegion = REGION_PICKER_OPTIONS.includes(
+      detected as (typeof REGION_PICKER_OPTIONS)[number],
+    );
+    if (isDetectedRegion) {
+      console.log(`[EventContext] Auto-detected region: ${detected}`);
+      setLocationView("region");
+      setRegion(detected);
+    } else if (US_STATE_OPTIONS.includes(detected)) {
+      console.log(`[EventContext] Auto-detected state: ${detected}`);
+      setLocationView("state");
+      setRegion(detected);
+    } else {
+      setRegion(detected);
+    }
     setNoStateRegionSelected(false);
-    setLocationView("root");
     setAutoDetectedRegion(true);
   }, [eventName, region, noStateRegionSelected]);
 
@@ -509,7 +524,7 @@ export function EventContextForm({
       eventName: eventName.trim(),
       eventDate: monthYearForPrompt.trim(),
       region: region.trim(),
-      audienceLevel: audienceLevel.trim(),
+      audienceLevel: listType === "contacts" ? audienceLevel.trim() : "",
       listType,
     });
   };
@@ -613,7 +628,7 @@ export function EventContextForm({
             <span className="font-medium text-(--text-primary)">
               State / Region <span className="text-(--color-error)">*</span>
             </span>
-            {region && locationView === "root" ? (
+            {region ? (
               <div className="relative">
                 <select
                   required
@@ -623,9 +638,12 @@ export function EventContextForm({
                     regionManuallySelected.current = true;
                     const v = e.target.value;
                     if (v === CHANGE_SELECTION) {
+                      const isRegionSelection = REGION_PICKER_OPTIONS.includes(
+                        region as (typeof REGION_PICKER_OPTIONS)[number],
+                      );
                       setRegion("");
                       setNoStateRegionSelected(false);
-                      setLocationView("root");
+                      setLocationView(isRegionSelection ? "region" : "state");
                       setAutoDetectedRegion(false);
                       return;
                     }
@@ -688,7 +706,7 @@ export function EventContextForm({
               </div>
             ) : null}
 
-            {locationView === "state" ? (
+            {!region && locationView === "state" ? (
               <StateSubPicker
                 disabled={disabled}
                 onBack={() => setLocationView("root")}
@@ -702,7 +720,7 @@ export function EventContextForm({
               />
             ) : null}
 
-            {locationView === "region" ? (
+            {!region && locationView === "region" ? (
               <RegionSubPicker
                 disabled={disabled}
                 onBack={() => setLocationView("root")}
@@ -718,27 +736,29 @@ export function EventContextForm({
             {autoDetectedRegion && region ? null : null}
           </label>
 
-          <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-            <span className="font-medium text-(--text-primary)">
-              Audience Level <span className="text-(--color-error)">*</span>
-            </span>
-            <div className="relative">
-              <input
-                required
-                className={`${inputWithTrailingIconClass} ${!audienceTouched ? "text-(--text-muted)" : ""}`}
-                value={audienceLevel}
-                onChange={(e) => setAudienceLevel(e.target.value)}
-                onFocus={() => setAudienceTouched(true)}
-                disabled={disabled}
-              />
-              <span
-                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-(--text-muted) opacity-40"
-                aria-hidden
-              >
-                ✏️
+          {listType === "contacts" ? (
+            <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+              <span className="font-medium text-(--text-primary)">
+                Audience Level <span className="text-(--color-error)">*</span>
               </span>
-            </div>
-          </label>
+              <div className="relative">
+                <input
+                  required
+                  className={`${inputWithTrailingIconClass} ${!audienceTouched ? "text-(--text-muted)" : ""}`}
+                  value={audienceLevel}
+                  onChange={(e) => setAudienceLevel(e.target.value)}
+                  onFocus={() => setAudienceTouched(true)}
+                  disabled={disabled}
+                />
+                <span
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-(--text-muted) opacity-40"
+                  aria-hidden
+                >
+                  ✏️
+                </span>
+              </div>
+            </label>
+          ) : null}
         </div>
 
         <div className="flex justify-end pt-1">

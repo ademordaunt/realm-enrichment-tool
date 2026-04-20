@@ -1,5 +1,5 @@
-let cachedJwt: string | null = null;
-/** Epoch ms when the cached token must be refreshed (tokens last ~1 hour) */
+let cachedAccessToken: string | null = null;
+/** Epoch ms when the cached token must be refreshed. */
 let tokenExpiresAt = 0;
 
 /**
@@ -7,50 +7,52 @@ let tokenExpiresAt = 0;
  */
 export async function getZoomInfoToken(): Promise<string> {
   const now = Date.now();
-  if (cachedJwt && now < tokenExpiresAt - 60_000) {
-    return cachedJwt;
+  if (cachedAccessToken && now < tokenExpiresAt - 60_000) {
+    return cachedAccessToken;
   }
 
-  // ZOOMINFO_PASSWORD is the user's actual ZoomInfo web account login password (not the API client secret).
-  const body = {
-    username: process.env.ZOOMINFO_USERNAME,
-    password: process.env.ZOOMINFO_PASSWORD,
-    client_id: process.env.ZOOMINFO_CLIENT_ID,
-  };
+  console.log("[ZoomInfo auth] env check:", {
+    hasClientId: !!process.env.ZOOMINFO_CLIENT_ID,
+    hasClientSecret: !!process.env.ZOOMINFO_CLIENT_SECRET,
+  });
 
-  if (
-    !body.username?.trim() ||
-    !body.password?.trim() ||
-    !body.client_id?.trim()
-  ) {
+  const clientId = process.env.ZOOMINFO_CLIENT_ID?.trim();
+  const clientSecret = process.env.ZOOMINFO_CLIENT_SECRET?.trim();
+  if (!clientId || !clientSecret) {
     throw new Error(
-      "ZoomInfo credentials missing: set ZOOMINFO_USERNAME, ZOOMINFO_PASSWORD, and ZOOMINFO_CLIENT_ID.",
+      "ZoomInfo credentials missing: set ZOOMINFO_CLIENT_ID and ZOOMINFO_CLIENT_SECRET.",
     );
   }
 
-  const res = await fetch("https://api.zoominfo.com/authenticate", {
+  const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+  const res = await fetch("https://api.zoominfo.com/gtm/oauth/v1/token", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: "grant_type=client_credentials",
   });
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`ZoomInfo authenticate failed (${res.status}): ${text}`);
+    throw new Error(`ZoomInfo token request failed (${res.status}): ${text}`);
   }
 
-  const json = (await res.json()) as { jwt?: string };
-  if (!json.jwt) {
-    throw new Error("ZoomInfo authenticate response missing jwt.");
+  const json = (await res.json()) as { access_token?: string; expires_in?: number };
+  if (!json.access_token) {
+    throw new Error("ZoomInfo token response missing access_token.");
   }
 
-  cachedJwt = json.jwt;
-  tokenExpiresAt = now + 60 * 60 * 1000;
-  return cachedJwt;
+  cachedAccessToken = json.access_token;
+  const expiresInMs = Math.max(1, json.expires_in ?? 3600) * 1000;
+  tokenExpiresAt = now + expiresInMs;
+  return cachedAccessToken;
 }
 
 /** Force next call to fetch a new token (e.g. after 401). */
 export function invalidateZoomInfoToken(): void {
-  cachedJwt = null;
+  cachedAccessToken = null;
   tokenExpiresAt = 0;
 }
