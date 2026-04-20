@@ -57,15 +57,24 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json({ error: "Expected `context` object." }, { status: 400 });
   }
 
+  const listTypeNorm = listType === "companies" ? "companies" : "contacts";
+  const audienceLevelRaw = String(context.audienceLevel ?? "").trim();
+
   const ctx: EventContext = {
     eventName: String(context.eventName ?? "").trim(),
     eventDate: String(context.eventDate ?? "").trim(),
     region: String(context.region ?? "").trim(),
-    audienceLevel: String(context.audienceLevel ?? "").trim(),
-    listType: listType === "companies" ? "companies" : "contacts",
+    audienceLevel:
+      listTypeNorm === "companies"
+        ? audienceLevelRaw || "Business professionals"
+        : audienceLevelRaw,
+    listType: listTypeNorm,
   };
 
-  const required: (keyof EventContext)[] = ["eventName", "eventDate", "audienceLevel"];
+  const required: (keyof EventContext)[] =
+    listTypeNorm === "contacts"
+      ? ["eventName", "eventDate", "audienceLevel"]
+      : ["eventName", "eventDate"];
   const missing = required.filter((k) => !String(ctx[k] ?? "").trim());
   if (missing.length > 0) {
     return Response.json(

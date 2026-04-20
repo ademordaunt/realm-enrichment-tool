@@ -852,6 +852,7 @@ export default function Home() {
           ? ([] as EnrichedCompany[])
           : ([] as EnrichedContact[]);
 
+      // 1. AI enrichment — await each batch in order until all complete.
       for (let i = 0; i < numBatches; i++) {
         const start = i * batchSize;
         const batchSlice = workingRows.slice(start, start + batchSize);
@@ -944,9 +945,10 @@ export default function Home() {
         | EnrichedCompany[]
         | EnrichedContact[];
 
-      let finalRows: EnrichedCompany[] | EnrichedContact[] = aiRows;
+      // 2. ZoomInfo + Common Room — runs only after every AI batch above has finished.
+      let rowsAfterVerify: EnrichedCompany[] | EnrichedContact[] = aiRows;
       try {
-        finalRows = await runZoomVerify(aiRows, resolvedListType, ac.signal);
+        rowsAfterVerify = await runZoomVerify(aiRows, resolvedListType, ac.signal);
       } catch (verifyErr) {
         if (verifyErr instanceof Error && verifyErr.name === "AbortError") {
           setStep("context");
@@ -963,29 +965,30 @@ export default function Home() {
               : "ZoomInfo / Common Room step failed.",
           );
         }
-        finalRows = aiRows;
+        rowsAfterVerify = aiRows;
       }
 
+      // 3. LinkedIn web search fallback — contacts only, after verify; per-row, only if still no linkedinUrl.
+      let finalRows: EnrichedCompany[] | EnrichedContact[] = rowsAfterVerify;
       if (resolvedListType === "contacts") {
-        const contactRows = finalRows as EnrichedContact[];
-        const missingLinkedInTotal = contactRows.filter((r) =>
+        const contactRowsAfterVerify = rowsAfterVerify as EnrichedContact[];
+        const missingLinkedInTotal = contactRowsAfterVerify.filter((r) =>
           needsLinkedInLookup(r),
         ).length;
-        setStep("verifying");
         setProgress({
           startRow: 1,
-          endRow: contactRows.length,
-          totalRows: contactRows.length,
+          endRow: contactRowsAfterVerify.length,
+          totalRows: contactRowsAfterVerify.length,
           detail: `Finding LinkedIn URLs: 0 of ${missingLinkedInTotal}...`,
         });
         finalRows = await runLinkedInLookupPass(
-          contactRows,
+          contactRowsAfterVerify,
           ac.signal,
           (done, total) => {
             setProgress({
               startRow: 1,
-              endRow: contactRows.length,
-              totalRows: contactRows.length,
+              endRow: contactRowsAfterVerify.length,
+              totalRows: contactRowsAfterVerify.length,
               detail: `Finding LinkedIn URLs: ${done} of ${total}...`,
             });
           },
@@ -1478,6 +1481,14 @@ export default function Home() {
                   style={{ width: `${enrichmentBatchPercent}%` }}
                 />
               </div>
+              <p
+                className="text-sm text-(--text-muted) text-center mt-2"
+                role="status"
+              >
+                {progress.fromCache
+                  ? `Loaded from cache: rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}...`
+                  : `Analyzing rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}...`}
+              </p>
               <p className="mt-3 text-center text-sm text-(--text-muted)">
                 You can leave this tab. We&apos;ll notify you when enrichment is complete.
               </p>
