@@ -23,16 +23,16 @@ function contactProperties(
   const phone = contact.phone?.trim();
   if (phone) props.phone = phone;
   const ls = contact.leadSource?.trim();
-  if (ls) props.lead_source = ls;
+  if (ls) props.lead_source__deal_source = ls;
   const lsd = contact.leadSourceDescription?.trim();
   if (lsd) props.lead_source_description = lsd;
   const n = contact.membershipNotes?.trim() || contact.notes?.trim();
-  if (n) props.notes = n;
-  if (extras?.leadSource?.trim()) props.lead_source = extras.leadSource.trim();
+  if (n) props.hs_content_membership_notes = n;
+  if (extras?.leadSource?.trim()) props.lead_source__deal_source = extras.leadSource.trim();
   if (extras?.leadSourceDescription?.trim()) {
     props.lead_source_description = extras.leadSourceDescription.trim();
   }
-  if (extras?.notes?.trim()) props.notes = extras.notes.trim();
+  if (extras?.notes?.trim()) props.hs_content_membership_notes = extras.notes.trim();
   return props;
 }
 
@@ -93,7 +93,7 @@ export async function updateContact(
   extras?: HubSpotCompanyPushExtras,
 ): Promise<string> {
   const res = await hubspotFetch(
-    `/crm/v3/objects/contacts/${encodeURIComponent(id)}?properties=firstname,lastname,email,jobtitle,company,hs_linkedin_url,state,phone,lead_source,lead_source_description,notes`,
+    `/crm/v3/objects/contacts/${encodeURIComponent(id)}?properties=firstname,lastname,email,jobtitle,company,hs_linkedin_url,state,phone,lead_source__deal_source,lead_source_description,hs_content_membership_notes`,
   );
 
   if (!res.ok) {
@@ -130,8 +130,8 @@ export async function updateContact(
     updates.phone = contact.phone.trim();
   }
   if (extras) {
-    if (extras.leadSource?.trim() && isEmpty(ex.lead_source)) {
-      updates.lead_source = extras.leadSource.trim();
+    if (extras.leadSource?.trim() && isEmpty(ex.lead_source__deal_source)) {
+      updates.lead_source__deal_source = extras.leadSource.trim();
     }
     if (extras.leadSourceDescription?.trim() && isEmpty(ex.lead_source_description)) {
       updates.lead_source_description = extras.leadSourceDescription.trim();
@@ -140,19 +140,19 @@ export async function updateContact(
       extras.notes?.trim() ||
       contact.membershipNotes?.trim() ||
       contact.notes?.trim();
-    if (noteCandidate && isEmpty(ex.notes)) {
-      updates.notes = noteCandidate;
+    if (noteCandidate && isEmpty(ex.hs_content_membership_notes)) {
+      updates.hs_content_membership_notes = noteCandidate;
     }
   } else {
-    if (contact.leadSource?.trim() && isEmpty(ex.lead_source)) {
-      updates.lead_source = contact.leadSource.trim();
+    if (contact.leadSource?.trim() && isEmpty(ex.lead_source__deal_source)) {
+      updates.lead_source__deal_source = contact.leadSource.trim();
     }
     if (contact.leadSourceDescription?.trim() && isEmpty(ex.lead_source_description)) {
       updates.lead_source_description = contact.leadSourceDescription.trim();
     }
     const noteCandidate = contact.membershipNotes?.trim() || contact.notes?.trim();
-    if (noteCandidate && isEmpty(ex.notes)) {
-      updates.notes = noteCandidate;
+    if (noteCandidate && isEmpty(ex.hs_content_membership_notes)) {
+      updates.hs_content_membership_notes = noteCandidate;
     }
   }
 

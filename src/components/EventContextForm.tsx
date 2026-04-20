@@ -53,6 +53,254 @@ const ROOT_PICK_REGION = "__pick_region__";
 const ROOT_NO_STATE_REGION = "__no_state_region__";
 const CHANGE_SELECTION = "__change_selection__";
 
+const CITY_TO_STATE: Record<string, string> = {
+  // Major metros / city keywords
+  "new york": "New York",
+  nyc: "New York",
+  manhattan: "New York",
+  brooklyn: "New York",
+  queens: "New York",
+  buffalo: "New York",
+  rochester: "New York",
+  albany: "New York",
+  philadelphia: "Pennsylvania",
+  pittsburgh: "Pennsylvania",
+  harrisburg: "Pennsylvania",
+  chicago: "Illinois",
+  boston: "Massachusetts",
+  worcester: "Massachusetts",
+  dallas: "Texas",
+  houston: "Texas",
+  austin: "Texas",
+  "fort worth": "Texas",
+  "san antonio": "Texas",
+  "el paso": "Texas",
+  atlanta: "Georgia",
+  savannah: "Georgia",
+  miami: "Florida",
+  orlando: "Florida",
+  tampa: "Florida",
+  jacksonville: "Florida",
+  seattle: "Washington",
+  spokane: "Washington",
+  denver: "Colorado",
+  "colorado springs": "Colorado",
+  aurora: "Colorado",
+  phoenix: "Arizona",
+  tucson: "Arizona",
+  mesa: "Arizona",
+  "las vegas": "Nevada",
+  reno: "Nevada",
+  "san francisco": "California",
+  sf: "California",
+  "los angeles": "California",
+  la: "California",
+  "san diego": "California",
+  "san jose": "California",
+  sacramento: "California",
+  fresno: "California",
+  portland: "Oregon",
+  minneapolis: "Minnesota",
+  "st paul": "Minnesota",
+  detroit: "Michigan",
+  cleveland: "Ohio",
+  columbus: "Ohio",
+  cincinnati: "Ohio",
+  charlotte: "North Carolina",
+  raleigh: "North Carolina",
+  durham: "North Carolina",
+  nashville: "Tennessee",
+  memphis: "Tennessee",
+  louisville: "Kentucky",
+  indianapolis: "Indiana",
+  "kansas city": "Missouri",
+  "st louis": "Missouri",
+  "saint louis": "Missouri",
+  "new orleans": "Louisiana",
+  "baton rouge": "Louisiana",
+  baltimore: "Maryland",
+  dc: "District of Columbia",
+  "washington dc": "District of Columbia",
+  "washington d.c.": "District of Columbia",
+  washington: "District of Columbia",
+  richmond: "Virginia",
+  norfolk: "Virginia",
+  "virginia beach": "Virginia",
+  "salt lake": "Utah",
+  "salt lake city": "Utah",
+  albuquerque: "New Mexico",
+  omaha: "Nebraska",
+  milwaukee: "Wisconsin",
+  hartford: "Connecticut",
+  providence: "Rhode Island",
+  newark: "New Jersey",
+  "jersey city": "New Jersey",
+  "oklahoma city": "Oklahoma",
+  tulsa: "Oklahoma",
+  wichita: "Kansas",
+  birmingham: "Alabama",
+  montgomery: "Alabama",
+  jackson: "Mississippi",
+  "little rock": "Arkansas",
+  "sioux falls": "South Dakota",
+  fargo: "North Dakota",
+  billings: "Montana",
+  boise: "Idaho",
+  anchorage: "Alaska",
+  honolulu: "Hawaii",
+
+  // State names
+  alabama: "Alabama",
+  alaska: "Alaska",
+  arizona: "Arizona",
+  arkansas: "Arkansas",
+  california: "California",
+  colorado: "Colorado",
+  connecticut: "Connecticut",
+  delaware: "Delaware",
+  florida: "Florida",
+  georgia: "Georgia",
+  hawaii: "Hawaii",
+  idaho: "Idaho",
+  illinois: "Illinois",
+  indiana: "Indiana",
+  iowa: "Iowa",
+  kansas: "Kansas",
+  kentucky: "Kentucky",
+  louisiana: "Louisiana",
+  maine: "Maine",
+  maryland: "Maryland",
+  massachusetts: "Massachusetts",
+  michigan: "Michigan",
+  minnesota: "Minnesota",
+  mississippi: "Mississippi",
+  missouri: "Missouri",
+  montana: "Montana",
+  nebraska: "Nebraska",
+  nevada: "Nevada",
+  "new hampshire": "New Hampshire",
+  "new jersey": "New Jersey",
+  "new mexico": "New Mexico",
+  "new york state": "New York",
+  "north carolina": "North Carolina",
+  "north dakota": "North Dakota",
+  ohio: "Ohio",
+  oklahoma: "Oklahoma",
+  oregon: "Oregon",
+  pennsylvania: "Pennsylvania",
+  "rhode island": "Rhode Island",
+  "south carolina": "South Carolina",
+  "south dakota": "South Dakota",
+  tennessee: "Tennessee",
+  texas: "Texas",
+  utah: "Utah",
+  vermont: "Vermont",
+  virginia: "Virginia",
+  "washington state": "Washington",
+  "west virginia": "West Virginia",
+  wisconsin: "Wisconsin",
+  wyoming: "Wyoming",
+  "district of columbia": "District of Columbia",
+
+  // State abbreviations
+  al: "Alabama",
+  ak: "Alaska",
+  az: "Arizona",
+  ar: "Arkansas",
+  ca: "California",
+  co: "Colorado",
+  ct: "Connecticut",
+  de: "Delaware",
+  fl: "Florida",
+  ga: "Georgia",
+  hi: "Hawaii",
+  id: "Idaho",
+  il: "Illinois",
+  in: "Indiana",
+  ia: "Iowa",
+  ks: "Kansas",
+  ky: "Kentucky",
+  me: "Maine",
+  md: "Maryland",
+  ma: "Massachusetts",
+  mi: "Michigan",
+  mn: "Minnesota",
+  ms: "Mississippi",
+  mo: "Missouri",
+  mt: "Montana",
+  ne: "Nebraska",
+  nv: "Nevada",
+  nh: "New Hampshire",
+  nj: "New Jersey",
+  nm: "New Mexico",
+  ny: "New York",
+  nc: "North Carolina",
+  nd: "North Dakota",
+  oh: "Ohio",
+  ok: "Oklahoma",
+  or: "Oregon",
+  pa: "Pennsylvania",
+  ri: "Rhode Island",
+  sc: "South Carolina",
+  sd: "South Dakota",
+  tn: "Tennessee",
+  tx: "Texas",
+  ut: "Utah",
+  vt: "Vermont",
+  va: "Virginia",
+  wa: "Washington",
+  wv: "West Virginia",
+  wi: "Wisconsin",
+  wy: "Wyoming",
+
+  // Macro keywords
+  midwest: "Midwest",
+  southeast: "Southeast",
+  northeast: "Northeast",
+  southwest: "Southwest",
+  national: "National",
+  virtual: "National",
+  online: "National",
+  rsa: "California",
+};
+
+const LOCATION_MATCH_KEYS = Object.keys(CITY_TO_STATE).sort((a, b) => {
+  const aWords = a.trim().split(/\s+/).length;
+  const bWords = b.trim().split(/\s+/).length;
+  if (aWords !== bWords) return bWords - aWords;
+  return b.length - a.length;
+});
+
+function normalizeForLocationMatch(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[.,/#!$%^&*;:{}=_`~()[\]"'|\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function containsStandaloneTwoLetterCode(haystack: string, code: string): boolean {
+  const escaped = code.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(^|[\\s-])${escaped}(?=$|[\\s-])`, "i");
+  return pattern.test(haystack);
+}
+
+function detectRegionFromEventName(input: string): string | null {
+  const normalized = normalizeForLocationMatch(input);
+  if (!normalized) return null;
+  for (const key of LOCATION_MATCH_KEYS) {
+    const target = key.toLowerCase();
+    const match =
+      /^[a-z]{2}$/.test(target)
+        ? containsStandaloneTwoLetterCode(normalized, target)
+        : normalized.includes(target);
+    if (match) {
+      return CITY_TO_STATE[key] ?? null;
+    }
+  }
+  return null;
+}
+
 function StateSubPicker({
   disabled,
   onBack,
@@ -196,15 +444,17 @@ export function EventContextForm({
 }: EventContextFormProps) {
   const [eventName, setEventName] = useState("");
   const [monthName, setMonthName] = useState<string>("");
-  const [year, setYear] = useState<number | "">("");
+  const [year, setYear] = useState<string>(new Date().getFullYear().toString());
   const [region, setRegion] = useState("");
   /** True when user chose "No State / Region" (valid submit with empty `region`). */
   const [noStateRegionSelected, setNoStateRegionSelected] = useState(false);
   const [locationView, setLocationView] = useState<LocationPickerView>("root");
+  const [autoDetectedRegion, setAutoDetectedRegion] = useState(false);
   const [audienceLevel, setAudienceLevel] = useState(DEFAULT_AUDIENCE);
   const [audienceTouched, setAudienceTouched] = useState(false);
 
   const nameFromFileApplied = useRef(false);
+  const regionManuallySelected = useRef(false);
 
   const years = useMemo(() => {
     const y = new Date().getFullYear();
@@ -219,13 +469,15 @@ export function EventContextForm({
     setEventName(initialValues.eventName);
     const r = initialValues.region;
     setRegion(r);
+    setAutoDetectedRegion(false);
+    regionManuallySelected.current = Boolean(String(r ?? "").trim());
     setNoStateRegionSelected(!String(r ?? "").trim());
     setLocationView("root");
     setAudienceLevel(initialValues.audienceLevel || DEFAULT_AUDIENCE);
     const parsed = parseMonthYearString(initialValues.eventDate);
     if (parsed) {
       setMonthName(parsed.month);
-      setYear(parsed.year);
+      setYear(parsed.year.toString());
     }
   }, [initialValues]);
 
@@ -234,6 +486,20 @@ export function EventContextForm({
     setEventName(eventNameFromFileName(sourceFileName));
     nameFromFileApplied.current = true;
   }, [initialValues, sourceFileName]);
+
+  useEffect(() => {
+    if (regionManuallySelected.current) return;
+    const detected = detectRegionFromEventName(eventName);
+    if (!detected || !STATE_REGION_OPTIONS.includes(detected)) return;
+    if (region === detected && !noStateRegionSelected) {
+      setAutoDetectedRegion(true);
+      return;
+    }
+    setRegion(detected);
+    setNoStateRegionSelected(false);
+    setLocationView("root");
+    setAutoDetectedRegion(true);
+  }, [eventName, region, noStateRegionSelected]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -322,8 +588,8 @@ export function EventContextForm({
                 <select
                   required
                   className={selectClass}
-                  value={year === "" ? "" : String(year)}
-                  onChange={(e) => setYear(e.target.value ? Number(e.target.value) : "")}
+                  value={year}
+                  onChange={(e) => setYear(e.target.value)}
                   disabled={disabled}
                 >
                   <option value="">Select Year</option>
@@ -354,15 +620,18 @@ export function EventContextForm({
                   className={selectClass}
                   value={region}
                   onChange={(e) => {
+                    regionManuallySelected.current = true;
                     const v = e.target.value;
                     if (v === CHANGE_SELECTION) {
                       setRegion("");
                       setNoStateRegionSelected(false);
                       setLocationView("root");
+                      setAutoDetectedRegion(false);
                       return;
                     }
                     setRegion(v);
                     setNoStateRegionSelected(false);
+                    setAutoDetectedRegion(false);
                   }}
                   disabled={disabled}
                 >
@@ -384,18 +653,22 @@ export function EventContextForm({
                   className={selectClass}
                   value={noStateRegionSelected ? ROOT_NO_STATE_REGION : ""}
                   onChange={(e) => {
+                    regionManuallySelected.current = true;
                     const v = e.target.value;
                     if (v === "") {
                       setRegion("");
                       setNoStateRegionSelected(false);
+                      setAutoDetectedRegion(false);
                       return;
                     }
                     if (v === ROOT_NO_STATE_REGION) {
                       setRegion("");
                       setNoStateRegionSelected(true);
+                      setAutoDetectedRegion(false);
                       return;
                     }
                     setNoStateRegionSelected(false);
+                    setAutoDetectedRegion(false);
                     if (v === ROOT_PICK_STATE) setLocationView("state");
                     else if (v === ROOT_PICK_REGION) setLocationView("region");
                   }}
@@ -420,8 +693,11 @@ export function EventContextForm({
                 disabled={disabled}
                 onBack={() => setLocationView("root")}
                 onPick={(name) => {
+                  regionManuallySelected.current = true;
                   setRegion(name);
                   setLocationView("root");
+                  setNoStateRegionSelected(false);
+                  setAutoDetectedRegion(false);
                 }}
               />
             ) : null}
@@ -431,11 +707,15 @@ export function EventContextForm({
                 disabled={disabled}
                 onBack={() => setLocationView("root")}
                 onPick={(name) => {
+                  regionManuallySelected.current = true;
                   setRegion(name);
                   setLocationView("root");
+                  setNoStateRegionSelected(false);
+                  setAutoDetectedRegion(false);
                 }}
               />
             ) : null}
+            {autoDetectedRegion && region ? null : null}
           </label>
 
           <label className="flex flex-col gap-1 text-sm sm:col-span-2">

@@ -91,6 +91,8 @@ export async function handleHubSpotPushRequest(request: Request): Promise<Respon
     folderId: folderIdRaw,
     leadSource: leadSourceRaw,
     leadSourceDescription: leadSourceDescriptionRaw,
+    useExistingLeadSource: useExistingLeadSourceRaw,
+    useExistingLeadSourceDescription: useExistingLeadSourceDescriptionRaw,
     notes: notesRaw,
   } = body;
 
@@ -121,6 +123,8 @@ export async function handleHubSpotPushRequest(request: Request): Promise<Respon
 
   const leadSource = String(leadSourceRaw ?? "").trim();
   const leadSourceDescription = String(leadSourceDescriptionRaw ?? "").trim();
+  const useExistingLeadSource = useExistingLeadSourceRaw === true;
+  const useExistingLeadSourceDescription = useExistingLeadSourceDescriptionRaw === true;
   const notes = String(notesRaw ?? "").trim();
 
   const pushExtras: HubSpotCompanyPushExtras | undefined =
@@ -170,12 +174,31 @@ export async function handleHubSpotPushRequest(request: Request): Promise<Respon
             } else {
               const c = row as EnrichedContact;
               const existing = await findExistingContact(c.resolvedEmail);
+              const contactPushExtras: HubSpotCompanyPushExtras | undefined =
+                (() => {
+                  const rowLeadSource = useExistingLeadSource
+                    ? c.leadSource?.trim() ?? ""
+                    : leadSource;
+                  const rowLeadSourceDescriptionFromCsv = c.leadSourceDescription?.trim() ?? "";
+                  const rowLeadSourceDescription = useExistingLeadSourceDescription
+                    ? rowLeadSourceDescriptionFromCsv || leadSourceDescription
+                    : leadSourceDescription;
+                  const rowNotes = notes;
+                  if (!rowLeadSource && !rowLeadSourceDescription && !rowNotes) {
+                    return undefined;
+                  }
+                  return {
+                    leadSource: rowLeadSource || undefined,
+                    leadSourceDescription: rowLeadSourceDescription || undefined,
+                    notes: rowNotes || undefined,
+                  };
+                })();
               let id: string;
               if (existing) {
-                id = await updateContact(existing, c, pushExtras);
+                id = await updateContact(existing, c, contactPushExtras);
                 updated++;
               } else {
-                id = await createContact(c, pushExtras);
+                id = await createContact(c, contactPushExtras);
                 created++;
               }
               recordIds.push(id);

@@ -107,6 +107,8 @@ export type PrePushSettings = {
   folderId: string;
   leadSource: string;
   leadSourceDescription: string;
+  useExistingLeadSource: boolean;
+  useExistingLeadSourceDescription: boolean;
   notes: string;
   /** When set, HubSpot push uses these rows instead of parent-approved rows (contact import edits). */
   contactRowsOverride?: EnrichedContact[];
@@ -153,6 +155,8 @@ export function PrePushScreen({
   const [leadSourceDescription, setLeadSourceDescription] = useState(() =>
     dedupeLeadSourceDescriptionTail(defaultLeadSourceDescription),
   );
+  const [useExistingLeadSource, setUseExistingLeadSource] = useState(false);
+  const [useExistingLeadSourceDescription, setUseExistingLeadSourceDescription] = useState(false);
 
   const [folders, setFolders] = useState<{ id: string; name: string }[] | null>(null);
   const [foldersLoading, setFoldersLoading] = useState(true);
@@ -202,15 +206,49 @@ export function PrePushScreen({
     };
   }, []);
 
+  const contactRowsForTable = contactEditRows ?? (approvedRows as EnrichedContact[]);
+  const hasExistingLeadSourceValues =
+    listType === "contacts"
+      ? contactRowsForTable.some((r) => (r.leadSource ?? "").trim().length > 0)
+      : false;
+  const hasExistingLeadSourceDescriptionValues =
+    listType === "contacts"
+      ? contactRowsForTable.some((r) => (r.leadSourceDescription ?? "").trim().length > 0)
+      : false;
+  const needsSharedLeadSourceDescriptionFallback =
+    listType === "contacts" &&
+    useExistingLeadSourceDescription &&
+    contactRowsForTable.some((r) => (r.leadSourceDescription ?? "").trim().length === 0);
+
+  useEffect(() => {
+    if (listType !== "contacts") {
+      setUseExistingLeadSource(false);
+      setUseExistingLeadSourceDescription(false);
+      return;
+    }
+    setUseExistingLeadSource(hasExistingLeadSourceValues);
+    setUseExistingLeadSourceDescription(hasExistingLeadSourceDescriptionValues);
+  }, [listType, hasExistingLeadSourceValues, hasExistingLeadSourceDescriptionValues]);
+
   const canPush = useMemo(() => {
     const nameOk = listName.trim().length > 0;
     if (listType === "companies") {
       return nameOk;
     }
-    const lsOk = leadSource.trim().length > 0;
-    const lsdOk = leadSourceDescription.trim().length > 0;
+    const lsOk = useExistingLeadSource ? true : leadSource.trim().length > 0;
+    const lsdOk = useExistingLeadSourceDescription
+      ? !needsSharedLeadSourceDescriptionFallback || leadSourceDescription.trim().length > 0
+      : leadSourceDescription.trim().length > 0;
     return nameOk && lsOk && lsdOk;
-  }, [listName, leadSource, leadSourceDescription, listType]);
+  }, [
+    listName,
+    leadSource,
+    leadSourceDescription,
+    listType,
+    useExistingLeadSource,
+    useExistingLeadSourceDescription,
+    needsSharedLeadSourceDescriptionFallback,
+  ]);
 
   const handlePush = useCallback(() => {
     if (!canPush) return;
@@ -219,6 +257,9 @@ export function PrePushScreen({
       folderId: foldersError ? folderManual.trim() : folderId.trim(),
       leadSource: listType === "contacts" ? leadSource.trim() : "",
       leadSourceDescription: listType === "contacts" ? leadSourceDescription.trim() : "",
+      useExistingLeadSource: listType === "contacts" ? useExistingLeadSource : false,
+      useExistingLeadSourceDescription:
+        listType === "contacts" ? useExistingLeadSourceDescription : false,
       notes: "",
       contactRowsOverride:
         listType === "contacts" && contactEditRows ? contactEditRows : undefined,
@@ -231,6 +272,8 @@ export function PrePushScreen({
     foldersError,
     leadSource,
     leadSourceDescription,
+    useExistingLeadSource,
+    useExistingLeadSourceDescription,
     listType,
     contactEditRows,
     onPush,
@@ -241,8 +284,6 @@ export function PrePushScreen({
       prev ? prev.map((r) => (r.id === id ? { ...r, ...partial } : r)) : prev,
     );
   }, []);
-
-  const contactRowsForTable = contactEditRows ?? (approvedRows as EnrichedContact[]);
 
   return (
     <section className="flex flex-col gap-6">
@@ -405,11 +446,22 @@ export function PrePushScreen({
               <span className="font-medium text-zinc-800 dark:text-zinc-200">
                 Lead Source <span className="text-red-600">*</span>
               </span>
+              {hasExistingLeadSourceValues ? (
+                <label className="mb-1 inline-flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={useExistingLeadSource}
+                    onChange={(e) => setUseExistingLeadSource(e.target.checked)}
+                  />
+                  Use existing Lead Source values from CSV
+                </label>
+              ) : null}
               <SelectCaretWrap>
                 <select
-                  className={SELECT_WITH_CARET}
+                  className={`${SELECT_WITH_CARET} ${useExistingLeadSource ? "opacity-60" : ""}`}
                   value={leadSource}
                   onChange={(e) => setLeadSource(e.target.value)}
+                  disabled={useExistingLeadSource}
                   required
                 >
                   <option value="">Select lead source</option>
@@ -426,10 +478,21 @@ export function PrePushScreen({
               <span className="font-medium text-zinc-800 dark:text-zinc-200">
                 Lead Source Description <span className="text-red-600">*</span>
               </span>
+              {hasExistingLeadSourceDescriptionValues ? (
+                <label className="mb-1 inline-flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={useExistingLeadSourceDescription}
+                    onChange={(e) => setUseExistingLeadSourceDescription(e.target.checked)}
+                  />
+                  Use existing values from CSV (varies per contact)
+                </label>
+              ) : null}
               <input
-                className={FIELD_CONTROL}
+                className={`${FIELD_CONTROL} ${useExistingLeadSourceDescription ? "opacity-60" : ""}`}
                 value={leadSourceDescription}
                 onChange={(e) => setLeadSourceDescription(e.target.value)}
+                disabled={useExistingLeadSourceDescription}
               />
             </label>
           </>

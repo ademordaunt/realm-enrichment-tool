@@ -195,6 +195,21 @@ function fireEnrichmentCompleteNotification() {
   playEnrichmentChime();
 }
 
+function firePushCompleteNotification() {
+  if (typeof window === "undefined" || typeof Notification === "undefined") return;
+  if (Notification.permission === "granted") {
+    try {
+      new Notification("Realm Enrichment Tool", {
+        body: "HubSpot push complete — your records are ready!",
+        icon: "/favicon.ico",
+      });
+    } catch {
+      /* ignore */
+    }
+  }
+  playEnrichmentChime();
+}
+
 function collectKeys(rows: Array<RawCompanyRow | RawContactRow>, maxScan: number): string[] {
   const keys = new Set<string>();
   for (let i = 0; i < Math.min(rows.length, maxScan); i++) {
@@ -441,6 +456,9 @@ export default function Home() {
   const enrichmentBannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [showEnrichmentCompleteBanner, setShowEnrichmentCompleteBanner] = useState(false);
+  const [completionBannerText, setCompletionBannerText] = useState(
+    "✓ Enrichment complete — your results are ready below.",
+  );
 
   const approvedRowsForPush = useMemo(
     () => reviewRows.filter((r) => r.status === "approved"),
@@ -791,6 +809,7 @@ export default function Home() {
         typeof Notification !== "undefined" &&
         Notification.permission !== "granted"
       ) {
+        setCompletionBannerText("✓ Enrichment complete — your results are ready below.");
         setShowEnrichmentCompleteBanner(true);
         if (enrichmentBannerTimeoutRef.current) {
           clearTimeout(enrichmentBannerTimeoutRef.current);
@@ -864,6 +883,8 @@ export default function Home() {
             folderId: settings.folderId,
             leadSource: settings.leadSource,
             leadSourceDescription: settings.leadSourceDescription,
+            useExistingLeadSource: settings.useExistingLeadSource,
+            useExistingLeadSourceDescription: settings.useExistingLeadSourceDescription,
             notes: settings.notes,
           }),
         });
@@ -876,9 +897,39 @@ export default function Home() {
         });
         setPushResult(done);
         setStep("complete");
+        firePushCompleteNotification();
+        if (
+          typeof window !== "undefined" &&
+          typeof Notification !== "undefined" &&
+          Notification.permission !== "granted"
+        ) {
+          setCompletionBannerText("✓ HubSpot push complete — your records are ready!");
+          setShowEnrichmentCompleteBanner(true);
+          if (enrichmentBannerTimeoutRef.current) {
+            clearTimeout(enrichmentBannerTimeoutRef.current);
+          }
+          enrichmentBannerTimeoutRef.current = setTimeout(() => {
+            setShowEnrichmentCompleteBanner(false);
+            enrichmentBannerTimeoutRef.current = null;
+          }, 5000);
+        }
       } catch (e) {
-        setPushError(e instanceof Error ? e.message : "HubSpot push failed.");
-        setStep("prepush");
+        const message = e instanceof Error ? e.message : "HubSpot push failed.";
+        setPushError(message);
+        setPushResult({
+          created: 0,
+          updated: 0,
+          errors: [
+            {
+              rowId: "push",
+              error: message,
+            },
+          ],
+          listId: "",
+          listName: settings.listName || eventContext.eventName,
+          totalPushed: 0,
+        });
+        setStep("complete");
       } finally {
         setPushProgress(null);
       }
@@ -902,7 +953,7 @@ export default function Home() {
           className="fixed top-14 left-0 right-0 z-40 border-b border-emerald-700/20 bg-emerald-600 px-4 py-3 text-center text-sm font-medium text-white shadow-sm"
           role="status"
         >
-          ✓ Enrichment complete — your results are ready below.
+          {completionBannerText}
         </div>
       ) : null}
 
@@ -1236,6 +1287,9 @@ export default function Home() {
           <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
             <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100" role="status">
               Pushing record {pushProgress.current} of {pushProgress.total} to HubSpot…
+            </p>
+            <p className="text-sm text-(--text-muted) text-center mt-2">
+              You can leave this tab. We&apos;ll notify you when the push is complete.
             </p>
           </div>
         )}

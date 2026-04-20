@@ -40,12 +40,77 @@ export function stripMarkdownFences(text: string): string {
 }
 
 export function parseJsonArray<T = unknown>(text: string): T[] {
+  const rawText = text;
   const cleaned = stripMarkdownFences(text);
-  const parsed: unknown = JSON.parse(cleaned);
-  if (!Array.isArray(parsed)) {
-    throw new Error("Expected a JSON array from the model.");
+
+  // 1) Try strict JSON parse first.
+  try {
+    const parsed: unknown = JSON.parse(cleaned);
+    if (Array.isArray(parsed)) {
+      return parsed as T[];
+    }
+  } catch {
+    // Continue to recovery strategies below.
   }
-  return parsed as T[];
+
+  // 2) Try parsing only the detected array slice between first `[` and last `]`.
+  try {
+    const firstBracket = cleaned.indexOf("[");
+    const lastBracket = cleaned.lastIndexOf("]");
+    if (firstBracket >= 0 && lastBracket > firstBracket) {
+      const arraySlice = cleaned.slice(firstBracket, lastBracket + 1);
+      const parsedSlice: unknown = JSON.parse(arraySlice);
+      if (Array.isArray(parsedSlice)) {
+        return parsedSlice as T[];
+      }
+    }
+  } catch {
+    // Continue to recovery strategies below.
+  }
+
+  // 3) Best-effort object recovery: split on "},{" and parse each object individually.
+  try {
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      const objectBlob = cleaned.slice(firstBrace, lastBrace + 1);
+      const chunks = objectBlob.split(/\}\s*,\s*\{/g);
+      const recovered: T[] = [];
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i]!;
+        const candidate =
+          i === 0
+            ? `${chunk.trim()}${i === chunks.length - 1 ? "" : "}"}`
+            : `${i === chunks.length - 1 ? "" : "{"}${chunk.trim()}`;
+        const normalized = candidate.startsWith("{")
+          ? candidate
+          : `{${candidate}`;
+        const finalized = normalized.endsWith("}")
+          ? normalized
+          : `${normalized}}`;
+        try {
+          const parsedObj = JSON.parse(finalized) as T;
+          if (parsedObj && typeof parsedObj === "object") {
+            recovered.push(parsedObj);
+          }
+        } catch {
+          // Skip malformed object and continue.
+        }
+      }
+      if (recovered.length > 0) {
+        return recovered;
+      }
+    }
+  } catch {
+    // Fall through to final empty-array fallback.
+  }
+
+  // 4) Hard fail fallback: log and continue the import flow with an empty batch.
+  console.error(
+    "[AI Enricher] JSON parse failed for batch, raw response:",
+    rawText.slice(0, 500),
+  );
+  return [];
 }
 
 function parseJsonObject<T = Record<string, unknown>>(text: string): T {
