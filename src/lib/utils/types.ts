@@ -12,6 +12,7 @@ export interface RawContactRow {
   firstName: string;
   lastName: string;
   email?: string;
+  phone?: string;
   title?: string;
   company?: string;
   location?: string;
@@ -65,6 +66,7 @@ export interface EnrichedContact {
   leadSourceDescription: string;
   notes: string;
   membershipNotes: string;
+  phone?: string;
   enrichedByZoomInfo: boolean;
   enrichedByCommonRoom: boolean;
   enrichedByAI: boolean;

@@ -16,10 +16,15 @@ const CONTACT_HEADER_MAP: Record<string, keyof RawContactRow | "ignore"> = {
   notes: "membershipNotes",
   membershipnotes: "membershipNotes",
   title: "title",
+  jobtitle: "title",
   company: "company",
   hq: "location",
   location: "location",
   email: "email",
+  emailaddress: "email",
+  phone: "phone",
+  phonenumber: "phone",
+  phonenum: "phone",
   leadsource: "leadSource",
   leadsourcedescription: "leadSourceDescription",
   leadorigination: "ignore",
@@ -45,8 +50,13 @@ function rowLooksLikeHeaderRow(row: string[]): boolean {
     "last",
     "lastname",
     "email",
+    "emailaddress",
     "company",
     "title",
+    "jobtitle",
+    "phone",
+    "phonenumber",
+    "phonenum",
     "location",
     "hq",
     "notes",
@@ -149,7 +159,7 @@ export function detectListType(normalizedHeaders: string[]): ListType {
   const hasFirst =
     nonempty.includes("first") || nonempty.includes("firstname");
   const hasLast = nonempty.includes("last") || nonempty.includes("lastname");
-  const hasEmail = nonempty.includes("email");
+  const hasEmail = nonempty.includes("email") || nonempty.includes("emailaddress");
   const onlyCompany =
     nonempty.length === 1 && nonempty[0] === "company";
 

@@ -20,6 +20,8 @@ function contactProperties(
     hs_linkedin_url: contact.linkedinUrl?.trim() ?? "",
     state: contact.location?.trim() ?? "",
   };
+  const phone = contact.phone?.trim();
+  if (phone) props.phone = phone;
   const ls = contact.leadSource?.trim();
   if (ls) props.lead_source = ls;
   const lsd = contact.leadSourceDescription?.trim();
@@ -91,7 +93,7 @@ export async function updateContact(
   extras?: HubSpotCompanyPushExtras,
 ): Promise<string> {
   const res = await hubspotFetch(
-    `/crm/v3/objects/contacts/${encodeURIComponent(id)}?properties=firstname,lastname,email,jobtitle,company,hs_linkedin_url,state,lead_source,lead_source_description,notes`,
+    `/crm/v3/objects/contacts/${encodeURIComponent(id)}?properties=firstname,lastname,email,jobtitle,company,hs_linkedin_url,state,phone,lead_source,lead_source_description,notes`,
   );
 
   if (!res.ok) {
@@ -123,6 +125,9 @@ export async function updateContact(
   }
   if (isEmpty(ex.state)) {
     updates.state = contact.location?.trim() ?? "";
+  }
+  if (isEmpty(ex.phone) && contact.phone?.trim()) {
+    updates.phone = contact.phone.trim();
   }
   if (extras) {
     if (extras.leadSource?.trim() && isEmpty(ex.lead_source)) {

@@ -48,6 +48,15 @@ export function parseJsonArray<T = unknown>(text: string): T[] {
   return parsed as T[];
 }
 
+function parseJsonObject<T = Record<string, unknown>>(text: string): T {
+  const cleaned = stripMarkdownFences(text);
+  const parsed: unknown = JSON.parse(cleaned);
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+    throw new Error("Expected a JSON object from the model.");
+  }
+  return parsed as T;
+}
+
 function normalizeConfidence(
   v: unknown,
 ): "high" | "medium" | "low" | "unresolved" {
@@ -195,19 +204,25 @@ function mapContactAiToEnriched(
 ): EnrichedContact {
   const confidenceScore = normalizeConfidence(raw.confidenceScore);
   const rawEmail = row.email?.trim() ?? "";
+  const aiEmail = String(raw.email ?? "").trim();
+  const resolvedEmail = rawEmail || aiEmail;
+  const existingCompany = row.resolvedCompany?.trim() || row.company?.trim() || "";
+  const resolvedCompany = existingCompany || String(raw.resolvedCompany ?? "").trim();
+  const title = row.title?.trim() || String(raw.title ?? "").trim();
+  const phone = row.phone?.trim() ?? "";
   return {
     id: uuidv4(),
     firstName: row.firstName,
     lastName: row.lastName,
     rawEmail,
     rawCompany: row.company?.trim() ?? "",
-    resolvedEmail: rawEmail,
+    resolvedEmail,
     isPersonalEmail: Boolean(raw.isPersonalEmail),
-    resolvedCompany: String(raw.resolvedCompany ?? row.company ?? ""),
+    resolvedCompany,
     confidenceScore,
     aiReasoning: String(raw.aiReasoning ?? ""),
     needsReview: confidenceScore !== "high",
-    title: row.title?.trim() ?? "",
+    title,
     linkedinUrl: String(raw.linkedinUrl ?? ""),
     companyDomain: String(raw.companyDomain ?? ""),
     location: row.location?.trim() ?? "",
@@ -215,6 +230,7 @@ function mapContactAiToEnriched(
     leadSourceDescription: row.leadSourceDescription?.trim() ?? "",
     notes: row.notes?.trim() ?? "",
     membershipNotes: row.membershipNotes?.trim() ?? "",
+    phone: phone || undefined,
     enrichedByZoomInfo: false,
     enrichedByCommonRoom: false,
     enrichedByAI: true,
@@ -222,13 +238,194 @@ function mapContactAiToEnriched(
   };
 }
 
+function hasValue(v: unknown): boolean {
+  return String(v ?? "").trim() !== "";
+}
+
+function isCompleteCompanyRow(row: RawCompanyRow): boolean {
+  const resolvedName = String(row.resolvedName ?? row.resolvedname ?? "").trim();
+  const domain = String(row.domain ?? "").trim();
+  const state = String(row.state ?? "").trim();
+  const employees = String(row.numberOfEmployees ?? row.numberofemployees ?? "").trim();
+  return Boolean(resolvedName && domain && state && employees);
+}
+
+function mapPresetCompanyRow(row: RawCompanyRow): EnrichedCompany {
+  const resolvedName = String(row.resolvedName ?? row.resolvedname ?? row.rawName).trim();
+  const domain = String(row.domain ?? "").trim();
+  const state = String(row.state ?? "").trim();
+  const website = String(row.website ?? "").trim();
+  const linkedinUrl = String(row.linkedinUrl ?? row.linkedinurl ?? "").trim();
+  const employeesRaw = row.numberOfEmployees ?? row.numberofemployees;
+  const parsedEmployees = Number(employeesRaw);
+  const numberOfEmployees =
+    employeesRaw === null || employeesRaw === undefined || String(employeesRaw).trim() === ""
+      ? null
+      : Number.isFinite(parsedEmployees)
+        ? parsedEmployees
+        : null;
+  return {
+    id: uuidv4(),
+    rawInput: row.rawName,
+    resolvedName,
+    confidenceScore: "high",
+    aiReasoning: "All required company fields were pre-populated.",
+    needsReview: false,
+    domain,
+    website,
+    state,
+    numberOfEmployees,
+    linkedinUrl,
+    enrichedByZoomInfo: false,
+    enrichedByCommonRoom: false,
+    enrichedByAI: false,
+    status: "pending",
+  };
+}
+
+function mapPresetContactRow(
+  row: RawContactRow,
+  linkedInUrl = "",
+  linkedInFromAi = false,
+): EnrichedContact {
+  const email = row.email?.trim() ?? "";
+  const company = row.resolvedCompany?.trim() || row.company?.trim() || "";
+  const phone = row.phone?.trim() ?? "";
+  return {
+    id: uuidv4(),
+    firstName: row.firstName,
+    lastName: row.lastName,
+    rawEmail: email,
+    rawCompany: row.company?.trim() ?? "",
+    resolvedEmail: email,
+    isPersonalEmail: false,
+    resolvedCompany: company,
+    confidenceScore: "high",
+    aiReasoning: "All required contact fields were pre-populated.",
+    needsReview: false,
+    title: row.title?.trim() ?? "",
+    linkedinUrl: linkedInUrl,
+    companyDomain: "",
+    location: row.location?.trim() ?? "",
+    leadSource: row.leadSource?.trim() ?? "",
+    leadSourceDescription: row.leadSourceDescription?.trim() ?? "",
+    notes: row.notes?.trim() ?? "",
+    membershipNotes: row.membershipNotes?.trim() ?? "",
+    phone: phone || undefined,
+    enrichedByZoomInfo: false,
+    enrichedByCommonRoom: false,
+    enrichedByAI: linkedInFromAi,
+    status: "pending",
+  };
+}
+
+async function findLinkedInOnlyForContact(
+  client: Anthropic,
+  row: RawContactRow,
+): Promise<string> {
+  const firstName = row.firstName?.trim() ?? "";
+  const lastName = row.lastName?.trim() ?? "";
+  const title = row.title?.trim() ?? "";
+  const company = row.resolvedCompany?.trim() || row.company?.trim() || "";
+  const userText = `Find the LinkedIn profile URL for ${firstName} ${lastName}, ${title} at ${company}. Return only JSON: { linkedInUrl: string | null }`;
+  const text = await runClaudeWithWebSearch(
+    client,
+    "Return only a valid JSON object with key linkedInUrl.",
+    userText,
+  );
+  const parsed = parseJsonObject<Record<string, unknown>>(text);
+  const linkedInUrl = String(parsed.linkedInUrl ?? parsed.linkedinUrl ?? "").trim();
+  return linkedInUrl;
+}
+
+function contactMissingFieldList(row: RawContactRow): string[] {
+  const missing: string[] = [];
+  if (!hasValue(row.title)) missing.push("title");
+  if (!hasValue(row.email)) missing.push("email");
+  if (!hasValue(row.resolvedCompany) && !hasValue(row.company)) missing.push("resolvedCompany");
+  if (!hasValue(row.linkedinUrl) && !hasValue(row.linkedInUrl)) missing.push("linkedinUrl");
+  return missing;
+}
+
+async function enrichSingleContact(
+  client: Anthropic,
+  row: RawContactRow,
+  context: EventContext,
+): Promise<EnrichedContact> {
+  const firstName = row.firstName?.trim() ?? "";
+  const lastName = row.lastName?.trim() ?? "";
+  const title = row.title?.trim() ?? "";
+  const email = row.email?.trim() ?? "";
+  const company = row.resolvedCompany?.trim() || row.company?.trim() || "";
+  const existingLinkedIn = row.linkedinUrl?.trim() || row.linkedInUrl?.trim() || "";
+
+  const corePopulated = Boolean(firstName && lastName && email && company && title);
+  if (corePopulated) {
+    if (existingLinkedIn) {
+      return mapPresetContactRow(row, existingLinkedIn, false);
+    }
+    const linkedInUrl = await findLinkedInOnlyForContact(client, row);
+    return mapPresetContactRow(row, linkedInUrl, Boolean(linkedInUrl));
+  }
+
+  const missing = contactMissingFieldList(row);
+  const system = buildContactSystemPrompt(context);
+  const userText = [
+    "Resolve one contact and return only a single JSON object with keys:",
+    "isPersonalEmail, resolvedCompany, companyDomain, linkedinUrl, confidenceScore, aiReasoning, enrichedByAI, title, email.",
+    "Do not modify any field that is already populated in input.lockedFields.",
+    "Only fill values for fields listed in input.missingFields.",
+    "",
+    JSON.stringify(
+      {
+        input: {
+          firstName,
+          lastName,
+          title,
+          email,
+          company,
+          location: row.location?.trim() ?? "",
+          lockedFields: {
+            title: Boolean(title),
+            email: Boolean(email),
+            resolvedCompany: Boolean(company),
+            linkedinUrl: Boolean(existingLinkedIn),
+          },
+          missingFields: missing,
+        },
+      },
+      null,
+      2,
+    ),
+  ].join("\n");
+  const text = await runClaudeWithWebSearch(client, system, userText);
+  const rec = parseJsonObject<Record<string, unknown>>(text);
+  return mapContactAiToEnriched(rec, row);
+}
+
 export async function enrichCompanyBatch(
   client: Anthropic,
   batch: RawCompanyRow[],
   context: EventContext,
 ): Promise<EnrichedCompany[]> {
+  const partial: (EnrichedCompany | undefined)[] = new Array(batch.length);
+  const toEnrich: RawCompanyRow[] = [];
+  const positions: number[] = [];
+  for (let i = 0; i < batch.length; i++) {
+    const row = batch[i]!;
+    if (isCompleteCompanyRow(row)) {
+      partial[i] = mapPresetCompanyRow(row);
+    } else {
+      toEnrich.push(row);
+      positions.push(i);
+    }
+  }
+  if (toEnrich.length === 0) {
+    return partial.map((r) => r!);
+  }
+
   const system = buildCompanySystemPrompt(context);
-  const user = buildCompanyUserPrompt(batch);
+  const user = buildCompanyUserPrompt(toEnrich);
   const text = await runClaudeWithWebSearch(client, system, user);
   const parsed = parseJsonArray<Record<string, unknown>>(text);
   const byInput = new Map<string, Record<string, unknown>>();
@@ -236,11 +433,15 @@ export async function enrichCompanyBatch(
     const k = String(item.rawInput ?? "").trim().toLowerCase();
     if (k) byInput.set(k, item);
   }
-  return batch.map((row, i) => {
+  const aiRows = toEnrich.map((row, i) => {
     const k = row.rawName.trim().toLowerCase();
     const rec = byInput.get(k) ?? parsed[i] ?? {};
     return mapCompanyAiToEnriched(rec, row);
   });
+  for (let i = 0; i < positions.length; i++) {
+    partial[positions[i]!] = aiRows[i]!;
+  }
+  return partial.map((r) => r!);
 }
 
 export async function enrichContactBatch(
@@ -248,14 +449,11 @@ export async function enrichContactBatch(
   batch: RawContactRow[],
   context: EventContext,
 ): Promise<EnrichedContact[]> {
-  const system = buildContactSystemPrompt(context);
-  const user = buildContactUserPrompt(batch);
-  const text = await runClaudeWithWebSearch(client, system, user);
-  const parsed = parseJsonArray<Record<string, unknown>>(text);
-  return batch.map((row, idx) => {
-    const rec = parsed[idx] ?? {};
-    return mapContactAiToEnriched(rec, row);
-  });
+  const out: EnrichedContact[] = [];
+  for (const row of batch) {
+    out.push(await enrichSingleContact(client, row, context));
+  }
+  return out;
 }
 
 async function resolveCompanyBatchFromKv(batch: RawCompanyRow[]): Promise<{
