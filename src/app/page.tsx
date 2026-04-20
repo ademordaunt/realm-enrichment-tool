@@ -1028,7 +1028,7 @@ export default function Home() {
             startRow: 1,
             endRow: 0,
             totalRows: missingLinkedInTotal,
-            detail: `Finding LinkedIn URLs: 0 of ${missingLinkedInTotal}...`,
+            detail: `Searching for remaining LinkedIn URLs: 0 of ${missingLinkedInTotal}…`,
           });
           finalRows = await runLinkedInLookupPass(
             contactRowsAfterVerify,
@@ -1038,7 +1038,7 @@ export default function Home() {
                 startRow: 1,
                 endRow: done,
                 totalRows: total,
-                detail: `Finding LinkedIn URLs: ${done} of ${total}...`,
+                detail: `Searching for remaining LinkedIn URLs: ${done} of ${total}…`,
               });
             },
           );

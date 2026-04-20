@@ -41,6 +41,45 @@ function sanitizeState(val: string | null | undefined): string {
   return t;
 }
 
+/** Contact / general text: "unknown" (any case) → empty. */
+function sanitizeUnknownText(val: string | null | undefined): string {
+  if (val == null) return "";
+  const t = val.trim();
+  if (!t || t.toLowerCase() === "unknown") return "";
+  return t;
+}
+
+/** Contact company: "unknown" or "self" (any case) → empty. */
+function sanitizeContactCompanyField(val: string | null | undefined): string {
+  const t = sanitizeUnknownText(val);
+  if (!t) return "";
+  if (t.toLowerCase() === "self") return "";
+  return t;
+}
+
+/** Ingestion-time cleanup for contact rows (before status / getDisplayConfidence). */
+function sanitizeContact(row: EnrichedContact): EnrichedContact {
+  const selfPattern = /^self$/i;
+  const unknownPattern = /^unknown$/i;
+  const rc = row.resolvedCompany?.trim() ?? "";
+  const resolvedCompany =
+    !rc || selfPattern.test(rc) || unknownPattern.test(rc) ? "" : row.resolvedCompany;
+  // Contacts use `location` (EnrichedContact has no `state`).
+  const loc = row.location?.trim() ?? "";
+  const location = unknownPattern.test(loc) ? "" : row.location;
+  return {
+    ...row,
+    resolvedCompany,
+    location,
+  };
+}
+
+function formatContactFullName(c: EnrichedContact): string {
+  const fn = sanitizeUnknownText(c.firstName);
+  const ln = sanitizeUnknownText(c.lastName);
+  return [fn, ln].filter(Boolean).join(" ").trim();
+}
+
 /** Critical gaps → treat as unresolved for sort + badge (does not mutate stored enrichment). */
 function getDisplayConfidence(
   row: EnrichedCompany | EnrichedContact,
@@ -59,18 +98,14 @@ function getDisplayConfidence(
     return c.confidenceScore;
   }
   const c = row as EnrichedContact;
+  const emailOk = sanitizeUnknownText(c.rawEmail);
+  const companyOk = sanitizeContactCompanyField(c.resolvedCompany);
+  const titleOk = sanitizeUnknownText(c.title);
+  const linkedinOk = sanitizeUnknownText(c.linkedinUrl);
   const missingCritical =
-    !c.rawEmail?.trim() || !c.resolvedCompany?.trim() || !c.title?.trim();
+    !emailOk || !companyOk || !titleOk || !linkedinOk;
   if (missingCritical) return "unresolved";
   return c.confidenceScore;
-}
-
-function initialStatus(
-  confidence: EnrichedCompany["confidenceScore"],
-): EnrichedCompany["status"] {
-  if (confidence === "high") return "approved";
-  if (confidence === "unresolved") return "skipped";
-  return "pending";
 }
 
 function initialCompanyReviewStatus(company: EnrichedCompany): EnrichedCompany["status"] {
@@ -78,6 +113,10 @@ function initialCompanyReviewStatus(company: EnrichedCompany): EnrichedCompany["
     return "skipped";
   }
   return "approved";
+}
+
+function initialContactReviewStatus(contact: EnrichedContact): EnrichedContact["status"] {
+  return getDisplayConfidence(contact, "contacts") !== "unresolved" ? "approved" : "pending";
 }
 
 function rowKey(id: string, field: string): string {
@@ -882,9 +921,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
               : (visibleRows as EnrichedContact[]).map((row, ri) => {
                   const muted = row.status === "skipped";
                   const checked = row.status === "approved";
-                  const fullName = [row.firstName, row.lastName].filter(Boolean).join(" ");
+                  const fullName = formatContactFullName(row);
+                  const companyForSearch =
+                    sanitizeContactCompanyField(row.resolvedCompany) ||
+                    sanitizeUnknownText(row.rawCompany);
                   const searchLinkedInUrl = `https://www.google.com/search?q=${encodeURIComponent(
-                    `"${fullName}" "${row.resolvedCompany || row.rawCompany}" LinkedIn`,
+                    `"${fullName}" "${companyForSearch}" LinkedIn`,
                   )}`;
                   return (
                     <tr key={row.id} className={rowShellClass(row, ri)}>
@@ -902,11 +944,13 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           value={fullName}
                           edited={editedKeys.has(rowKey(row.id, "name"))}
                           muted={muted}
+                          pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "name");
-                            const parts = v.trim().split(/\s+/);
-                            const firstName = parts[0] ?? "";
-                            const lastName = parts.slice(1).join(" ");
+                            const clean = sanitizeUnknownText(v);
+                            const parts = clean.split(/\s+/).filter(Boolean);
+                            const firstName = sanitizeUnknownText(parts[0] ?? "");
+                            const lastName = sanitizeUnknownText(parts.slice(1).join(" "));
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
                                 r.id === row.id ? { ...r, firstName, lastName } : r,
@@ -915,21 +959,19 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td
-                        className={`max-w-48 break-all px-2 py-1.5 align-top ${muted ? "text-zinc-500" : ""}`}
-                      >
-                        {row.rawEmail}
-                      </td>
-                      <td className="max-w-48 px-2 py-1.5 align-top wrap-break-word">
+                      <td className="max-w-48 break-all px-2 py-1.5 align-top">
                         <EditableCell
-                          value={row.resolvedCompany}
-                          edited={editedKeys.has(rowKey(row.id, "resolvedCompany"))}
+                          value={sanitizeUnknownText(row.rawEmail)}
+                          edited={editedKeys.has(rowKey(row.id, "rawEmail"))}
                           muted={muted}
+                          breakAll
+                          pencilOnHover
                           onSave={(v) => {
-                            markEdited(row.id, "resolvedCompany");
+                            markEdited(row.id, "rawEmail");
+                            const next = sanitizeUnknownText(v);
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
-                                r.id === row.id ? { ...r, resolvedCompany: v } : r,
+                                r.id === row.id ? { ...r, rawEmail: next, resolvedEmail: next } : r,
                               ),
                             );
                           }}
@@ -937,14 +979,33 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       </td>
                       <td className="max-w-48 px-2 py-1.5 align-top wrap-break-word">
                         <EditableCell
-                          value={row.title}
-                          edited={editedKeys.has(rowKey(row.id, "title"))}
+                          value={sanitizeContactCompanyField(row.resolvedCompany)}
+                          edited={editedKeys.has(rowKey(row.id, "resolvedCompany"))}
                           muted={muted}
+                          pencilOnHover
                           onSave={(v) => {
-                            markEdited(row.id, "title");
+                            markEdited(row.id, "resolvedCompany");
+                            const next = sanitizeContactCompanyField(v);
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
-                                r.id === row.id ? { ...r, title: v } : r,
+                                r.id === row.id ? { ...r, resolvedCompany: next } : r,
+                              ),
+                            );
+                          }}
+                        />
+                      </td>
+                      <td className="max-w-48 px-2 py-1.5 align-top wrap-break-word">
+                        <EditableCell
+                          value={sanitizeUnknownText(row.title)}
+                          edited={editedKeys.has(rowKey(row.id, "title"))}
+                          muted={muted}
+                          pencilOnHover
+                          onSave={(v) => {
+                            markEdited(row.id, "title");
+                            const next = sanitizeUnknownText(v);
+                            setRows(
+                              (rows as EnrichedContact[]).map((r) =>
+                                r.id === row.id ? { ...r, title: next } : r,
                               ),
                             );
                           }}
@@ -952,16 +1013,17 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       </td>
                       <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-top break-all whitespace-normal">
                         <LinkedInProfileCell
-                          value={row.linkedinUrl}
+                          value={sanitizeUnknownText(row.linkedinUrl)}
                           edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
                           muted={muted}
                           breakAll
                           missingSearchUrl={searchLinkedInUrl}
                           onSave={(v) => {
                             markEdited(row.id, "linkedinUrl");
+                            const next = sanitizeUnknownText(v);
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
-                                r.id === row.id ? { ...r, linkedinUrl: v } : r,
+                                r.id === row.id ? { ...r, linkedinUrl: next } : r,
                               ),
                             );
                           }}
@@ -1026,10 +1088,23 @@ export function applyInitialReviewStatus(
       };
     }
     const c = r as EnrichedContact;
+    const ingested = sanitizeContact(c);
+    const rawEmail = sanitizeUnknownText(ingested.rawEmail);
+    const resolvedEmail = sanitizeUnknownText(ingested.resolvedEmail) || rawEmail;
+    const merged: EnrichedContact = {
+      ...ingested,
+      firstName: sanitizeUnknownText(ingested.firstName),
+      lastName: sanitizeUnknownText(ingested.lastName),
+      rawEmail,
+      resolvedEmail,
+      resolvedCompany: sanitizeContactCompanyField(ingested.resolvedCompany),
+      title: sanitizeUnknownText(ingested.title),
+      linkedinUrl: sanitizeUnknownText(ingested.linkedinUrl),
+      location: expandStateAbbreviation(sanitizeUnknownText(ingested.location)),
+    };
     return {
-      ...c,
-      status: initialStatus(c.confidenceScore),
-      location: expandStateAbbreviation(c.location),
+      ...merged,
+      status: initialContactReviewStatus(merged),
     };
   }) as EnrichedCompany[] | EnrichedContact[];
 }

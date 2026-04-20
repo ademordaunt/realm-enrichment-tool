@@ -737,13 +737,18 @@ export function EventContextForm({
           </label>
 
           {listType === "contacts" ? (
-            <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+            <label
+              className="flex flex-col gap-1 text-sm sm:col-span-2"
+              htmlFor="audience-type"
+            >
               <span className="font-medium text-(--text-primary)">
-                Audience Level <span className="text-(--color-error)">*</span>
+                Audience Type <span className="text-(--color-error)">*</span>
               </span>
               <div className="relative">
                 <input
+                  id="audience-type"
                   required
+                  aria-label="Audience type (required)"
                   className={`${inputWithTrailingIconClass} ${!audienceTouched ? "text-(--text-muted)" : ""}`}
                   value={audienceLevel}
                   onChange={(e) => setAudienceLevel(e.target.value)}

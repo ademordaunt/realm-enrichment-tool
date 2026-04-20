@@ -118,7 +118,7 @@ export async function POST(request: Request) {
 
             emitProgress(
               i,
-              `Checking Common Room… (${nonHighIndex} of ${nonHighTotal} contacts)`,
+              `ZoomInfo & Common Room enriching ${nonHighIndex} of ${nonHighTotal} contacts…`,
             );
             const crResult = await enrichContactWithCommonRoom(contact);
 
@@ -182,7 +182,7 @@ export async function POST(request: Request) {
             if (stillNeedsEnrichment) {
               emitProgress(
                 i,
-                `ZoomInfo enriching ${nonHighIndex} of ${nonHighTotal} contacts…`,
+                `ZoomInfo & Common Room enriching ${nonHighIndex} of ${nonHighTotal} contacts…`,
               );
               ziResult = await enrichContactWithZoomInfo(contact);
               if (ziResult.enrichedByZoomInfo) {
