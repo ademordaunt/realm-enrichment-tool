@@ -28,6 +28,20 @@ function contactProperties(
   if (lsd) props.lead_source_description = lsd;
   const n = contact.membershipNotes?.trim() || contact.notes?.trim();
   if (n) props.hs_content_membership_notes = n;
+  if (contact.ziManagementLevel?.trim()) props.job_level = contact.ziManagementLevel.trim();
+  if (contact.ziJobFunction?.trim()) props.job_function = contact.ziJobFunction.trim();
+  if (contact.ziCompanyPrimaryIndustry?.trim()) {
+    props.industry = contact.ziCompanyPrimaryIndustry.trim();
+  }
+  if (contact.ziCompanyEmployeeCount?.trim()) {
+    props.numemployees = contact.ziCompanyEmployeeCount.trim();
+  }
+  if (
+    isEmpty(contact.companyDomain) &&
+    contact.ziCompanyWebsite?.trim()
+  ) {
+    props.website = contact.ziCompanyWebsite.trim();
+  }
   if (extras?.leadSource?.trim()) props.lead_source__deal_source = extras.leadSource.trim();
   if (extras?.leadSourceDescription?.trim()) {
     props.lead_source_description = extras.leadSourceDescription.trim();
@@ -93,7 +107,7 @@ export async function updateContact(
   extras?: HubSpotCompanyPushExtras,
 ): Promise<string> {
   const res = await hubspotFetch(
-    `/crm/v3/objects/contacts/${encodeURIComponent(id)}?properties=firstname,lastname,email,jobtitle,company,hs_linkedin_url,state,phone,lead_source__deal_source,lead_source_description,hs_content_membership_notes`,
+    `/crm/v3/objects/contacts/${encodeURIComponent(id)}?properties=firstname,lastname,email,jobtitle,company,hs_linkedin_url,state,phone,lead_source__deal_source,lead_source_description,hs_content_membership_notes,job_level,job_function,numemployees,industry,website`,
   );
 
   if (!res.ok) {
@@ -154,6 +168,29 @@ export async function updateContact(
     if (noteCandidate && isEmpty(ex.hs_content_membership_notes)) {
       updates.hs_content_membership_notes = noteCandidate;
     }
+  }
+
+  if (contact.ziManagementLevel?.trim() && isEmpty(ex.job_level)) {
+    updates.job_level = contact.ziManagementLevel.trim();
+  }
+  if (contact.ziJobFunction?.trim() && isEmpty(ex.job_function)) {
+    updates.job_function = contact.ziJobFunction.trim();
+  }
+  if (contact.ziCompanyPrimaryIndustry?.trim() && isEmpty(ex.industry)) {
+    updates.industry = contact.ziCompanyPrimaryIndustry.trim();
+  }
+  if (
+    contact.ziCompanyEmployeeCount?.trim() &&
+    isEmpty(ex.numemployees)
+  ) {
+    updates.numemployees = contact.ziCompanyEmployeeCount.trim();
+  }
+  if (
+    isEmpty(contact.companyDomain) &&
+    contact.ziCompanyWebsite?.trim() &&
+    isEmpty(ex.website)
+  ) {
+    updates.website = contact.ziCompanyWebsite.trim();
   }
 
   if (Object.keys(updates).length === 0) {

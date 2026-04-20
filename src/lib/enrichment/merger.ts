@@ -159,6 +159,18 @@ export function mergeEnrichedContact(
     title: title || ai.title,
     location: location || ai.location,
     companyDomain,
+    ziManagementLevel:
+      firstNonEmptyString(ai.ziManagementLevel, zoominfo.ziManagementLevel) || undefined,
+    ziJobFunction:
+      firstNonEmptyString(ai.ziJobFunction, zoominfo.ziJobFunction) || undefined,
+    ziCompanyEmployeeCount:
+      firstNonEmptyString(ai.ziCompanyEmployeeCount, zoominfo.ziCompanyEmployeeCount) ||
+      undefined,
+    ziCompanyPrimaryIndustry:
+      firstNonEmptyString(ai.ziCompanyPrimaryIndustry, zoominfo.ziCompanyPrimaryIndustry) ||
+      undefined,
+    ziCompanyWebsite:
+      firstNonEmptyString(ai.ziCompanyWebsite, zoominfo.ziCompanyWebsite) || undefined,
     enrichedByZoomInfo: ai.enrichedByZoomInfo || Boolean(zoominfo.enrichedByZoomInfo),
     enrichedByCommonRoom: ai.enrichedByCommonRoom || Boolean(commonroom.enrichedByCommonRoom),
     confidenceScore,

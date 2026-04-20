@@ -460,12 +460,20 @@ export async function enrichContactWithZoomInfo(
           "firstName",
           "lastName",
           "jobTitle",
-          "linkedInUrl",
+          "externalUrls",
           "state",
+          "city",
           "companyName",
           "companyId",
+          "companyPrimaryIndustry",
+          "companyEmployeeCount",
+          "companyWebsite",
+          "managementLevel",
+          "jobFunction",
           "phone",
           "mobilePhone",
+          "email",
+          "contactAccuracyScore",
         ],
       },
     },
@@ -496,40 +504,28 @@ export async function enrichContactWithZoomInfo(
   const attrs =
     firstEnrich && isRecord(firstEnrich.attributes) ? firstEnrich.attributes : {};
 
-  const linkedInRaw =
-    (typeof attrs.linkedInUrl === "string" && attrs.linkedInUrl.trim()) ||
-    (typeof attrs.linkedinUrl === "string" && attrs.linkedinUrl.trim()) ||
-    null;
-  const titleRaw = typeof attrs.jobTitle === "string" ? attrs.jobTitle.trim() || null : null;
-  const stateRaw = typeof attrs.state === "string" ? attrs.state.trim() || null : null;
-  const companyRaw =
-    typeof attrs.companyName === "string" ? attrs.companyName.trim() || null : null;
-  const phoneRaw =
-    (typeof attrs.phone === "string" && attrs.phone.trim()) ||
-    (typeof attrs.mobilePhone === "string" && attrs.mobilePhone.trim()) ||
-    null;
+  const linkedinUrl = Array.isArray(attrs.externalUrls)
+    ? attrs.externalUrls.find((u: any) => u.url?.includes("linkedin.com"))?.url ?? null
+    : null;
 
   const result = {
-    title: titleRaw,
-    linkedinUrl: linkedInRaw,
-    state: stateRaw,
-    resolvedCompany: companyRaw,
-    phone: phoneRaw,
-    enrichedByZoomInfo: Boolean(attrs.id ?? firstEnrich?.id),
+    title: attrs.jobTitle ?? null,
+    linkedinUrl: linkedinUrl,
+    state: attrs.state ?? null,
+    city: attrs.city ?? null,
+    resolvedCompany: attrs.companyName ?? null,
+    phone: attrs.phone ?? attrs.mobilePhone ?? null,
+    enrichedByZoomInfo: !!attrs.id,
+    contactAccuracyScore: attrs.contactAccuracyScore ?? null,
   };
 
-  console.log(
-    "[ZoomInfo Contact Enrich] result for",
-    contact.firstName,
-    contact.lastName,
-    "→",
-    {
-      found: Boolean(attrs.id ?? firstEnrich?.id),
-      title: result.title,
-      linkedIn: result.linkedinUrl,
-      company: result.resolvedCompany,
-    },
-  );
+  console.log("[ZoomInfo Contact Enrich] result for", contact.firstName, contact.lastName, "→", {
+    found: !!attrs.id,
+    title: result.title,
+    linkedIn: result.linkedinUrl,
+    company: result.resolvedCompany,
+    accuracyScore: result.contactAccuracyScore,
+  });
 
   if (!attrs.id && !firstEnrich?.id) {
     return ziMeta({});
@@ -547,24 +543,78 @@ export async function enrichContactWithZoomInfo(
   };
 
   const pickPhone = (): string | undefined => {
-    const z = phoneRaw?.trim();
+    const raw = result.phone;
+    const z = typeof raw === "string" ? raw.trim() : "";
     if (!z) return undefined;
     if (isHighConfidence && contact.phone?.trim()) return undefined;
     return z;
   };
 
+  const ziTitle = typeof result.title === "string" ? result.title.trim() || null : null;
+  const ziLinkedin =
+    typeof result.linkedinUrl === "string" ? result.linkedinUrl.trim() || null : null;
+  const ziCompany =
+    typeof result.resolvedCompany === "string" ? result.resolvedCompany.trim() || null : null;
+  const locationZi =
+    [result.city, result.state]
+      .map((x) => (typeof x === "string" ? x.trim() : ""))
+      .filter(Boolean)
+      .join(", ") || null;
+
   // Field names must match EnrichedContact type exactly
   const out: Partial<EnrichedContact> = {};
-  const t = pickStr(result.title, contact.title);
+  const t = pickStr(ziTitle, contact.title);
   if (t) out.title = t;
-  const li = pickStr(result.linkedinUrl, contact.linkedinUrl);
+  const li = pickStr(ziLinkedin, contact.linkedinUrl);
   if (li) out.linkedinUrl = li;
-  const co = pickStr(result.resolvedCompany, contact.resolvedCompany);
+  const co = pickStr(ziCompany, contact.resolvedCompany);
   if (co) out.resolvedCompany = co;
-  const loc = pickStr(result.state, contact.location);
+  const loc = pickStr(locationZi, contact.location);
   if (loc) out.location = loc;
   const ph = pickPhone();
   if (ph) out.phone = ph;
+
+  const ziAttrStr = (v: unknown): string | null => {
+    if (typeof v === "string") {
+      const t = v.trim();
+      return t || null;
+    }
+    if (typeof v === "number" && !Number.isNaN(v)) return String(v);
+    if (isRecord(v) && typeof v.name === "string") {
+      const t = v.name.trim();
+      return t || null;
+    }
+    return null;
+  };
+
+  const ml = ziAttrStr(attrs.managementLevel);
+  if (!(contact.ziManagementLevel ?? "").trim() && ml) {
+    out.ziManagementLevel = ml;
+  }
+
+  const jf = ziAttrStr(attrs.jobFunction);
+  if (!(contact.ziJobFunction ?? "").trim() && jf) {
+    out.ziJobFunction = jf;
+  }
+
+  const empRaw = attrs.companyEmployeeCount;
+  const empStr =
+    empRaw != null && !Number.isNaN(Number(empRaw))
+      ? String(Number(empRaw))
+      : ziAttrStr(empRaw);
+  if (!(contact.ziCompanyEmployeeCount ?? "").trim() && empStr) {
+    out.ziCompanyEmployeeCount = empStr;
+  }
+
+  const ind = ziAttrStr(attrs.companyPrimaryIndustry);
+  if (!(contact.ziCompanyPrimaryIndustry ?? "").trim() && ind) {
+    out.ziCompanyPrimaryIndustry = ind;
+  }
+
+  const web = ziAttrStr(attrs.companyWebsite);
+  if (!(contact.companyDomain ?? "").trim() && web) {
+    out.ziCompanyWebsite = web;
+  }
 
   out.enrichedByZoomInfo = true;
 

@@ -33,6 +33,14 @@ const CONFIDENCE_ORDER: Record<EnrichedCompany["confidenceScore"], number> = {
   high: 3,
 };
 
+/** Treat "unknown" (any case) as empty for company State / Region display and storage. */
+function sanitizeState(val: string | null | undefined): string {
+  if (val == null) return "";
+  const t = val.trim();
+  if (!t || t.toLowerCase() === "unknown") return "";
+  return t;
+}
+
 /** Critical gaps → treat as unresolved for sort + badge (does not mutate stored enrichment). */
 function getDisplayConfidence(
   row: EnrichedCompany | EnrichedContact,
@@ -40,12 +48,13 @@ function getDisplayConfidence(
 ): EnrichedCompany["confidenceScore"] {
   if (listType === "companies") {
     const c = row as EnrichedCompany;
+    const stateOk = sanitizeState(c.state);
     const missingCritical =
       !c.resolvedName?.trim() ||
       !c.domain?.trim() ||
       !c.linkedinUrl?.trim() ||
       c.numberOfEmployees == null ||
-      !c.state?.trim();
+      !stateOk;
     if (missingCritical) return "unresolved";
     return c.confidenceScore;
   }
@@ -64,6 +73,13 @@ function initialStatus(
   return "pending";
 }
 
+function initialCompanyReviewStatus(company: EnrichedCompany): EnrichedCompany["status"] {
+  if (getDisplayConfidence(company, "companies") === "unresolved") {
+    return "skipped";
+  }
+  return "approved";
+}
+
 function rowKey(id: string, field: string): string {
   return `${id}:${field}`;
 }
@@ -75,9 +91,20 @@ function EditableCell(props: {
   align?: "left" | "right";
   inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   breakAll?: boolean;
+  /** Company columns: pencil affordance on hover (LinkedIn-style). */
+  pencilOnHover?: boolean;
   onSave: (next: string) => void;
 }) {
-  const { value, edited, muted, align = "left", inputMode, breakAll, onSave } = props;
+  const {
+    value,
+    edited,
+    muted,
+    align = "left",
+    inputMode,
+    breakAll,
+    pencilOnHover = false,
+    onSave,
+  } = props;
   const normalized = value == null ? "" : String(value);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(normalized);
@@ -125,19 +152,33 @@ function EditableCell(props: {
     );
   }
 
+  const displayEmpty = normalized.trim() === "";
+
   return (
     <button
       type="button"
-      className={`relative min-h-5 w-full max-w-50 rounded px-1.5 py-0.5 text-left text-xs sm:text-sm ${wrap} ${
+      className={`group relative inline-flex min-h-5 w-full max-w-50 items-center ${
+        pencilOnHover ? "justify-between gap-1" : ""
+      } rounded px-1.5 py-0.5 text-left text-xs sm:text-sm ${wrap} ${
         align === "right" ? "text-right tabular-nums" : ""
       } ${muted ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100"} hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
       onClick={() => setEditing(true)}
     >
-      {normalized === "" ? (
-        <span className="text-zinc-400">—</span>
-      ) : (
-        normalized
-      )}
+      <span className={`min-w-0 flex-1 ${align === "right" ? "text-right" : ""}`}>
+        {displayEmpty ? (
+          <span className="text-zinc-400">—</span>
+        ) : (
+          normalized
+        )}
+      </span>
+      {pencilOnHover ? (
+        <span
+          className="shrink-0 text-[0.75rem] leading-none text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100"
+          aria-hidden
+        >
+          ✏️
+        </span>
+      ) : null}
       {edited ? (
         <span
           className="pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-blue-500"
@@ -155,7 +196,7 @@ function StateRegionCell(props: {
   onSave: (next: string) => void;
 }) {
   const { value, edited, muted, onSave } = props;
-  const normalized = value == null ? "" : String(value);
+  const normalized = sanitizeState(value);
   const [editing, setEditing] = useState(false);
 
   const options = useMemo(() => {
@@ -177,11 +218,11 @@ function StateRegionCell(props: {
           value={selectValue}
           onChange={(e) => {
             const next = e.target.value;
-            onSave(next);
+            onSave(sanitizeState(next));
             setEditing(false);
           }}
           onBlur={(e) => {
-            onSave(e.target.value);
+            onSave(sanitizeState(e.target.value));
             setEditing(false);
           }}
           onKeyDown={(e) => {
@@ -208,16 +249,24 @@ function StateRegionCell(props: {
   return (
     <button
       type="button"
-      className={`relative min-h-5 w-full max-w-56 rounded px-1.5 py-0.5 text-left text-xs wrap-break-word sm:text-sm ${
+      className={`group relative inline-flex min-h-5 w-full max-w-56 items-center justify-between gap-1 rounded px-1.5 py-0.5 text-left text-xs wrap-break-word sm:text-sm ${
         muted ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100"
       } hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
       onClick={() => setEditing(true)}
     >
-      {normalized === "" ? (
-        <span className="text-zinc-400">—</span>
-      ) : (
-        normalized
-      )}
+      <span className="min-w-0 flex-1">
+        {normalized === "" ? (
+          <span className="text-zinc-400">—</span>
+        ) : (
+          normalized
+        )}
+      </span>
+      <span
+        className="shrink-0 text-[0.75rem] leading-none text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100"
+        aria-hidden
+      >
+        ✏️
+      </span>
       {edited ? (
         <span
           className="pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-blue-500"
@@ -246,8 +295,9 @@ function EmployeesCell(props: {
     return (
       <div className="relative min-w-16">
         <input
-          type="text"
+          type="number"
           inputMode="numeric"
+          min={0}
           className="w-full rounded border border-blue-500 bg-white px-1.5 py-0.5 text-right text-xs tabular-nums outline-none ring-1 ring-blue-500/30 dark:bg-zinc-950 sm:text-sm"
           value={draft}
           autoFocus
@@ -288,15 +338,29 @@ function EmployeesCell(props: {
     );
   }
 
+  const displayEmpty = value == null;
+
   return (
     <button
       type="button"
-      className={`relative w-full rounded px-1.5 py-0.5 text-right text-xs tabular-nums sm:text-sm ${
+      className={`group relative inline-flex min-h-5 w-full items-center justify-end gap-1 rounded px-1.5 py-0.5 text-right text-xs tabular-nums sm:text-sm ${
         muted ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100"
       } hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
       onClick={() => setEditing(true)}
     >
-      {value === null || Number.isNaN(value) ? "" : value}
+      <span className="min-w-0 flex-1 text-right">
+        {displayEmpty ? (
+          <span className="text-zinc-400">—</span>
+        ) : (
+          value
+        )}
+      </span>
+      <span
+        className="shrink-0 text-[0.75rem] leading-none text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100"
+        aria-hidden
+      >
+        ✏️
+      </span>
       {edited ? (
         <span
           className="pointer-events-none absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-blue-500"
@@ -729,6 +793,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           value={row.resolvedName}
                           edited={editedKeys.has(rowKey(row.id, "resolvedName"))}
                           muted={muted}
+                          pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "resolvedName");
                             setRows(
@@ -744,6 +809,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           value={row.domain}
                           edited={editedKeys.has(rowKey(row.id, "domain"))}
                           muted={muted}
+                          pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "domain");
                             const domain = v.trim();
@@ -764,7 +830,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           muted={muted}
                           onSave={(v) => {
                             markEdited(row.id, "state");
-                            const full = expandStateAbbreviation(v);
+                            const full = expandStateAbbreviation(sanitizeState(v));
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
                                 r.id === row.id ? { ...r, state: full } : r,
@@ -923,7 +989,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
             {unresolvedApprovedCount > 0 ? (
               <p className="mt-1 text-xs text-(--color-warning)">
                 ⚠️ {unresolvedApprovedCount} unresolved record
-                {unresolvedApprovedCount === 1 ? "" : "s"} included — consider reviewing before
+                {unresolvedApprovedCount === 1 ? "" : "s"} selected — make sure you review before
                 pushing
               </p>
             ) : null}
@@ -951,19 +1017,18 @@ export function applyInitialReviewStatus(
   rows: EnrichedCompany[] | EnrichedContact[],
 ): EnrichedCompany[] | EnrichedContact[] {
   return rows.map((r) => {
-    const status = initialStatus(r.confidenceScore);
     if ("rawInput" in r) {
       const c = r as EnrichedCompany;
       return {
         ...c,
-        status,
-        state: expandStateAbbreviation(c.state),
+        status: initialCompanyReviewStatus(c),
+        state: expandStateAbbreviation(sanitizeState(c.state)),
       };
     }
     const c = r as EnrichedContact;
     return {
       ...c,
-      status,
+      status: initialStatus(c.confidenceScore),
       location: expandStateAbbreviation(c.location),
     };
   }) as EnrichedCompany[] | EnrichedContact[];

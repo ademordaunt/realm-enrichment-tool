@@ -16,7 +16,11 @@ import type {
   RawCompanyRow,
   RawContactRow,
 } from "@/lib/utils/types";
-import { ENRICHMENT_BATCH_SIZE, needsLinkedInLookup } from "@/lib/enrichment/ai-enricher";
+import {
+  ENRICHMENT_BATCH_SIZE,
+  needsCompanyLinkedInLookup,
+  needsLinkedInLookup,
+} from "@/lib/enrichment/ai-enricher";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const ACCEPT = ".csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
@@ -362,6 +366,49 @@ async function runLinkedInLookupPass(
       signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contact: row }),
+    });
+    if (res.ok) {
+      const payload = (await res.json()) as { linkedInUrl?: string | null };
+      const linkedInUrl = String(payload.linkedInUrl ?? "").trim();
+      if (linkedInUrl) {
+        out[idx] = {
+          ...row,
+          linkedinUrl: linkedInUrl,
+          enrichedByAI: true,
+        };
+      }
+    }
+    done += 1;
+    onProgress(done, total);
+  }
+  return out;
+}
+
+async function runCompanyLinkedInLookupPass(
+  companies: EnrichedCompany[],
+  signal: AbortSignal,
+  onProgress: (done: number, total: number) => void,
+): Promise<EnrichedCompany[]> {
+  const missingIndices: number[] = [];
+  for (let i = 0; i < companies.length; i++) {
+    if (needsCompanyLinkedInLookup(companies[i]!)) {
+      missingIndices.push(i);
+    }
+  }
+  const total = missingIndices.length;
+  if (total === 0) {
+    return companies;
+  }
+
+  const out = companies.slice();
+  let done = 0;
+  for (const idx of missingIndices) {
+    const row = out[idx]!;
+    const res = await fetch("/api/enrich/linkedin-search", {
+      method: "POST",
+      signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ company: row }),
     });
     if (res.ok) {
       const payload = (await res.json()) as { linkedInUrl?: string | null };
@@ -968,31 +1015,61 @@ export default function Home() {
         rowsAfterVerify = aiRows;
       }
 
-      // 3. LinkedIn web search fallback — contacts only, after verify; per-row, only if still no linkedinUrl.
+      // 3. LinkedIn web search fallback — after verify; per-row gap-fill when linkedinUrl still empty (contacts + companies).
       let finalRows: EnrichedCompany[] | EnrichedContact[] = rowsAfterVerify;
       if (resolvedListType === "contacts") {
         const contactRowsAfterVerify = rowsAfterVerify as EnrichedContact[];
         const missingLinkedInTotal = contactRowsAfterVerify.filter((r) =>
           needsLinkedInLookup(r),
         ).length;
-        setProgress({
-          startRow: 1,
-          endRow: contactRowsAfterVerify.length,
-          totalRows: contactRowsAfterVerify.length,
-          detail: `Finding LinkedIn URLs: 0 of ${missingLinkedInTotal}...`,
-        });
-        finalRows = await runLinkedInLookupPass(
-          contactRowsAfterVerify,
-          ac.signal,
-          (done, total) => {
-            setProgress({
-              startRow: 1,
-              endRow: contactRowsAfterVerify.length,
-              totalRows: contactRowsAfterVerify.length,
-              detail: `Finding LinkedIn URLs: ${done} of ${total}...`,
-            });
-          },
-        );
+        if (missingLinkedInTotal > 0) {
+          // EnrichmentProgress uses endRow/totalRows for bar % — use lookup progress, not full list size.
+          setProgress({
+            startRow: 1,
+            endRow: 0,
+            totalRows: missingLinkedInTotal,
+            detail: `Finding LinkedIn URLs: 0 of ${missingLinkedInTotal}...`,
+          });
+          finalRows = await runLinkedInLookupPass(
+            contactRowsAfterVerify,
+            ac.signal,
+            (done, total) => {
+              setProgress({
+                startRow: 1,
+                endRow: done,
+                totalRows: total,
+                detail: `Finding LinkedIn URLs: ${done} of ${total}...`,
+              });
+            },
+          );
+        }
+      }
+
+      if (resolvedListType === "companies") {
+        const companyRowsAfterVerify = rowsAfterVerify as EnrichedCompany[];
+        const missingCompanyLinkedIn = companyRowsAfterVerify.filter((r) =>
+          needsCompanyLinkedInLookup(r),
+        ).length;
+        if (missingCompanyLinkedIn > 0) {
+          setProgress({
+            startRow: 1,
+            endRow: 0,
+            totalRows: missingCompanyLinkedIn,
+            detail: `Finding remaining company LinkedIn profiles… (0 of ${missingCompanyLinkedIn})`,
+          });
+          finalRows = await runCompanyLinkedInLookupPass(
+            companyRowsAfterVerify,
+            ac.signal,
+            (done, total) => {
+              setProgress({
+                startRow: 1,
+                endRow: done,
+                totalRows: total,
+                detail: `Finding remaining company LinkedIn profiles… (${done} of ${total})`,
+              });
+            },
+          );
+        }
       }
 
       setEnriched(finalRows);
@@ -1472,6 +1549,14 @@ export default function Home() {
         {step === "enriching" && progress && (
           <div className="flex flex-col gap-4">
             <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
+              <p
+                className="mb-2 text-center text-base font-semibold text-(--realm-navy)"
+                role="status"
+              >
+                {progress.fromCache
+                  ? `Loaded from cache: rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}...`
+                  : `Analyzing rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}...`}
+              </p>
               <div
                 className="h-2 w-full overflow-hidden rounded-full bg-(--bg-muted)"
                 aria-hidden
@@ -1481,14 +1566,6 @@ export default function Home() {
                   style={{ width: `${enrichmentBatchPercent}%` }}
                 />
               </div>
-              <p
-                className="text-sm text-(--text-muted) text-center mt-2"
-                role="status"
-              >
-                {progress.fromCache
-                  ? `Loaded from cache: rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}...`
-                  : `Analyzing rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}...`}
-              </p>
               <p className="mt-3 text-center text-sm text-(--text-muted)">
                 You can leave this tab. We&apos;ll notify you when enrichment is complete.
               </p>

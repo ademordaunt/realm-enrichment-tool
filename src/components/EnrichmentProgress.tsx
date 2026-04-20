@@ -13,6 +13,14 @@ export function EnrichmentProgress({ endRow, totalRows, verifyDetail }: Enrichme
 
   return (
     <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
+      {verifyDetail ? (
+        <p
+          className="mb-2 text-center text-base font-semibold text-(--realm-navy)"
+          role="status"
+        >
+          {verifyDetail}
+        </p>
+      ) : null}
       <div
         className="h-2 w-full overflow-hidden rounded-full bg-(--bg-muted)"
         aria-hidden
@@ -22,11 +30,6 @@ export function EnrichmentProgress({ endRow, totalRows, verifyDetail }: Enrichme
           style={{ width: `${pct}%` }}
         />
       </div>
-      {verifyDetail ? (
-        <p className="mt-3 text-center text-sm text-(--text-muted)" role="status">
-          {verifyDetail}
-        </p>
-      ) : null}
     </div>
   );
 }

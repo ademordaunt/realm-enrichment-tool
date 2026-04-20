@@ -1,9 +1,9 @@
 # Realm RevOps Enrichment Tool — Full Product Spec
 
-**Version:** 1.1  
+**Version:** 1.2  
 **Stack:** Next.js 16 (App Router), TypeScript, Tailwind CSS  
 **Author:** Realm Security RevOps  
-**Purpose:** Transform raw marketing event lead lists into HubSpot-ready records via AI enrichment, ZoomInfo, and Common Room — with a human review step before any data hits the CRM.
+**Purpose:** Transform raw marketing event lead lists into HubSpot-ready records via AI enrichment, verification (ZoomInfo, Common Room, optional prospector), and a last-resort LinkedIn web search for contacts — with a human review step before any data hits the CRM.
 
 ---
 
@@ -34,7 +34,8 @@ Marketing events produce raw lead lists with incomplete, inconsistent, or ambigu
 A single-page internal web app that:
 - Accepts a raw CSV/Excel lead list exactly as received from an event organizer
 - Automatically detects whether it's a **company list** or **contact list**
-- Enriches every record through a three-layer pipeline: AI reasoning → ZoomInfo → Common Room
+- Enriches every record through a **sequential** pipeline (see §2): **AI (batched)** → **`POST /api/enrich/zoominfo`** (companies: ZoomInfo; contacts: Common Room → prospector → ZoomInfo) → **for contacts only**, **`POST /api/enrich/linkedin-search`** per row still missing LinkedIn
+- Optionally uses **Vercel KV** to cache AI and ZoomInfo-shaped rows (same keys by company name / contact email) to skip redundant API calls
 - Presents a review/edit table where the user confirms, corrects, or skips records
 - Pushes approved records to HubSpot (create or update), then creates a static HubSpot list containing all imported record IDs
 
@@ -50,17 +51,19 @@ A single-page internal web app that:
 
 ```
 1. UPLOAD         → User drags/drops or selects a CSV or Excel file
-2. DETECT         → App auto-detects: Company List or Contact List
-3. CONTEXT FORM   → User fills in event context (name, date, state/region optional, audience level)
-4. ENRICH         → App runs enrichment pipeline (AI → ZoomInfo → Common Room)
-                    Progress shown row-by-row with a live status indicator
+2. DETECT         → App auto-detects: Company List or Contact List (or unknown + manual pick)
+3. CONTEXT FORM   → User fills in event context (name, date, state/region, audience level for contacts)
+4. ENRICH         → Strict order, each phase awaited before the next:
+                    (a) AI — all batches complete (`POST /api/enrich/ai`, batch size 3)
+                    (b) Verify — `POST /api/enrich/zoominfo` with AI rows (NDJSON progress)
+                    (c) Contacts only — LinkedIn fallback: `POST /api/enrich/linkedin-search` per contact
+                        still missing `linkedinUrl` after (b)
+                    Progress: batch text during AI; verifying bar + detail during (b); LinkedIn detail during (c)
 5. REVIEW TABLE   → User reviews each record, sees confidence scores and AI reasoning
-                    Can edit any field inline, approve, or skip individual rows
-6. PUSH           → User clicks "Push to HubSpot"
-                    App creates/updates Company or Contact records
-                    App creates a static HubSpot list with all pushed record IDs
-7. DONE           → Success screen with summary (X created, Y updated, Z skipped)
-                    Link to the new HubSpot list
+                    Inline edits; optional derived “unresolved” sort for incomplete key fields
+6. PUSH           → Pre-push screen (list name, folder, lead source, etc.) → `POST /api/hubspot/push`
+                    Creates/updates records; adds all IDs to a new static list (in push handler)
+7. DONE           → Success screen with summary + link to HubSpot list
 ```
 
 ---
@@ -85,6 +88,8 @@ interface RawContactRow {
   company?: string;
   location?: string;        // state or city, often vague
   notes?: string;           // "Attended Event", "No Show", etc.
+  phone?: string;
+  membershipNotes?: string; // e.g. CyAlliance “Membership Notes” column
   leadSource?: string;
   leadSourceDescription?: string;
   [key: string]: string | undefined;
@@ -120,6 +125,12 @@ interface EnrichedCompany {
   status: 'pending' | 'approved' | 'skipped' | 'error';
   hubspotId?: string;                 // populated after push (existing record ID if found)
   hubspotAction?: 'create' | 'update'; // populated after push
+
+  // Optional — may be filled by AI / ZoomInfo enrichment
+  revenue?: number;
+  industry?: string;
+  description?: string;
+  city?: string;
 }
 ```
 
@@ -153,6 +164,8 @@ interface EnrichedContact {
   leadSource: string;
   leadSourceDescription: string;
   notes: string;
+  membershipNotes: string;
+  phone?: string;
 
   // Source tracking
   enrichedByZoomInfo: boolean;
@@ -176,7 +189,8 @@ interface EventContext {
   eventDate: string;          // e.g. "March 2026" (month + year from the form)
   /** US state, macro region, National, or International — may be "" if user chose "No State / Region". */
   region: string;
-  audienceLevel: string;      // e.g. "CISOs, SOC team leaders, security leaders"
+  /** Required for contact lists in API validation; for company lists the UI may omit — server defaults to `"Business professionals"` when empty. */
+  audienceLevel: string;
   listType: 'companies' | 'contacts';
 }
 ```
@@ -300,7 +314,7 @@ Show this form between upload and enrichment. Fields:
 | Event Name | text | yes | e.g. "CISOExecNet Midwest" |
 | Event Date | month + year selects | yes | e.g. January 2026 |
 | State / Region | select | yes* | Root menu: placeholder → **No State / Region** (stores empty `region`) → pick a US state → or pick a macro region (Northeast, Midwest, etc.). User must either choose a location or explicitly choose "No State / Region". |
-| Audience Level | text | yes | Default copy suggests CISO / security leadership |
+| Audience Level | text | yes for **contacts** only | Hidden for **company** lists; not sent as a required field for companies. Default copy suggests CISO / security leadership when shown |
 
 \*Required in the sense that the user cannot submit on the initial placeholder; they may submit with no geographic region by selecting **No State / Region**, in which case `region` is sent as `""` to the API.
 
@@ -319,7 +333,7 @@ On submit → trigger enrichment pipeline.
 }
 ```
 
-**Validation:** `eventName`, `eventDate`, and `audienceLevel` must be non-empty after trim. **`region` is optional** — `null`, `undefined`, or `""` are accepted (normalized to `""` server-side).
+**Validation (`POST /api/enrich/ai`):** After trim, **`eventName`** and **`eventDate`** are always required. **`audienceLevel`** is required for **`listType === 'contacts'`** only; for **`companies`**, `audienceLevel` is optional and defaults server-side to **`"Business professionals"`** when missing or blank. **`region`** is optional (`""` OK).
 
 **Behavior — Company Resolution:**
 
@@ -370,7 +384,7 @@ For each contact:
 Return JSON array only.
 ```
 
-**Batching:** The app requests AI enrichment in batches of **5** rows per HTTP call (`batchIndex` / `batchSize` on `POST /api/enrich/ai`); omit `batchIndex` for the legacy streaming NDJSON response (e.g. local curl). Progress advances batch by batch.
+**Batching:** The client sends AI enrichment in batches of **`ENRICHMENT_BATCH_SIZE` (3)** rows per HTTP call (`batchIndex` / `batchSize` on `POST /api/enrich/ai`). Omit `batchIndex` for the legacy streaming NDJSON response (`enrichRowsWithProgress`). Progress advances batch by batch.
 
 **Output per company row:**
 ```typescript
@@ -413,11 +427,11 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// See `src/lib/enrichment/ai-enricher.ts` — model is e.g. `COMPANY_MODEL` / Sonnet-class; tools optional per implementation.
 const response = await client.messages.create({
-  model: 'claude-opus-4-5',
+  model: 'claude-sonnet-4-6',
   max_tokens: 4096,
-  tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-  messages: [{ role: 'user', content: prompt }]
+  // ...
 });
 ```
 
@@ -428,119 +442,60 @@ npm install @anthropic-ai/sdk
 
 ---
 
-## 6. Phase 3 — ZoomInfo & Common Room Enrichment {#phase-3}
+## 6. Phase 3 — Verification (`/api/enrich/zoominfo`) {#phase-3}
 
 ### Goal
-After AI resolution gives us clean company names and domains, use ZoomInfo and Common Room to fill in structured fields with high accuracy. This phase runs automatically after Phase 2, then merges results.
+After AI enrichment completes (all batches), the client calls **one** route: **`POST /api/enrich/zoominfo`**. That handler runs **companies** or **contacts** logic in-process — there are **no** separate `commonroom/route.ts`, `merge/route.ts`, or standalone merge API. Common Room and prospector run **inside** the contact branch; merging uses **`src/lib/enrichment/merger.ts`**.
 
-### Routes
+**Response:** NDJSON stream (`application/x-ndjson`): `progress` lines with optional `detail`, then `done` with `{ rows, listType, enrichedCount, creditsUsed }` (credits mirror successful ZoomInfo enrichments counted in the handler). On auth failure, an `error` line may include `zoomInfoAuthFailure: true`.
+
+### ZoomInfo authentication (`src/lib/zoominfo/auth.ts`)
+
+- **OAuth 2.0 client credentials** — `POST https://api.zoominfo.com/gtm/oauth/v1/token` with `grant_type=client_credentials`, Basic auth from `ZOOMINFO_CLIENT_ID` + `ZOOMINFO_CLIENT_SECRET`.
+- Access token cached in module scope with refresh before expiry.
+- **No** `ZOOMINFO_USERNAME` in auth (legacy docs may mention it; code uses client id/secret only).
+
+### Data API shape (JSON:API)
+
+ZoomInfo GTM Data API uses **`Content-Type` / `Accept: application/vnd.api+json`** and JSON:API-style bodies.
+
+**Companies (see `zoominfo-enricher.ts`):**
+1. `POST https://api.zoominfo.com/gtm/data/v1/companies/search` — `CompanySearch` + attributes (`companyName`, optional `companyWebsite`).
+2. `POST https://api.zoominfo.com/gtm/data/v1/companies/enrich` — `CompanyEnrich` with `matchCompanyInput` (e.g. `companyId` from search) and `outputFields` (e.g. id, name, website, socialMediaUrls, employeeCount, state, …).
+3. LinkedIn company URL may be derived from `socialMediaUrls` when present.
+
+**Contacts:**
+1. **Common Room** — `enrichContactWithCommonRoom` in `commonroom-enricher.ts` (REST `community/v1/members` by email and optionally LinkedIn handle).
+2. **Prospector** — internal `fetch` from this route to **`POST /api/enrich/prospector`** (same origin) for lightweight title/LinkedIn/location hints when CR is insufficient.
+3. **ZoomInfo** — `ContactSearch` then `ContactEnrich` with `matchPersonInput` (work **email** *or* `personId`), JSON:API to `.../contacts/search` and `.../contacts/enrich`.
+
+**Rate limiting:** ~**200 ms** delay between rows (`delayBetweenZoomInfoCalls`) in the zoominfo route loop.
+
+### High-confidence skip vs LinkedIn-only path (contacts)
+
+- **`confidenceScore === 'high'`** and **non-empty `linkedinUrl`:** row is passed through unchanged (no CR / prospector / ZoomInfo).
+- **`confidenceScore === 'high'`** but **missing `linkedinUrl`:** row still runs CR → prospector → ZoomInfo as needed; merge uses **`mergeEnrichedContact`**, then the handler applies **LinkedIn-only** output: **`{ ...contact, linkedinUrl: merged.linkedinUrl }`** plus source flags derived from CR/ZI LinkedIn URLs — **no** overwrite of title, company, phone, etc.
+
+Companies with **high** confidence still skip ZoomInfo entirely (unchanged).
+
+### Company merge (`mergeEnrichedCompany`)
+
+ZoomInfo partial may include **`originalConfidence`** from `enrichCompanyWithZoomInfo`. If the AI row was **high**, merger uses **fill-gaps** (keep AI where present); otherwise **ZoomInfo-preferred** for structured fields. Website is derived from merged `domain`.
+
+### Contact merge (`mergeEnrichedContact`)
+
+Field precedence is implemented in **`merger.ts`** (e.g. LinkedIn: Common Room → prospector → AI → ZoomInfo order in `firstNonEmptyString`). CSV **`rawEmail`** remains canonical for stored email.
+
+### Caching
+
+- **`src/lib/cache/enrichment-cache.ts`** — Vercel KV (`getCachedCompany` / `setCachedCompany` keyed by normalized name; contact cache by email). AI step writes cache; ZoomInfo company flow may read/write to skip duplicate API work. **Same key as AI** for companies: only treat cache as “ZoomInfo skip” when the stored row indicates prior ZoomInfo merge (`enrichedByZoomInfo`).
+
+### Environment variables (ZoomInfo + Common Room)
 
 ```
-src/app/api/enrich/
-  zoominfo/route.ts         → POST: ZoomInfo enrichment
-  commonroom/route.ts       → POST: Common Room enrichment
-  merge/route.ts            → POST: merge AI + ZoomInfo + CommonRoom results
-```
-
-### ZoomInfo Authentication
-
-ZoomInfo uses OAuth 2.0 with JWT. Auth token must be obtained before making data calls and cached for the duration of the session (tokens expire after 1 hour).
-
-**Auth endpoint:** `POST https://api.zoominfo.com/authenticate`
-
-```typescript
-// src/lib/zoominfo/auth.ts
-const response = await fetch('https://api.zoominfo.com/authenticate', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    username: process.env.ZOOMINFO_USERNAME,
-    client_id: process.env.ZOOMINFO_CLIENT_ID,
-    client_secret: process.env.ZOOMINFO_CLIENT_SECRET,
-  })
-});
-const { jwt } = await response.json();
-// Cache jwt in module-level variable with expiry timestamp
-```
-
-### `POST /api/enrich/zoominfo`
-
-**Company enrichment flow (two API calls per company):**
-
-Step 1 — Search: `POST https://api.zoominfo.com/search/company`
-```json
-{
-  "outputFields": ["id", "name", "website", "employeeCount", "hqState", "linkedInUrl"],
-  "searchInput": [{ "companyName": "Health Care Service Corporation" }]
-}
-```
-
-Step 2 — Enrich (only if search returns a confident match):
-`POST https://api.zoominfo.com/enrich/company`
-```json
-{
-  "outputFields": ["name", "website", "employeeCount", "hqState", "linkedInUrl", "companyHQPhone"],
-  "matchInput": [{ "companyWebsite": "hcsc.com" }]
-}
-```
-
-**Contact enrichment flow:**
-
-Step 1 — Search: `POST https://api.zoominfo.com/search/contact`
-```json
-{
-  "outputFields": ["id", "firstName", "lastName", "email", "jobTitle", "companyName", "linkedInUrl"],
-  "searchInput": [{
-    "firstName": "Vivek",
-    "lastName": "Kumar",
-    "companyName": "Alter Domus"
-  }]
-}
-```
-
-Step 2 — Enrich (if search returns match):
-`POST https://api.zoominfo.com/enrich/contact`
-```json
-{
-  "matchInput": [{ "email": "resolved-work-email@company.com" }]
-}
-```
-
-**Rate limiting:** ZoomInfo has per-minute rate limits. Process records sequentially with a 200ms delay between calls. For lists > 100 rows, add a queue with concurrency: 3.
-
-**Merge logic:** ZoomInfo data wins over AI data for structured fields (employeeCount, state) because it's more accurate. AI data wins for LinkedIn URLs because ZoomInfo's are often stale.
-
-### `POST /api/enrich/commonroom`
-
-Common Room is best used for **contact identity resolution** — it often has LinkedIn profiles, job titles, and community activity for security practitioners.
-
-**Search by name + company:**
-```typescript
-// Use Common Room MCP or REST API
-// Query their contact database for matching individuals
-// Return: linkedInUrl, currentTitle, currentCompany, email
-```
-
-**Note:** Common Room data supplements ZoomInfo — use it as a fallback for contacts ZoomInfo couldn't match, and to verify/find LinkedIn URLs.
-
-### Merge Priority (per field)
-
-| Field | Priority Order |
-|-------|---------------|
-| resolvedName / resolvedCompany | AI → ZoomInfo |
-| domain / website | ZoomInfo → AI |
-| state | ZoomInfo → AI |
-| numberOfEmployees | ZoomInfo → AI |
-| linkedinUrl (company) | ZoomInfo → AI |
-| linkedinUrl (contact) | Common Room → AI → ZoomInfo |
-| resolvedEmail | ZoomInfo → AI |
-| confidenceScore | Upgrade to 'high' if ZoomInfo matched |
-
-### Environment Variables
-```
-ZOOMINFO_USERNAME=your-email@realm.security
 ZOOMINFO_CLIENT_ID=...
 ZOOMINFO_CLIENT_SECRET=...
+COMMON_ROOM_API_KEY=...   # optional; Common Room returns {} if missing
 ```
 
 ---
@@ -626,11 +581,12 @@ Push approved records to HubSpot with deduplication, then create a static list c
 ### Routes
 
 ```
-src/app/api/
-  hubspot/
-    push/route.ts           → POST: push records to HubSpot
-    list/route.ts           → POST: create static list + add record IDs
+src/app/api/hubspot/
+  push/route.ts             → POST: NDJSON progress + push; creates static list in-handler (see push-handler.ts)
+  folders/route.ts          → GET: HubSpot list folders for PrePushScreen
 ```
+
+There is **no** standalone `hubspot/list/route.ts` — list creation and membership add run inside the push flow (`src/lib/hubspot/push-handler.ts`, `lists.ts`).
 
 ### `POST /api/hubspot/push`
 
@@ -703,9 +659,9 @@ notes_last_contacted (→ "notes")
 }
 ```
 
-### `POST /api/hubspot/list`
+### Static list (no separate route)
 
-After push succeeds, automatically create a static list:
+After the push handler finishes upserts, it creates a static list (same HubSpot API sequence below). The app exposes **`POST /api/hubspot/push` only** — there is no `POST /api/hubspot/list`.
 
 **Step 1 — Create list:**
 ```
@@ -749,40 +705,47 @@ HUBSPOT_ACCESS_TOKEN=pat-na1-...
 
 ## 9. API Reference Summary {#api-reference}
 
-### ZoomInfo
+### ZoomInfo (external)
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `https://api.zoominfo.com/authenticate` | POST | Get JWT token |
-| `https://api.zoominfo.com/search/company` | POST | Search companies by name |
-| `https://api.zoominfo.com/enrich/company` | POST | Enrich company by domain |
-| `https://api.zoominfo.com/search/contact` | POST | Search contacts by name + company |
-| `https://api.zoominfo.com/enrich/contact` | POST | Enrich contact by email |
+| `https://api.zoominfo.com/gtm/oauth/v1/token` | POST | OAuth client credentials → `access_token` |
+| `https://api.zoominfo.com/gtm/data/v1/companies/search` | POST | JSON:API company search |
+| `https://api.zoominfo.com/gtm/data/v1/companies/enrich` | POST | JSON:API company enrich |
+| `https://api.zoominfo.com/gtm/data/v1/contacts/search` | POST | JSON:API contact search |
+| `https://api.zoominfo.com/gtm/data/v1/contacts/enrich` | POST | JSON:API contact enrich |
 
-### HubSpot
+### HubSpot (external — used via `src/lib/hubspot/http.ts`)
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/crm/v3/objects/companies/search` | POST | Find existing company |
-| `/crm/v3/objects/companies` | POST | Create company |
-| `/crm/v3/objects/companies/{id}` | PATCH | Update company |
-| `/crm/v3/objects/contacts/search` | POST | Find existing contact |
-| `/crm/v3/objects/contacts` | POST | Create contact |
-| `/crm/v3/objects/contacts/{id}` | PATCH | Update contact |
+| Path | Method | Purpose |
+|------|--------|---------|
+| `/crm/v3/objects/companies/search` | POST | Find company |
+| `/crm/v3/objects/companies` | POST / PATCH | Create / update |
+| `/crm/v3/objects/contacts/search` | POST | Find contact |
+| `/crm/v3/objects/contacts` | POST / PATCH | Create / update |
 | `/crm/v3/lists` | POST | Create static list |
-| `/crm/v3/lists/{listId}/memberships/add` | PUT | Add records to list |
+| List memberships | POST | Add records (see `lists.ts`) |
 
 ### Anthropic
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/v1/messages` | POST | AI enrichment (Claude Sonnet; prompts built in `ai-enricher.ts`) |
+| Messages API | POST | AI enrichment (`ai-enricher.ts`, model constant e.g. Sonnet-class) |
 
-### This app (Next.js API routes)
+### This app — Next.js API routes (`src/app/api`)
 
 | Route | Method | Purpose |
 |-------|--------|---------|
-| `/api/enrich/ai` | POST | Streams NDJSON progress + enriched rows. **Context validation:** `eventName`, `eventDate`, `audienceLevel` required; **`region` optional** (empty OK). |
+| `/api/parse` | POST | Multipart file → `ParseResponse` (list type, rows, warnings, optional `multiEvent`) |
+| `/api/enrich/ai` | POST | Batched JSON **or** streaming NDJSON AI enrichment; context validation per §5 |
+| `/api/enrich/zoominfo` | POST | NDJSON verification: companies (ZoomInfo) or contacts (CR + prospector + ZoomInfo) |
+| `/api/enrich/prospector` | POST | Prospector hints (called from zoominfo handler server-side) |
+| `/api/enrich/linkedin-search` | POST | Last-resort web search for LinkedIn URL (contact) |
+| `/api/hubspot/push` | POST | NDJSON HubSpot push + static list |
+| `/api/hubspot/folders` | GET | List folders for import UI |
+| `/api/zoominfo-lookup` | GET | Dev/diagnostic ZoomInfo lookup enrich probe (requires auth) |
+
+**Client-only enrichment order** is enforced in **`src/app/page.tsx`**: AI batches → `zoominfo` → `linkedin-search` (contacts, missing LinkedIn only).
 
 ---
 
@@ -794,14 +757,20 @@ Create `.env.local` in project root:
 # Anthropic (for AI enrichment)
 ANTHROPIC_API_KEY=sk-ant-...
 
-# ZoomInfo
-ZOOMINFO_USERNAME=your-email@realm.security
+# ZoomInfo GTM Data API (OAuth client credentials)
 ZOOMINFO_CLIENT_ID=...
 ZOOMINFO_CLIENT_SECRET=...
 
+# Common Room (optional — contacts; enrichment no-ops if unset)
+COMMON_ROOM_API_KEY=...
+
 # HubSpot
 HUBSPOT_ACCESS_TOKEN=pat-na1-...
-HUBSPOT_PORTAL_ID=...     # Your HubSpot account ID (from the URL: app.hubspot.com/contacts/XXXXXXX)
+HUBSPOT_PORTAL_ID=...     # Used for success links — from app.hubspot.com URL
+
+# Vercel KV (optional — AI / enrichment caching when deployed with @vercel/kv)
+KV_REST_API_URL=...
+KV_REST_API_TOKEN=...
 ```
 
 **NEVER commit `.env.local` to git.** Ensure `.gitignore` includes it (Next.js default does).
@@ -816,58 +785,45 @@ Tyler creates his own `.env.local` with his own credentials when he sets up the 
 realm-enrichment-tool/
 ├── src/
 │   ├── app/
-│   │   ├── page.tsx                          # Main app — single page, step-based UI
-│   │   ├── layout.tsx                        # Root layout
+│   │   ├── page.tsx                    # Main single-page flow (upload → context → enrich → verify UI → review → prepush → push → done)
+│   │   ├── layout.tsx
 │   │   └── api/
-│   │       ├── parse/
-│   │       │   └── route.ts                  # CSV/Excel parsing
-│   │       └── enrich/
-│   │           ├── ai/route.ts               # Claude AI enrichment
-│   │           ├── zoominfo/route.ts         # ZoomInfo enrichment
-│   │           ├── commonroom/route.ts       # Common Room enrichment
-│   │           └── merge/route.ts            # Merge all sources
-│   │       └── hubspot/
-│   │           ├── push/route.ts             # Push records to HubSpot
-│   │           └── list/route.ts             # Create static list
+│   │       ├── parse/route.ts
+│   │       ├── enrich/
+│   │       │   ├── ai/route.ts
+│   │       │   ├── zoominfo/route.ts   # Verification: CR + prospector + ZoomInfo (contacts); ZoomInfo (companies)
+│   │       │   ├── prospector/route.ts
+│   │       │   └── linkedin-search/route.ts
+│   │       ├── hubspot/
+│   │       │   ├── push/route.ts
+│   │       │   └── folders/route.ts
+│   │       └── zoominfo-lookup/route.ts   # Optional GET probe for ZoomInfo lookup API
 │   ├── components/
-│   │   ├── UploadZone.tsx                    # Drag-and-drop file upload
-│   │   ├── EventContextForm.tsx              # Event context form (Step 2)
-│   │   ├── EnrichmentProgress.tsx            # Live progress bar during enrichment
-│   │   ├── ReviewTable.tsx                   # Main review/edit table (Step 4)
-│   │   ├── CompanyRow.tsx                    # Individual company row in table
-│   │   ├── ContactRow.tsx                    # Individual contact row in table
-│   │   ├── ConfidenceBadge.tsx              # Color-coded confidence indicator
-│   │   ├── ReasoningTooltip.tsx             # AI reasoning popover
-│   │   └── SuccessScreen.tsx                # Post-push summary
+│   │   ├── EventContextForm.tsx
+│   │   ├── EnrichmentProgress.tsx    # Verifying step: detail above bar; bar uses endRow/totalRows
+│   │   ├── ReviewTable.tsx           # Company + contact tables, inline edit, sort rules
+│   │   ├── PrePushScreen.tsx
+│   │   ├── ConfidenceBadge.tsx
+│   │   ├── ReasoningTooltip.tsx
+│   │   └── SuccessScreen.tsx
 │   ├── lib/
-│   │   ├── parsers/
-│   │   │   ├── csv-parser.ts                # CSV parsing with papaparse
-│   │   │   ├── excel-parser.ts              # Excel parsing with xlsx
-│   │   │   └── column-mapper.ts             # Map raw columns to typed rows
+│   │   ├── parsers/                  # csv-parser, excel-parser, column-mapper
 │   │   ├── enrichment/
-│   │   │   ├── ai-enricher.ts               # Claude API enrichment logic
-│   │   │   ├── zoominfo-enricher.ts         # ZoomInfo API calls
-│   │   │   ├── commonroom-enricher.ts       # Common Room API calls
-│   │   │   └── merger.ts                    # Merge enrichment results
-│   │   ├── hubspot/
-│   │   │   ├── companies.ts                 # Company create/update/search
-│   │   │   ├── contacts.ts                  # Contact create/update/search
-│   │   │   └── lists.ts                     # Static list creation
-│   │   ├── zoominfo/
-│   │   │   └── auth.ts                      # ZoomInfo JWT auth + token cache
-│   │   └── utils/
-│   │       ├── email-detector.ts            # Detect personal vs work emails
-│   │       ├── deduplication.ts             # Find duplicate rows in input
-│   │       └── types.ts                     # All shared TypeScript interfaces
-│   └── styles/
-│       └── globals.css
-├── .env.local                                # NEVER commit
-├── .env.example                              # Safe to commit — shows required keys without values
-├── .gitignore
+│   │   │   ├── ai-enricher.ts
+│   │   │   ├── zoominfo-enricher.ts
+│   │   │   ├── commonroom-enricher.ts
+│   │   │   └── merger.ts
+│   │   ├── cache/enrichment-cache.ts # Vercel KV optional
+│   │   ├── hubspot/                  # companies, contacts, lists, http, push-handler, push-result, list-folders
+│   │   ├── zoominfo/auth.ts
+│   │   └── utils/types.ts, states.ts, …
+│   └── styles/globals.css
+├── SPEC.md
 ├── package.json
-├── tsconfig.json
-└── README.md
+└── …
 ```
+
+**Note:** There is no `UploadZone.tsx`, `CompanyRow.tsx`, or `ContactRow.tsx` in the current tree — upload UI and tables live in **`page.tsx`** / **`ReviewTable.tsx`**.
 
 ---
 

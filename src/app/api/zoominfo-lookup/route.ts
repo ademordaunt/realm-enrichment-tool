@@ -8,7 +8,7 @@ export async function GET() {
     const url =
       "https://api.zoominfo.com/gtm/data/v1/lookup/enrich?" +
       new URLSearchParams({
-        "filter[entity]": "company",
+        "filter[entity]": "contact",
         "filter[fieldType]": "output",
       }).toString();
 

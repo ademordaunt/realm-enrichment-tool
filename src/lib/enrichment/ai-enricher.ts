@@ -24,6 +24,10 @@ export function needsLinkedInLookup(contact: EnrichedContact): boolean {
   return !String(contact.linkedinUrl ?? "").trim();
 }
 
+export function needsCompanyLinkedInLookup(company: EnrichedCompany): boolean {
+  return !String(company.linkedinUrl ?? "").trim();
+}
+
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) {

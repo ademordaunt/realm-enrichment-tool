@@ -77,6 +77,12 @@ export interface EnrichedContact {
   status: "pending" | "approved" | "skipped" | "error";
   hubspotId?: string;
   hubspotAction?: "create" | "update";
+  /** ZoomInfo → HubSpot only (push); not shown in review UI. */
+  ziManagementLevel?: string;
+  ziJobFunction?: string;
+  ziCompanyEmployeeCount?: string;
+  ziCompanyPrimaryIndustry?: string;
+  ziCompanyWebsite?: string;
 }
 
 /** Event context passed to AI enrichment (lead source is set at pre-push import). */
