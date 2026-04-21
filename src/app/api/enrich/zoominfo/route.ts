@@ -1,5 +1,6 @@
 import { enrichContactWithCommonRoom } from "@/lib/enrichment/commonroom-enricher";
 import { mergeEnrichedCompany, mergeEnrichedContact } from "@/lib/enrichment/merger";
+import { checkKvConnectivity, getCachedContact } from "@/lib/cache/enrichment-cache";
 import {
   delayBetweenZoomInfoCalls,
   enrichCompanyWithZoomInfo,
@@ -8,38 +9,48 @@ import {
 import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
 
 export const maxDuration = 9;
+void checkKvConnectivity();
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-export async function POST(request: Request) {
+function badRequest(detail: string) {
+  return Response.json({ error: "Bad request", detail }, { status: 400 });
+}
+
+export async function POST(request: Request): Promise<Response> {
+  try {
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return Response.json({ error: "Invalid JSON body." }, { status: 400 });
+    return badRequest("Invalid JSON body.");
   }
 
   if (!isRecord(body)) {
-    return Response.json({ error: "Expected a JSON object." }, { status: 400 });
+    return badRequest("Expected a JSON object.");
   }
 
   const { rows, listType } = body;
 
   if (!Array.isArray(rows) || rows.length === 0) {
-    return Response.json(
-      { error: "Expected non-empty `rows` array of enriched records." },
-      { status: 400 },
-    );
+    return badRequest("Expected non-empty `rows` array of enriched records.");
   }
 
   if (listType !== "companies" && listType !== "contacts") {
-    return Response.json(
-      { error: "`listType` must be \"companies\" or \"contacts\"." },
-      { status: 400 },
-    );
+    return badRequest('`listType` must be "companies" or "contacts".');
   }
+
+  const chunkIndex =
+    typeof body.chunkIndex === "number" && body.chunkIndex >= 0
+      ? body.chunkIndex
+      : 0;
+  const chunkSize =
+    typeof body.chunkSize === "number" && body.chunkSize > 0
+      ? body.chunkSize
+      : rows.length;
+  const chunkRowOffset = chunkIndex * chunkSize;
 
   const encoder = new TextEncoder();
 
@@ -47,16 +58,29 @@ export async function POST(request: Request) {
     async start(controller) {
       try {
         const allRows = rows as (EnrichedCompany | EnrichedContact)[];
-        const total = allRows.length;
+        const totalRows =
+          typeof body.totalRows === "number" && body.totalRows > 0
+            ? body.totalRows
+            : allRows.length;
+        const nonHighTotalFromBody =
+          typeof body.nonHighTotal === "number" && Number.isFinite(body.nonHighTotal)
+            ? body.nonHighTotal
+            : null;
         const nonHighTotal =
-          listType === "companies"
+          nonHighTotalFromBody ??
+          (listType === "companies"
             ? allRows.filter((r) => r.confidenceScore !== "high").length
             : allRows.filter((r) => {
                 if (r.confidenceScore !== "high") return true;
                 const c = r as EnrichedContact;
                 return !c.linkedinUrl?.trim();
-              }).length;
-        let nonHighIndex = 0;
+              }).length);
+        const nonHighPrefixCount =
+          typeof body.nonHighPrefixCount === "number" &&
+          body.nonHighPrefixCount >= 0
+            ? body.nonHighPrefixCount
+            : 0;
+        let nonHighIndex = nonHighPrefixCount;
 
         const mergedRows: (EnrichedCompany | EnrichedContact)[] = [];
         let enrichedCount = 0;
@@ -65,34 +89,49 @@ export async function POST(request: Request) {
           request.url,
         ).href;
 
-        const emitProgress = (i: number, detail?: string) => {
+        const emitProgress = (globalRowIndex: number, detail?: string) => {
           controller.enqueue(
             encoder.encode(
               `${JSON.stringify({
                 type: "progress",
-                start: i + 1,
-                end: i + 1,
-                total,
+                start: globalRowIndex + 1,
+                end: globalRowIndex + 1,
+                total: totalRows,
                 detail: detail ?? undefined,
               })}\n`,
             ),
           );
         };
 
-        for (let i = 0; i < allRows.length; i++) {
-          const row = allRows[i]!;
+        const isLastChunk = chunkRowOffset + allRows.length >= totalRows;
+
+        for (let localI = 0; localI < allRows.length; localI++) {
+          const globalI = chunkRowOffset + localI;
+          const row = allRows[localI]!;
 
           if (listType === "companies" && row.confidenceScore === "high") {
             mergedRows.push(row);
-            emitProgress(i);
+            emitProgress(globalI);
             continue;
           }
 
           if (listType === "contacts") {
             const c = row as EnrichedContact;
+            const cacheEmail = c.rawEmail?.trim() ?? "";
+            if (cacheEmail) {
+              const cached = await getCachedContact(cacheEmail);
+              if (cached?.enrichedByZoomInfo) {
+                mergedRows.push({
+                  ...cached,
+                  id: c.id,
+                });
+                emitProgress(globalI);
+                continue;
+              }
+            }
             if (c.confidenceScore === "high" && c.linkedinUrl?.trim()) {
               mergedRows.push(row);
-              emitProgress(i);
+              emitProgress(globalI);
               continue;
             }
           }
@@ -101,7 +140,7 @@ export async function POST(request: Request) {
 
           if (listType === "companies") {
             emitProgress(
-              i,
+              globalI,
               `ZoomInfo enriching ${nonHighIndex} of ${nonHighTotal} companies…`,
             );
             const zi = await enrichCompanyWithZoomInfo(row as EnrichedCompany);
@@ -117,7 +156,7 @@ export async function POST(request: Request) {
               contact.confidenceScore === "high" && !contact.linkedinUrl?.trim();
 
             emitProgress(
-              i,
+              globalI,
               `ZoomInfo & Common Room enriching ${nonHighIndex} of ${nonHighTotal} contacts…`,
             );
             const crResult = await enrichContactWithCommonRoom(contact);
@@ -181,7 +220,7 @@ export async function POST(request: Request) {
             let ziResult: Partial<EnrichedContact> = {};
             if (stillNeedsEnrichment) {
               emitProgress(
-                i,
+                globalI,
                 `ZoomInfo & Common Room enriching ${nonHighIndex} of ${nonHighTotal} contacts…`,
               );
               ziResult = await enrichContactWithZoomInfo(contact);
@@ -215,21 +254,23 @@ export async function POST(request: Request) {
             }
           }
 
-          if (i < allRows.length - 1) {
+          if (localI < allRows.length - 1) {
             await delayBetweenZoomInfoCalls(200);
           }
         }
 
-        controller.enqueue(
-          encoder.encode(
-            `${JSON.stringify({
-              type: "progress",
-              start: 1,
-              end: total,
-              total,
-            })}\n`,
-          ),
-        );
+        if (isLastChunk) {
+          controller.enqueue(
+            encoder.encode(
+              `${JSON.stringify({
+                type: "progress",
+                start: 1,
+                end: totalRows,
+                total: totalRows,
+              })}\n`,
+            ),
+          );
+        }
 
         controller.enqueue(
           encoder.encode(
@@ -269,4 +310,10 @@ export async function POST(request: Request) {
       "Cache-Control": "no-store",
     },
   });
+  } catch (err) {
+    return Response.json(
+      { error: "Internal server error", detail: String(err) },
+      { status: 500 },
+    );
+  }
 }

@@ -156,7 +156,10 @@ async function handleCompanyLinkedInSearch(
   const linkedInUrl = text ? parseLinkedInCompanyUrl(text) : null;
 
   if (linkedInUrl) {
-    console.log("[LinkedIn Search] Found company URL for", name, domain, "→", linkedInUrl);
+    console.log(
+      "[LinkedIn Search] company URL resolved | status ok | cache write:",
+      cacheKey !== "linkedin:company:|",
+    );
     if (cacheKey !== "linkedin:company:|") {
       try {
         await kv.set(cacheKey, linkedInUrl, { ex: 60 * 60 * 24 * 30 });
@@ -170,6 +173,7 @@ async function handleCompanyLinkedInSearch(
 }
 
 export async function POST(request: Request): Promise<Response> {
+  try {
   let body: unknown;
   try {
     body = await request.json();
@@ -271,11 +275,8 @@ export async function POST(request: Request): Promise<Response> {
 
   if (linkedInUrl) {
     console.log(
-      "[LinkedIn Search] Found URL for",
-      firstName,
-      lastName,
-      "→",
-      linkedInUrl,
+      "[LinkedIn Search] contact URL resolved | will cache:",
+      Boolean(emailKey),
     );
     if (emailKey) {
       try {
@@ -287,4 +288,10 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   return Response.json({ linkedInUrl });
+  } catch (err) {
+    return Response.json(
+      { error: "Internal server error", detail: String(err) },
+      { status: 500 },
+    );
+  }
 }

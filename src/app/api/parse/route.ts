@@ -10,7 +10,11 @@ import type { ListType, ParseResponse } from "@/lib/utils/types";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
-export async function POST(request: Request) {
+function badRequest(detail: string) {
+  return NextResponse.json({ error: "Bad request", detail }, { status: 400 });
+}
+
+export async function POST(request: Request): Promise<Response> {
   try {
     const formData = await request.formData();
     const file = formData.get("file");
@@ -21,17 +25,11 @@ export async function POST(request: Request) {
         : undefined;
 
     if (!(file instanceof File)) {
-      return NextResponse.json(
-        { error: 'Expected multipart field "file" with a file upload.' },
-        { status: 400 },
-      );
+      return badRequest('Expected multipart field "file" with a file upload.');
     }
 
     if (file.size > MAX_BYTES) {
-      return NextResponse.json(
-        { error: "File must be 5 MB or smaller." },
-        { status: 400 },
-      );
+      return badRequest("File must be 5 MB or smaller.");
     }
 
     const lowerName = file.name.toLowerCase();
@@ -40,12 +38,8 @@ export async function POST(request: Request) {
       !lowerName.endsWith(".xlsx") &&
       !lowerName.endsWith(".xls")
     ) {
-      return NextResponse.json(
-        {
-          error:
-            "Unsupported file type. Please upload a .csv, .xlsx, or .xls file.",
-        },
-        { status: 400 },
+      return badRequest(
+        "Unsupported file type. Please upload a .csv, .xlsx, or .xls file.",
       );
     }
 
@@ -55,10 +49,7 @@ export async function POST(request: Request) {
       : parseExcelToMatrix(buffer);
 
     if (matrix.length === 0) {
-      return NextResponse.json(
-        { error: "That file did not contain any rows." },
-        { status: 400 },
-      );
+      return badRequest("That file did not contain any rows.");
     }
 
     const parsedSegments = splitIntoSegments(matrix);
@@ -71,22 +62,15 @@ export async function POST(request: Request) {
       mappedSegments[primaryIndex >= 0 ? primaryIndex : 0] ?? mappedSegments[0];
 
     if (!primary || primary.rows.length === 0) {
-      return NextResponse.json(
-        { error: "No data rows were found below the header row." },
-        { status: 400 },
-      );
+      return badRequest("No data rows were found below the header row.");
     }
 
     if (
       primary.listType === "companies" &&
       !primary.headers?.includes("company")
     ) {
-      return NextResponse.json(
-        {
-          error:
-            "Company list is missing a Company column (for example \"Company:\").",
-        },
-        { status: 400 },
+      return badRequest(
+        'Company list is missing a Company column (for example "Company:").',
       );
     }
 
@@ -139,8 +123,9 @@ export async function POST(request: Request) {
     return NextResponse.json(body);
   } catch (err) {
     console.error(err);
-    const message =
-      err instanceof Error ? err.message : "Unexpected error while parsing.";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error", detail: String(err) },
+      { status: 500 },
+    );
   }
 }

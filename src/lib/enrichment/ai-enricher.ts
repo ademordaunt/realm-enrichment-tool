@@ -464,9 +464,7 @@ async function enrichSingleContact(
   const existingLinkedIn = row.linkedinUrl?.trim() || row.linkedInUrl?.trim() || "";
 
   if (isFullyPopulatedContactRow(row)) {
-    console.log(
-      `[AI Enricher] Skipping fully populated contact: ${firstName} ${lastName}`,
-    );
+    console.log("[AI Enricher] Skipping fully populated contact row (AI prompt not needed)");
     if (existingLinkedIn) {
       return mapPresetContactRow(row, existingLinkedIn, false);
     }
@@ -573,9 +571,10 @@ async function resolveCompanyBatchFromKv(batch: RawCompanyRow[]): Promise<{
   const enrichPositions: number[] = [];
   for (let i = 0; i < batch.length; i++) {
     const row = batch[i]!;
-    const cached = await getCachedCompany(row.rawName);
+    const cacheKeyName = row.resolvedName ?? row.rawName;
+    const cached = await getCachedCompany(cacheKeyName);
     if (cached) {
-      console.log(`[Cache] HIT for company: ${row.rawName}`);
+      console.log("[Cache] HIT for company at batch index", i);
       const rowId = (row as { id?: string }).id;
       partial[i] = {
         ...cached,
@@ -604,7 +603,8 @@ async function fillCompanyBatchFromAi(
   for (let j = 0; j < toEnrich.length; j++) {
     const row = toEnrich[j]!;
     const enrichedRow = aiPart[j]!;
-    await setCachedCompany(row.rawName, enrichedRow);
+    const cacheKeyName = row.resolvedName ?? row.rawName;
+    await setCachedCompany(cacheKeyName, enrichedRow);
     partial[enrichPositions[j]!] = enrichedRow;
   }
   return partial.map((r) => r!);
@@ -638,10 +638,9 @@ async function resolveContactBatchFromKv(batch: RawContactRow[]): Promise<{
   for (let i = 0; i < batch.length; i++) {
     const row = batch[i]!;
     if (isFullyPopulatedContactRow(row)) {
-      const firstName = row.firstName?.trim() ?? "";
-      const lastName = row.lastName?.trim() ?? "";
       console.log(
-        `[AI Enricher] Skipping fully populated contact: ${firstName} ${lastName}`,
+        "[AI Enricher] Skipping fully populated contact at batch index",
+        i,
       );
       const existingLinkedIn =
         row.linkedinUrl?.trim() || row.linkedInUrl?.trim() || "";
@@ -656,7 +655,7 @@ async function resolveContactBatchFromKv(batch: RawContactRow[]): Promise<{
     }
     const cached = await getCachedContact(email);
     if (cached) {
-      console.log(`[Cache] HIT for contact: ${email}`);
+      console.log("[Cache] HIT for contact at batch index", i);
       const rowId = (row as { id?: string }).id;
       partial[i] = {
         ...cached,

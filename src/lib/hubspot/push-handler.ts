@@ -62,7 +62,9 @@ async function createStaticListForPush(
 /**
  * Validates the push request body and returns an NDJSON stream response, or a JSON error response.
  */
-export async function handleHubSpotPushRequest(request: Request): Promise<Response> {
+export async function handleHubSpotPushRequest(
+  request: Request,
+): Promise<Response> {
   try {
     getHubSpotAccessToken();
   } catch {

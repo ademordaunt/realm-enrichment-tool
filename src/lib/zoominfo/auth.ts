@@ -11,11 +11,6 @@ export async function getZoomInfoToken(): Promise<string> {
     return cachedAccessToken;
   }
 
-  console.log("[ZoomInfo auth] env check:", {
-    hasClientId: !!process.env.ZOOMINFO_CLIENT_ID,
-    hasClientSecret: !!process.env.ZOOMINFO_CLIENT_SECRET,
-  });
-
   const clientId = process.env.ZOOMINFO_CLIENT_ID?.trim();
   const clientSecret = process.env.ZOOMINFO_CLIENT_SECRET?.trim();
   if (!clientId || !clientSecret) {

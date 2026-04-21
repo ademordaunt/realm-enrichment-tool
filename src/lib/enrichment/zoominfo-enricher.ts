@@ -1,4 +1,8 @@
-import { getCachedCompany, setCachedCompany } from "@/lib/cache/enrichment-cache";
+import {
+  getCachedCompany,
+  setCachedCompany,
+  setCachedContact,
+} from "@/lib/cache/enrichment-cache";
 import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
 import { getZoomInfoToken, invalidateZoomInfoToken } from "@/lib/zoominfo/auth";
 
@@ -30,6 +34,15 @@ function normalizeDomain(website: string): string {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function isUrlObject(u: unknown): u is { url: string } {
+  return (
+    typeof u === "object" &&
+    u !== null &&
+    "url" in u &&
+    typeof (u as Record<string, unknown>).url === "string"
+  );
 }
 
 /** Extract first company hit from ZoomInfo search (supports common response shapes). */
@@ -71,7 +84,12 @@ async function zoomInfoFetch(
   allowRetry: boolean,
 ): Promise<Response> {
   if (typeof init.body === "string") {
-    console.log("[ZoomInfo] request body:", JSON.stringify(JSON.parse(init.body), null, 2));
+    console.log(
+      "[ZoomInfo] outgoing request body length (chars):",
+      init.body.length,
+    );
+  } else if (init.body != null) {
+    console.log("[ZoomInfo] outgoing request body: non-string body");
   }
   let token = await getZoomInfoToken();
   let res = await fetch(url, {
@@ -117,7 +135,7 @@ function linkedInUrlFromSocialMediaUrls(attrs: Record<string, unknown>): string 
   const social = attrs.socialMediaUrls;
   if (!Array.isArray(social)) return null;
   for (const s of social) {
-    if (isRecord(s) && typeof s.url === "string" && s.url.includes("linkedin.com")) {
+    if (isUrlObject(s) && s.url.includes("linkedin.com")) {
       return s.url.trim();
     }
   }
@@ -136,7 +154,7 @@ export async function enrichCompanyWithZoomInfo(
     originalConfidence: company.confidenceScore,
   });
 
-  const cacheKeyName = company.rawInput;
+  const cacheKeyName = company.resolvedName ?? company.rawInput;
   const cached = await getCachedCompany(cacheKeyName);
   // Same KV key as AI cache — only skip ZoomInfo when this row was ZoomInfo-merged before.
   if (cached?.enrichedByZoomInfo) {
@@ -199,7 +217,10 @@ export async function enrichCompanyWithZoomInfo(
   console.log("[ZoomInfo] search response status:", res.status);
   if (res.status === 400) {
     const errorBody = await res.text();
-    console.log("[ZoomInfo] 400 error body:", errorBody);
+    console.log(
+      "[ZoomInfo] company search 400 | response chars:",
+      errorBody.length,
+    );
     return ziMeta({});
   }
   if (!res.ok) {
@@ -216,19 +237,18 @@ export async function enrichCompanyWithZoomInfo(
       : typeof rawCompanyId === "number"
         ? String(rawCompanyId)
         : null;
-  const matchedAttrs =
-    firstResource && isRecord(firstResource.attributes) ? firstResource.attributes : {};
-  const matchedName =
-    typeof matchedAttrs.name === "string" ? matchedAttrs.name : null;
-  console.log("[ZoomInfo Search] matched:", matchedName, "id:", companyId);
-
-  const firstSearchResult =
-    firstResource && isRecord(firstResource.attributes) ? firstResource.attributes : {};
   console.log(
-    "[ZoomInfo] match found:",
-    searchResults.length > 0
-      ? `YES - ${String((firstSearchResult as { name?: unknown }).name ?? "")}`
-      : "NO",
+    "[ZoomInfo Search] company | row id:",
+    company.id,
+    "| matchedZoomId:",
+    companyId ?? "none",
+  );
+
+  console.log(
+    "[ZoomInfo] company search | result count:",
+    searchResults.length,
+    "| hasResource:",
+    searchResults.length > 0,
   );
   const hit = firstCompanySearchHit(searchJson);
   if (!hasCompanySearchMatch(searchJson, hit)) {
@@ -268,7 +288,10 @@ export async function enrichCompanyWithZoomInfo(
   console.log("[ZoomInfo] enrich response status:", res.status);
   if (res.status === 400) {
     const errorBody = await res.text();
-    console.log("[ZoomInfo] 400 error body:", errorBody);
+    console.log(
+      "[ZoomInfo] company enrich 400 | response chars:",
+      errorBody.length,
+    );
     return ziMeta({});
   }
   if (!res.ok) {
@@ -311,15 +334,15 @@ export async function enrichCompanyWithZoomInfo(
     typeof attrs.description === "string" ? attrs.description.trim() || null : null;
   const city = typeof attrs.city === "string" ? attrs.city.trim() || null : null;
 
-  console.log("[ZoomInfo Enrich] result for", company.rawInput, "→", {
+  console.log("[ZoomInfo Enrich] company | row id:", company.id, {
     found: Boolean(attrs.id ?? firstEnrich?.id),
-    linkedIn: linkedInUrl,
+    linkedInFound: Boolean(linkedInUrl),
     employees: employeeCount,
-    state,
+    hasState: Boolean(state),
     revenue,
-    industry,
-    description,
-    city,
+    hasIndustry: Boolean(industry),
+    hasDescription: Boolean(description),
+    hasCity: Boolean(city),
   });
 
   if (!attrs.id && !firstEnrich?.id) {
@@ -381,7 +404,6 @@ export async function enrichContactWithZoomInfo(
   const isHighConfidence = contact.confidenceScore === "high";
 
   let personId: string | null = null;
-  let matchedName: string | null = null;
 
   if (!hasWorkEmail) {
     const searchBody = {
@@ -398,7 +420,7 @@ export async function enrichContactWithZoomInfo(
       },
     };
 
-    let res = await zoomInfoFetch(
+    const res = await zoomInfoFetch(
       SEARCH_CONTACT_URL,
       { method: "POST", body: JSON.stringify(searchBody) },
       true,
@@ -406,7 +428,10 @@ export async function enrichContactWithZoomInfo(
     console.log("[ZoomInfo] contact search response status:", res.status);
     if (res.status === 400) {
       const errorBody = await res.text();
-      console.log("[ZoomInfo] 400 error body:", errorBody);
+      console.log(
+        "[ZoomInfo] contact search 400 | response chars:",
+        errorBody.length,
+      );
       return ziMeta({});
     }
     if (!res.ok) {
@@ -423,20 +448,20 @@ export async function enrichContactWithZoomInfo(
         : typeof rawPid === "number"
           ? String(rawPid)
           : null;
-    const sa =
-      firstResource && isRecord(firstResource.attributes) ? firstResource.attributes : {};
-    const fn = typeof sa.firstName === "string" ? sa.firstName.trim() : "";
-    const ln = typeof sa.lastName === "string" ? sa.lastName.trim() : "";
-    matchedName = [fn, ln].filter(Boolean).join(" ") || null;
-    console.log("[ZoomInfo Contact Search] matched:", matchedName, "id:", personId);
+    console.log(
+      "[ZoomInfo Contact Search] row id:",
+      contact.id,
+      "| matchedZoomPersonId:",
+      personId ?? "none",
+    );
 
     if (!personId) {
       return ziMeta({});
     }
   } else {
     console.log(
-      "[ZoomInfo Contact Search] skipped search (work email); enrich by email, id:",
-      "—",
+      "[ZoomInfo Contact Search] skipped name search (work email path) | row id:",
+      contact.id,
     );
   }
 
@@ -487,7 +512,10 @@ export async function enrichContactWithZoomInfo(
   console.log("[ZoomInfo] contact enrich response status:", res.status);
   if (res.status === 400) {
     const errorBody = await res.text();
-    console.log("[ZoomInfo] 400 error body:", errorBody);
+    console.log(
+      "[ZoomInfo] contact enrich 400 | response chars:",
+      errorBody.length,
+    );
     return ziMeta({});
   }
   if (!res.ok) {
@@ -505,7 +533,10 @@ export async function enrichContactWithZoomInfo(
     firstEnrich && isRecord(firstEnrich.attributes) ? firstEnrich.attributes : {};
 
   const linkedinUrl = Array.isArray(attrs.externalUrls)
-    ? attrs.externalUrls.find((u: any) => u.url?.includes("linkedin.com"))?.url ?? null
+    ? (attrs.externalUrls.find(
+        (u: unknown): u is { url: string } =>
+          isUrlObject(u) && u.url.includes("linkedin.com"),
+      )?.url ?? null)
     : null;
 
   const result = {
@@ -519,11 +550,11 @@ export async function enrichContactWithZoomInfo(
     contactAccuracyScore: attrs.contactAccuracyScore ?? null,
   };
 
-  console.log("[ZoomInfo Contact Enrich] result for", contact.firstName, contact.lastName, "→", {
+  console.log("[ZoomInfo Contact Enrich] row id:", contact.id, {
     found: !!attrs.id,
-    title: result.title,
-    linkedIn: result.linkedinUrl,
-    company: result.resolvedCompany,
+    hasTitle: Boolean(result.title),
+    linkedInFound: Boolean(result.linkedinUrl),
+    hasCompany: Boolean(result.resolvedCompany),
     accuracyScore: result.contactAccuracyScore,
   });
 
@@ -617,6 +648,17 @@ export async function enrichContactWithZoomInfo(
   }
 
   out.enrichedByZoomInfo = true;
+
+  const mergedFull: EnrichedContact = {
+    ...contact,
+    ...out,
+    confidenceScore: "high",
+    enrichedByZoomInfo: true,
+  };
+  const cacheEmail = contact.rawEmail?.trim();
+  if (cacheEmail) {
+    await setCachedContact(cacheEmail, mergedFull);
+  }
 
   return ziMeta(out);
 }

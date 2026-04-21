@@ -35,7 +35,16 @@ const NAV_STEPS = [
 ] as const;
 
 const PREVIEW_MAX_ROWS = 50;
+/** Rows per ZoomInfo verify request — aligned with API `maxDuration` and inter-row delay. */
+const ZOOM_VERIFY_CHUNK_SIZE = 15;
 const SESSION_STORAGE_KEY = "realm-enrichment-session-v1";
+
+/** Prefer `detail` from standardized API error JSON; fall back to `error`. */
+function apiJsonErrorMessage(o: { error?: string; detail?: string }): string {
+  if (typeof o.detail === "string" && o.detail.length > 0) return o.detail;
+  if (typeof o.error === "string" && o.error.length > 0) return o.error;
+  return "";
+}
 
 const MONTH_LONG_TO_ABBREV: Record<string, string> = {
   january: "Jan.",
@@ -263,6 +272,40 @@ type ZoomInfoVerifySummary =
   | { kind: "no_matches" }
   | { kind: "credentials" };
 
+function computeZoomVerifyNonHighTotal(
+  allRows: (EnrichedCompany | EnrichedContact)[],
+  listType: "companies" | "contacts",
+): number {
+  if (listType === "companies") {
+    return allRows.filter((r) => r.confidenceScore !== "high").length;
+  }
+  return allRows.filter((r) => {
+    const c = r as EnrichedContact;
+    if (c.confidenceScore !== "high") return true;
+    return !c.linkedinUrl?.trim();
+  }).length;
+}
+
+/** Count of rows before `beforeIndex` that take the ZoomInfo enrich path (same as server `nonHighIndex` steps). */
+function countZoomVerifyNonHighPrefix(
+  allRows: (EnrichedCompany | EnrichedContact)[],
+  listType: "companies" | "contacts",
+  beforeIndex: number,
+): number {
+  let n = 0;
+  const end = Math.min(beforeIndex, allRows.length);
+  for (let j = 0; j < end; j++) {
+    const row = allRows[j]!;
+    if (listType === "companies") {
+      if (row.confidenceScore !== "high") n++;
+    } else {
+      const c = row as EnrichedContact;
+      if (c.confidenceScore !== "high" || !c.linkedinUrl?.trim()) n++;
+    }
+  }
+  return n;
+}
+
 async function consumeEnrichmentNdjson(
   res: Response,
   onProgress: (e: {
@@ -291,7 +334,14 @@ async function consumeEnrichmentNdjson(
   const handleLine = (line: string) => {
     const t = line.trim();
     if (!t) return;
-    const msg = JSON.parse(t) as NdjsonEvent;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      console.error("[NDJSON] Failed to parse line, skipping:", line.slice(0, 120));
+      return;
+    }
+    const msg = parsed as NdjsonEvent;
     if (msg.type === "progress") {
       onProgress({
         start: msg.start,
@@ -367,16 +417,23 @@ async function runLinkedInLookupPass(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ contact: row }),
     });
-    if (res.ok) {
-      const payload = (await res.json()) as { linkedInUrl?: string | null };
-      const linkedInUrl = String(payload.linkedInUrl ?? "").trim();
-      if (linkedInUrl) {
-        out[idx] = {
-          ...row,
-          linkedinUrl: linkedInUrl,
-          enrichedByAI: true,
-        };
-      }
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "unknown error");
+      console.error(
+        `[LinkedIn] fetch failed for row ${idx}: ${res.status} ${errText}`,
+      );
+      done += 1;
+      onProgress(done, total);
+      continue;
+    }
+    const payload = (await res.json()) as { linkedInUrl?: string | null };
+    const linkedInUrl = String(payload.linkedInUrl ?? "").trim();
+    if (linkedInUrl) {
+      out[idx] = {
+        ...row,
+        linkedinUrl: linkedInUrl,
+        enrichedByAI: true,
+      };
     }
     done += 1;
     onProgress(done, total);
@@ -410,16 +467,23 @@ async function runCompanyLinkedInLookupPass(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ company: row }),
     });
-    if (res.ok) {
-      const payload = (await res.json()) as { linkedInUrl?: string | null };
-      const linkedInUrl = String(payload.linkedInUrl ?? "").trim();
-      if (linkedInUrl) {
-        out[idx] = {
-          ...row,
-          linkedinUrl: linkedInUrl,
-          enrichedByAI: true,
-        };
-      }
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "unknown error");
+      console.error(
+        `[LinkedIn] fetch failed for row ${idx}: ${res.status} ${errText}`,
+      );
+      done += 1;
+      onProgress(done, total);
+      continue;
+    }
+    const payload = (await res.json()) as { linkedInUrl?: string | null };
+    const linkedInUrl = String(payload.linkedInUrl ?? "").trim();
+    if (linkedInUrl) {
+      out[idx] = {
+        ...row,
+        linkedinUrl: linkedInUrl,
+        enrichedByAI: true,
+      };
     }
     done += 1;
     onProgress(done, total);
@@ -698,17 +762,22 @@ export default function Home() {
           method: "POST",
           body,
         });
-        const json = (await res.json()) as ParseResponse & { error?: string };
+        const json = (await res.json()) as ParseResponse & {
+          error?: string;
+          detail?: string;
+        };
         if (!res.ok) {
           setResult(null);
           setShowSuccessFlash(false);
-          setError(json.error ?? `Request failed (${res.status})`);
+          setError(
+            apiJsonErrorMessage(json) || `Request failed (${res.status})`,
+          );
           return;
         }
-        if ("error" in json && json.error) {
+        if (apiJsonErrorMessage(json)) {
           setResult(null);
           setShowSuccessFlash(false);
-          setError(json.error);
+          setError(apiJsonErrorMessage(json));
           return;
         }
         setResult(json);
@@ -839,36 +908,85 @@ export default function Home() {
     signal?: AbortSignal,
   ): Promise<EnrichedCompany[] | EnrichedContact[]> => {
     setStep("verifying");
+    const totalRows = aiRows.length;
     setProgress({
       startRow: 1,
       endRow: 1,
-      totalRows: aiRows.length,
+      totalRows,
       detail: null,
     });
-    const res = await fetch("/api/enrich/zoominfo", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rows: aiRows, listType }),
-      signal,
-    });
-    if (!res.ok) {
-      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(errBody.error ?? `Verification failed (${res.status})`);
+    if (totalRows === 0) {
+      setZoomInfoVerifySummary({ kind: "no_matches" });
+      return [];
     }
-    const { rows, enrichedCount, creditsUsed } = await consumeEnrichmentNdjson(res, (p) => {
-      setProgress({
-        startRow: p.start,
-        endRow: p.end,
-        totalRows: p.total,
-        detail: p.detail ?? null,
+
+    const nonHighTotal = computeZoomVerifyNonHighTotal(aiRows, listType);
+    const numChunks = Math.ceil(totalRows / ZOOM_VERIFY_CHUNK_SIZE);
+    let sumEnriched = 0;
+    let sumCredits = 0;
+    const merged: (EnrichedCompany | EnrichedContact)[] = [];
+
+    for (let ci = 0; ci < numChunks; ci++) {
+      const chunkStart = ci * ZOOM_VERIFY_CHUNK_SIZE;
+      const slice = aiRows.slice(
+        chunkStart,
+        chunkStart + ZOOM_VERIFY_CHUNK_SIZE,
+      );
+      const nonHighPrefixCount = countZoomVerifyNonHighPrefix(
+        aiRows,
+        listType,
+        chunkStart,
+      );
+      const res = await fetch("/api/enrich/zoominfo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rows: slice,
+          listType,
+          chunkIndex: ci,
+          chunkSize: ZOOM_VERIFY_CHUNK_SIZE,
+          totalRows,
+          nonHighTotal,
+          nonHighPrefixCount,
+        }),
+        signal,
       });
-    });
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          detail?: string;
+        };
+        throw new Error(
+          apiJsonErrorMessage(errBody) || `Verification failed (${res.status})`,
+        );
+      }
+      const { rows, enrichedCount, creditsUsed } = await consumeEnrichmentNdjson(
+        res,
+        (p) => {
+          setProgress({
+            startRow: p.start,
+            endRow: p.end,
+            totalRows: p.total,
+            detail: p.detail ?? null,
+          });
+        },
+      );
+      merged.push(...rows);
+      sumEnriched += enrichedCount;
+      sumCredits += creditsUsed;
+    }
+
     setZoomInfoVerifySummary(
-      enrichedCount > 0
-        ? { kind: "success", enrichedCount, creditsUsed, listType }
+      sumEnriched > 0
+        ? {
+            kind: "success",
+            enrichedCount: sumEnriched,
+            creditsUsed: sumCredits,
+            listType,
+          }
         : { kind: "no_matches" },
     );
-    return rows;
+    return merged as EnrichedCompany[] | EnrichedContact[];
   };
 
   const runEnrichment = async (context: EventContext) => {
@@ -949,8 +1067,10 @@ export default function Home() {
         if (!res.ok) {
           const errBody = (await res.json().catch(() => ({}))) as {
             error?: string;
+            detail?: string;
           };
-          const msg = errBody.error ?? `Enrichment failed (${res.status})`;
+          const msg =
+            apiJsonErrorMessage(errBody) || `Enrichment failed (${res.status})`;
           const label = `Batch ${i + 1} of ${numBatches}: ${msg}`;
           batchErrors.push(label);
           setEnrichError(batchErrors.join(" · "));
@@ -1186,8 +1306,14 @@ export default function Home() {
           }),
         });
         if (!res.ok) {
-          const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(errBody.error ?? `HubSpot push failed (${res.status})`);
+          const errBody = (await res.json().catch(() => ({}))) as {
+            error?: string;
+            detail?: string;
+          };
+          throw new Error(
+            apiJsonErrorMessage(errBody) ||
+              `HubSpot push failed (${res.status})`,
+          );
         }
         const done = await consumePushNdjson(res, (p) => {
           setPushProgress({ current: p.current, total: p.total });

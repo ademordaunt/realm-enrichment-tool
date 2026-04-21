@@ -45,3 +45,20 @@ export async function setCachedContact(email: string, data: EnrichedContact): Pr
     // Silently fail
   }
 }
+
+export async function checkKvConnectivity(): Promise<void> {
+  try {
+    await kv.set("__health_check__", "1", { ex: 10 });
+    const val = await kv.get("__health_check__");
+    if (val !== "1") {
+      console.error("[Cache] KV health check failed — reads not returning written values");
+    } else {
+      console.log("[Cache] KV connected and healthy");
+    }
+  } catch (err) {
+    console.error(
+      "[Cache] KV connectivity failed — caching disabled. Check KV_REST_API_URL and KV_REST_API_TOKEN env vars.",
+      String(err),
+    );
+  }
+}

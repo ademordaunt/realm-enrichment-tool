@@ -35,13 +35,6 @@ export function mergeEnrichedCompany(
   const modeIn = originalConfidence ?? ai.confidenceScore;
   const isHighConfidence = modeIn === "high";
 
-  console.log(
-    "[Merger] ZoomInfo merge mode:",
-    isHighConfidence ? "fill-gaps" : "ZI-wins",
-    "for",
-    ai.resolvedName,
-  );
-
   const merged: EnrichedCompany = { ...ai };
 
   if (isHighConfidence) {

@@ -41,8 +41,18 @@ export async function enrichContactWithCommonRoom(
       if (res.ok) {
         const json: unknown = await res.json().catch(() => null);
         members = parseMembersJson(json);
+      } else {
+        console.error("[CommonRoom] enrichment failed:", {
+          status: res.status,
+          endpoint: "members-by-email",
+          error: `HTTP ${res.status}`,
+        });
       }
-    } catch {
+    } catch (err) {
+      console.error("[CommonRoom] enrichment failed:", {
+        endpoint: "members-by-email",
+        error: String(err),
+      });
       return {};
     }
   }
@@ -57,8 +67,18 @@ export async function enrichContactWithCommonRoom(
       if (res.ok) {
         const json: unknown = await res.json().catch(() => null);
         members = parseMembersJson(json);
+      } else {
+        console.error("[CommonRoom] enrichment failed:", {
+          status: res.status,
+          endpoint: "members-by-linkedin",
+          error: `HTTP ${res.status}`,
+        });
       }
-    } catch {
+    } catch (err) {
+      console.error("[CommonRoom] enrichment failed:", {
+        endpoint: "members-by-linkedin",
+        error: String(err),
+      });
       return {};
     }
   }

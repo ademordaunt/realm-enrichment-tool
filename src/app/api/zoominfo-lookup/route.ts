@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { getZoomInfoToken } from "@/lib/zoominfo/auth";
 
-export async function GET() {
+export async function GET(req: Request) {
+  void req;
+  if (process.env.NODE_ENV !== "development") {
+    return Response.json(
+      { error: "Not available in production" },
+      { status: 403 },
+    );
+  }
   try {
     const token = await getZoomInfoToken();
 

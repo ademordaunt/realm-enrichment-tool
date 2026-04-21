@@ -3,5 +3,12 @@ import { handleHubSpotPushRequest } from "@/lib/hubspot/push-handler";
 export const maxDuration = 300;
 
 export async function POST(request: Request): Promise<Response> {
-  return handleHubSpotPushRequest(request);
+  try {
+    return await handleHubSpotPushRequest(request);
+  } catch (err) {
+    return Response.json(
+      { error: "Internal server error", detail: String(err) },
+      { status: 500 },
+    );
+  }
 }
