@@ -9,6 +9,7 @@ import { getZoomInfoToken, invalidateZoomInfoToken } from "@/lib/zoominfo/auth";
 /** ZoomInfo partial plus pre-merge confidence (never persisted on EnrichedCompany). */
 export type ZoomInfoCompanyEnrichmentResult = Partial<EnrichedCompany> & {
   originalConfidence: EnrichedCompany["confidenceScore"];
+  cachedHit?: boolean;
 };
 
 /** ZoomInfo partial plus pre-merge confidence (never persisted on EnrichedContact). */
@@ -149,9 +150,13 @@ function linkedInUrlFromSocialMediaUrls(attrs: Record<string, unknown>): string 
 export async function enrichCompanyWithZoomInfo(
   company: EnrichedCompany,
 ): Promise<ZoomInfoCompanyEnrichmentResult> {
-  const ziMeta = (fields: Partial<EnrichedCompany>): ZoomInfoCompanyEnrichmentResult => ({
+  const ziMeta = (
+    fields: Partial<EnrichedCompany>,
+    options?: { cachedHit?: boolean },
+  ): ZoomInfoCompanyEnrichmentResult => ({
     ...fields,
     originalConfidence: company.confidenceScore,
+    ...(options?.cachedHit ? { cachedHit: true } : {}),
   });
 
   const cacheKeyName = company.resolvedName ?? company.rawInput;
@@ -196,7 +201,7 @@ export async function enrichCompanyWithZoomInfo(
       out.city = cached.city.trim();
     }
     out.enrichedByZoomInfo = true;
-    return ziMeta(out);
+    return ziMeta(out, { cachedHit: true });
   }
 
   const searchBody = {

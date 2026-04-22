@@ -248,6 +248,7 @@ type NdjsonEvent =
       listType: "companies" | "contacts";
       rows: EnrichedCompany[] | EnrichedContact[];
       enrichedCount?: number;
+      cachedCount?: number;
       creditsUsed?: number;
     }
   | { type: "error"; message: string; zoomInfoAuthFailure?: boolean };
@@ -266,6 +267,7 @@ type ZoomInfoVerifySummary =
   | {
       kind: "success";
       enrichedCount: number;
+      cachedCount: number;
       creditsUsed: number;
       listType: "companies" | "contacts";
     }
@@ -318,6 +320,7 @@ async function consumeEnrichmentNdjson(
   rows: EnrichedCompany[] | EnrichedContact[];
   rawNdjson: string;
   enrichedCount: number;
+  cachedCount: number;
   creditsUsed: number;
 }> {
   const reader = res.body?.getReader();
@@ -329,6 +332,7 @@ async function consumeEnrichmentNdjson(
   let rawNdjson = "";
   let result: EnrichedCompany[] | EnrichedContact[] | null = null;
   let enrichedCount = 0;
+  let cachedCount = 0;
   let creditsUsed = 0;
 
   const handleLine = (line: string) => {
@@ -359,6 +363,10 @@ async function consumeEnrichmentNdjson(
         typeof msg.enrichedCount === "number" && Number.isFinite(msg.enrichedCount)
           ? msg.enrichedCount
           : 0;
+      cachedCount =
+        typeof msg.cachedCount === "number" && Number.isFinite(msg.cachedCount)
+          ? msg.cachedCount
+          : 0;
       creditsUsed =
         typeof msg.creditsUsed === "number" && Number.isFinite(msg.creditsUsed)
           ? msg.creditsUsed
@@ -388,7 +396,7 @@ async function consumeEnrichmentNdjson(
   if (!result) {
     throw new Error("Enrichment finished without a result payload.");
   }
-  return { rows: result, rawNdjson, enrichedCount, creditsUsed };
+  return { rows: result, rawNdjson, enrichedCount, cachedCount, creditsUsed };
 }
 
 async function runLinkedInLookupPass(
@@ -924,6 +932,7 @@ export default function Home() {
     const nonHighTotal = computeZoomVerifyNonHighTotal(aiRows, listType);
     const numChunks = Math.ceil(totalRows / ZOOM_VERIFY_CHUNK_SIZE);
     let sumEnriched = 0;
+    let sumCached = 0;
     let sumCredits = 0;
     const merged: (EnrichedCompany | EnrichedContact)[] = [];
 
@@ -961,7 +970,7 @@ export default function Home() {
           apiJsonErrorMessage(errBody) || `Verification failed (${res.status})`,
         );
       }
-      const { rows, enrichedCount, creditsUsed } = await consumeEnrichmentNdjson(
+      const { rows, enrichedCount, cachedCount, creditsUsed } = await consumeEnrichmentNdjson(
         res,
         (p) => {
           setProgress({
@@ -977,14 +986,16 @@ export default function Home() {
       );
       merged.push(...rows);
       sumEnriched += enrichedCount;
+      sumCached += cachedCount;
       sumCredits += creditsUsed;
     }
 
     setZoomInfoVerifySummary(
-      sumEnriched > 0
+      sumEnriched > 0 || sumCached > 0
         ? {
             kind: "success",
             enrichedCount: sumEnriched,
+            cachedCount: sumCached,
             creditsUsed: sumCredits,
             listType,
           }
@@ -1685,7 +1696,7 @@ export default function Home() {
               >
                 {progress.fromCache
                   ? `Loaded from cache: rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}...`
-                  : `Analyzing rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}...`}
+                  : `AI analyzing rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}...`}
               </p>
               <div
                 className="h-2 w-full overflow-hidden rounded-full bg-(--bg-muted)"
@@ -1760,14 +1771,34 @@ export default function Home() {
                 className="mt-3 rounded-lg border border-(--border-default) bg-(--bg-muted) px-4 py-2 text-sm text-(--text-primary)"
                 role="status"
               >
-                ✓ ZoomInfo enriched {zoomInfoVerifySummary.enrichedCount}{" "}
-                {zoomInfoVerifySummary.listType === "companies" ? "companies" : "contacts"}, ~
-                {zoomInfoVerifySummary.creditsUsed} credits used
+                {(() => {
+                  const label =
+                    zoomInfoVerifySummary.listType === "companies" ? "companies" : "contacts";
+                  if (
+                    zoomInfoVerifySummary.enrichedCount > 0 &&
+                    zoomInfoVerifySummary.cachedCount === 0
+                  ) {
+                    return `✓ ZoomInfo enriched ${zoomInfoVerifySummary.enrichedCount} ${label}, ~${zoomInfoVerifySummary.creditsUsed} credits used`;
+                  }
+                  if (
+                    zoomInfoVerifySummary.cachedCount > 0 &&
+                    zoomInfoVerifySummary.enrichedCount === 0
+                  ) {
+                    return `✓ ZoomInfo: all ${zoomInfoVerifySummary.cachedCount} ${label} served from cache, 0 credits used`;
+                  }
+                  if (
+                    zoomInfoVerifySummary.enrichedCount > 0 &&
+                    zoomInfoVerifySummary.cachedCount > 0
+                  ) {
+                    return `✓ ZoomInfo enriched ${zoomInfoVerifySummary.enrichedCount} ${label} (~${zoomInfoVerifySummary.creditsUsed} credits), ${zoomInfoVerifySummary.cachedCount} from cache`;
+                  }
+                  return "✓ ZoomInfo searched, no matches found, 0 credits used";
+                })()}
               </p>
             ) : null}
             {zoomInfoVerifySummary?.kind === "no_matches" ? (
               <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">
-                ZoomInfo: no matches found for this import
+                ✓ ZoomInfo searched, no matches found, 0 credits used
               </p>
             ) : null}
             <div className="mt-4">

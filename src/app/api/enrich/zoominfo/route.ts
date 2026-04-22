@@ -84,6 +84,7 @@ export async function POST(request: Request): Promise<Response> {
 
         const mergedRows: (EnrichedCompany | EnrichedContact)[] = [];
         let enrichedCount = 0;
+        let cachedCount = 0;
         const prospectorEndpoint = new URL(
           "/api/enrich/prospector",
           request.url,
@@ -121,6 +122,7 @@ export async function POST(request: Request): Promise<Response> {
             if (cacheEmail) {
               const cached = await getCachedContact(cacheEmail);
               if (cached?.enrichedByZoomInfo) {
+                cachedCount += 1;
                 mergedRows.push({
                   ...cached,
                   id: c.id,
@@ -144,11 +146,14 @@ export async function POST(request: Request): Promise<Response> {
               `ZoomInfo enriching ${nonHighIndex} of ${nonHighTotal} companies…`,
             );
             const zi = await enrichCompanyWithZoomInfo(row as EnrichedCompany);
-            if (zi.enrichedByZoomInfo) {
+            if (zi.enrichedByZoomInfo && zi.cachedHit) {
+              cachedCount += 1;
+            } else if (zi.enrichedByZoomInfo) {
               enrichedCount += 1;
             }
+            const { cachedHit: _cachedHit, ...ziFields } = zi;
             mergedRows.push(
-              mergeEnrichedCompany(row as EnrichedCompany, zi, {}),
+              mergeEnrichedCompany(row as EnrichedCompany, ziFields, {}),
             );
           } else {
             const contact = row as EnrichedContact;
@@ -279,6 +284,7 @@ export async function POST(request: Request): Promise<Response> {
               listType,
               rows: mergedRows,
               enrichedCount,
+              cachedCount,
               creditsUsed: enrichedCount,
             })}\n`,
           ),
