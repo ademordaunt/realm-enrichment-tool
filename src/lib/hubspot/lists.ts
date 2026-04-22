@@ -15,11 +15,25 @@ export async function createStaticList(name: string, objectTypeId: string): Prom
   }
 
   const json = (await res.json()) as {
-    list?: { listId?: string; id?: string };
-    listId?: string;
-    id?: string;
+    list?: { listId?: string | number; id?: string | number; hs_list_id?: string | number };
+    listId?: string | number;
+    id?: string | number;
+    hs_list_id?: string | number;
+    list_id?: string | number;
+    objectId?: string | number;
+    object_id?: string | number;
   };
-  const listId = json.list?.listId ?? json.list?.id ?? json.listId ?? json.id;
+  console.log("[HubSpot] createStaticList raw response:", json);
+  const listId =
+    json.list?.listId ??
+    json.list?.id ??
+    json.list?.hs_list_id ??
+    json.listId ??
+    json.id ??
+    json.hs_list_id ??
+    json.list_id ??
+    json.objectId ??
+    json.object_id;
   if (!listId) {
     throw new Error("HubSpot did not return listId when creating a list.");
   }

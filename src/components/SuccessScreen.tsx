@@ -21,7 +21,7 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed }: SuccessScr
   const portalId = process.env.NEXT_PUBLIC_HUBSPOT_PORTAL_ID?.trim() ?? "";
   const listUrl =
     portalId && result.listId
-      ? `https://app.hubspot.com/contacts/${portalId}/lists/${result.listId}`
+      ? `https://app.hubspot.com/contacts/${portalId}/objectLists/${result.listId}/filters`
       : null;
 
   const failed = result.errors.length;

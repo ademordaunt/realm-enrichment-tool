@@ -104,7 +104,7 @@ export const LEAD_SOURCE_OPTIONS = [
 
 export type PrePushSettings = {
   listName: string;
-  folderId: string;
+  folderId?: string;
   leadSource: string;
   leadSourceDescription: string;
   useExistingLeadSource: boolean;
@@ -254,7 +254,10 @@ export function PrePushScreen({
     if (!canPush) return;
     onPush({
       listName: listName.trim(),
-      folderId: foldersError ? folderManual.trim() : folderId.trim(),
+      folderId: (() => {
+        const raw = foldersError ? folderManual.trim() : folderId.trim();
+        return raw ? raw : undefined;
+      })(),
       leadSource: listType === "contacts" ? leadSource.trim() : "",
       leadSourceDescription: listType === "contacts" ? leadSourceDescription.trim() : "",
       useExistingLeadSource: listType === "contacts" ? useExistingLeadSource : false,
@@ -429,7 +432,7 @@ export function PrePushScreen({
                 value={folderId}
                 onChange={(e) => setFolderId(e.target.value)}
               >
-                <option value="">Select Folder</option>
+                <option value="">No Folder</option>
                 {(folders ?? []).map((f) => (
                   <option key={f.id} value={f.id}>
                     {f.name}

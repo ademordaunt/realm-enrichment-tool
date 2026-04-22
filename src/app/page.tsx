@@ -909,11 +909,12 @@ export default function Home() {
   ): Promise<EnrichedCompany[] | EnrichedContact[]> => {
     setStep("verifying");
     const totalRows = aiRows.length;
+    const listLabel = listType === "contacts" ? "contacts" : "companies";
     setProgress({
       startRow: 1,
-      endRow: 1,
+      endRow: 0,
       totalRows,
-      detail: null,
+      detail: `ZoomInfo & Common Room enriching 0 of ${totalRows} ${listLabel}…`,
     });
     if (totalRows === 0) {
       setZoomInfoVerifySummary({ kind: "no_matches" });
@@ -967,7 +968,10 @@ export default function Home() {
             startRow: p.start,
             endRow: p.end,
             totalRows: p.total,
-            detail: p.detail ?? null,
+            detail: `ZoomInfo & Common Room enriching ${Math.min(
+              p.end,
+              p.total,
+            )} of ${p.total} ${listLabel}…`,
           });
         },
       );
