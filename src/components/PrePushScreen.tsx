@@ -29,6 +29,7 @@ const TABLE_HEAD_CELL =
   "border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700";
 
 const TABLE_ROW = "border-b border-zinc-100 dark:border-zinc-800";
+const FOLDER_PLACEHOLDER_VALUE = "__select_folder__";
 
 /** Mirrors `EditableCell` in ReviewTable — click to edit, Enter/blur saves. */
 function PrePushEditableCell(props: {
@@ -161,7 +162,7 @@ export function PrePushScreen({
   const [folders, setFolders] = useState<{ id: string; name: string }[] | null>(null);
   const [foldersLoading, setFoldersLoading] = useState(true);
   const [foldersError, setFoldersError] = useState(false);
-  const [folderId, setFolderId] = useState("");
+  const [folderId, setFolderId] = useState(FOLDER_PLACEHOLDER_VALUE);
   const [folderManual, setFolderManual] = useState("");
 
   const [contactEditRows, setContactEditRows] = useState<EnrichedContact[] | null>(null);
@@ -255,7 +256,10 @@ export function PrePushScreen({
     onPush({
       listName: listName.trim(),
       folderId: (() => {
-        const raw = foldersError ? folderManual.trim() : folderId.trim();
+        const raw =
+          foldersError || folderId === FOLDER_PLACEHOLDER_VALUE
+            ? folderManual.trim()
+            : folderId.trim();
         return raw ? raw : undefined;
       })(),
       leadSource: listType === "contacts" ? leadSource.trim() : "",
@@ -432,6 +436,9 @@ export function PrePushScreen({
                 value={folderId}
                 onChange={(e) => setFolderId(e.target.value)}
               >
+                <option value={FOLDER_PLACEHOLDER_VALUE} disabled>
+                  Select a folder
+                </option>
                 <option value="">No Folder</option>
                 {(folders ?? []).map((f) => (
                   <option key={f.id} value={f.id}>
