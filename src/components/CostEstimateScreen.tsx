@@ -28,16 +28,26 @@ export function CostEstimateScreen({
   const needEnrichment = Math.max(0, totalRows - hubspotCompleteCount);
   const ziLow = Math.round(needEnrichment * 0.6);
   const ziHigh = Math.round(needEnrichment * 0.8);
-  const anthLow = Number(((needEnrichment / 3) * 0.002).toFixed(2));
-  const anthHigh = Number(((needEnrichment / 3) * 0.006).toFixed(2));
+  const anthLow = ((needEnrichment / 3) * 0.015).toFixed(2);
+  const anthHigh = ((needEnrichment / 3) * 0.015 + (needEnrichment * 0.3 * 0.02)).toFixed(2);
 
   const runTimeLabel = useMemo(() => {
-    const minutes = Math.round((needEnrichment * 5) / 60);
-    if (minutes > 60) {
-      const hours = Math.round(minutes / 60);
+    const zoomInfoMinutes = Math.round((needEnrichment / 25) * 0.5);
+    const aiMinutes = Math.round((needEnrichment / 3) * 0.4);
+    const linkedInMinutes = Math.round(needEnrichment * 0.3 * 0.1);
+    const totalMinutes = zoomInfoMinutes + aiMinutes + linkedInMinutes + 5;
+
+    if (totalMinutes < 60) {
+      return `~${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`;
+    }
+
+    const roundedToHalfHour = Math.max(60, Math.round(totalMinutes / 30) * 30);
+    const hours = Math.floor(roundedToHalfHour / 60);
+    const minutes = roundedToHalfHour % 60;
+    if (minutes === 0) {
       return `~${hours} hour${hours === 1 ? "" : "s"}`;
     }
-    return `~${minutes} minute${minutes === 1 ? "" : "s"}`;
+    return `~${hours} hour${hours === 1 ? "" : "s"} ${minutes} minutes`;
   }, [needEnrichment]);
 
   const rowClass = "flex justify-between gap-4 border-b border-(--border-default) pb-2 last:border-b-0 last:pb-0";
@@ -85,7 +95,7 @@ export function CostEstimateScreen({
             <div className={rowClass}>
               <dt className="text-(--text-muted)">Estimated Anthropic cost</dt>
               <dd className="font-medium text-(--text-primary)">
-                ~${anthLow.toFixed(2)}–${anthHigh.toFixed(2)}
+                ~${anthLow}–${anthHigh}
               </dd>
             </div>
             <div className={rowClass}>

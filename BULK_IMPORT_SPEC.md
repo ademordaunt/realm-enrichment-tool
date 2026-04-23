@@ -6,7 +6,7 @@ This spec covers four phases of upgrades to the Realm Enrichment Tool:
 
 1. **Phase 1 — HubSpot Pre-Check / Deduplication** (all imports)
 2. **Phase 2 — Starter Screen + Cost Estimate UI** (all imports, required before Gartner)
-3. **Phase 3 — Background Job Architecture** (bulk imports only, required before Gartner, **in progress**)
+3. **Phase 3 — Background Job Architecture** (bulk imports only, required before Gartner, **complete**)
 4. **Phase 4 — Progress / Status Page** (bulk imports only, required before Gartner, **complete**)
 
 Target use case driving this work: **Gartner May 2026 — ~1,550 companies**
@@ -192,7 +192,7 @@ Both modes go through the same pipeline. The difference is:
 ### New field: `importMode: "event" | "bulk"` on EventContext
 
 ### Cost estimate screen (bulk mode only)
-Shown after HubSpot pre-check completes, before enrichment starts.
+Shown as a gate step before continuing the enrichment path in bulk mode.
 
 Displays:
 ```
@@ -206,16 +206,27 @@ Estimated ZoomInfo credits:       725–968   (60–80% match rate)
 Current ZoomInfo allocation:        2,000   ← pulled from config or entered manually
 Credits remaining after this run:   1,032–1,275
 
-Estimated Anthropic cost:            $4–8
-Estimated run time:               ~2 hours
+Estimated Anthropic cost:           ~$10–20
+Estimated run time:              ~1–1.5 hours
 
 [ Cancel ]        [ Proceed with Enrichment → ]
 ```
 
 Estimates use these formulas:
 - ZoomInfo credits: `needEnrichment * 0.60` to `needEnrichment * 0.80`
-- Anthropic cost: `(needEnrichment / 3) * 0.002` (rough per-batch estimate in USD)
-- Run time: `needEnrichment * 5` seconds (conservative), displayed as rounded minutes/hours
+- Anthropic low: `((needEnrichment / 3) * 0.015).toFixed(2)`
+- Anthropic high: `((needEnrichment / 3) * 0.015 + (needEnrichment * 0.30 * 0.02)).toFixed(2)` (adds LinkedIn fallback estimate at 30%)
+- Run time:
+  - `zoomInfoMinutes = Math.round((needEnrichment / 25) * 0.5)`
+  - `aiMinutes = Math.round((needEnrichment / 3) * 0.4)`
+  - `linkedInMinutes = Math.round(needEnrichment * 0.30 * 0.1)`
+  - `totalMinutes = zoomInfoMinutes + aiMinutes + linkedInMinutes + 5`
+  - Display: under 60 => `~X minutes`, 60+ => `~X hour(s) Y minutes` (or nearest half-hour)
+
+For a representative 1,550-row run, operational planning estimates are:
+- ZoomInfo: **930–1,240 credits**
+- Anthropic: **~$10–20**
+- Time: **~1–1.5 hours**
 
 ZoomInfo allocation is not available via API — show a manually editable field
 pre-filled with `2000` that the user can update to reflect their actual balance.
@@ -224,6 +235,17 @@ pre-filled with `2000` that the user can update to reflect their actual balance.
 Not required for small lists, but show a lightweight summary line after
 pre-check on the enrichment screen:
 `"X records found in HubSpot — skipping ZoomInfo for those"`
+
+### Small-list bulk warning UX (<200 rows)
+When users select **bulk** mode and upload fewer than 200 rows, show a warning
+banner in the Upload step with exactly two actions:
+
+- `Go Back to Start`
+- `Continue Anyway`
+
+While this warning is active, do not show the standard Upload-step `Continue →`
+action. After `Continue Anyway`, users can proceed to List Context and still have
+a `← Back` action to return to Upload.
 
 ---
 
@@ -302,6 +324,8 @@ Rows per chunk key: ~100 enriched rows
 - Creates job in KV
 - Queues chunk 0 via QStash
 - Returns: `{ jobId }`
+- On non-OK response, client logs status + body for debugging before setting user-facing error:
+  - `console.error("[startBulkJob] failed:", res.status, errBody)`
 
 **`POST /api/jobs/process`**
 - Called by QStash only (verify QStash signature)
@@ -359,10 +383,9 @@ Tune down once ZoomInfo rate limit confirmed by account manager.
 - Add to Vercel env vars and `.env.local`
 
 ### SessionStorage in bulk mode
-Bulk mode does NOT use sessionStorage for enriched rows.
-Only stores: `{ jobId, importMode: "bulk" }` in sessionStorage.
-All job state and enriched data lives in KV.
-This avoids the ~5MB browser sessionStorage limit for large imports.
+Bulk mode stores active job ID under `realm-bulk-job-id` for resume/polling.
+The main wizard snapshot (`realm-enrichment-session-v1`) still stores current
+step/context and UI state. Source-of-truth job progress and output rows remain in KV.
 
 ---
 
@@ -398,10 +421,9 @@ Browser polls `GET /api/jobs/[jobId]/status` every 5 seconds.
 On completion: auto-advance to Review & Edit, load enriched rows from KV.
 On failure: show error + Resume button.
 
-### Shareable URL
-Status page is accessible at `/` with jobId in sessionStorage.
-If user closes and reopens browser, they can paste the jobId to resume viewing.
-(Simple implementation: show jobId on screen with a "copy" button.)
+### Resume behavior
+Status is resumed from `/` when `realm-bulk-job-id` is present in sessionStorage.
+Polling restarts automatically and advances to Review & Edit when complete.
 
 ### Review & Edit in bulk mode
 When job completes, rows are assembled from `job:{jobId}:rows:*` chunk keys
@@ -412,15 +434,14 @@ needed to ReviewTable component.
 
 ## Implementation order
 
-Build in this order — each phase is independently deployable:
+Build order was:
 
-1. Phase 1: HubSpot pre-check (new route + pipeline integration + UI badge)
-2. Phase 2: Starter screen + cost estimate (new UI components only)
-3. Phase 3: Background jobs (QStash install + new routes + process worker)
-4. Phase 4: Status page (new UI component + polling)
+1. Phase 1: HubSpot pre-check (route + pipeline integration + UI badge)
+2. Phase 2: Starter screen + cost estimate + upload guardrails
+3. Phase 3: Background jobs (QStash + routes + worker)
+4. Phase 4: Status/polling UX (bulk progress + completion handoff)
 
-Do not start Phase 3 until Phase 1 and 2 are complete and tested.
-Do not start Phase 4 until Phase 3 routes exist.
+All four phases are now implemented.
 
 ---
 

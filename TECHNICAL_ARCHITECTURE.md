@@ -8,7 +8,10 @@ This document describes how the application is structured, how enrichment and in
 
 ### What it does
 
-The app is a **Next.js** single-page workflow for **event list enrichment**: users upload a CSV/Excel file of **companies** or **contacts**, provide event context, run **AI + ZoomInfo + optional Common Room + LinkedIn fallbacks**, review and edit rows, then **push approved records to HubSpot** as CRM records and add them to a **static list** (optionally in a HubSpot list folder).
+The app is a **Next.js** single-page workflow for enrichment of CSV/Excel uploads containing **companies** or **contacts**. Users begin in a starter mode picker, then move through upload, context, enrichment, review, and HubSpot push. The product supports two import modes:
+
+- **Marketing Event List (`event`)**: browser-driven enrichment flow.
+- **Bulk Import (`bulk`)**: background job flow with job start + status polling.
 
 ### Who uses it & deployment
 
@@ -41,10 +44,20 @@ src/
         linkedin-search/route.ts  # Anthropic + web_search for missing LinkedIn URLs
         prospector/route.ts       # Stub: returns { results: [] }
       hubspot/
+        precheck/route.ts # HubSpot existing-record pre-check before ZoomInfo
         push/route.ts     # NDJSON HubSpot push stream
         folders/route.ts  # GET list folders for PrePush UI
+      jobs/
+        start/route.ts                # Create bulk job + queue processing
+        process/route.ts              # Worker endpoint for chunk processing
+        [jobId]/status/route.ts       # Pollable bulk job status
+        [jobId]/rows/route.ts         # Completed enriched rows fetch
+        [jobId]/resume/route.ts       # Resume/requeue failed bulk job
+        [jobId]/cancel/route.ts       # Cancel bulk job
       zoominfo-lookup/route.ts    # Dev-only ZoomInfo diagnostic (403 in production)
   components/             # UI only (ReviewTable, PrePushScreen, SuccessScreen, etc.)
+    StarterScreen.tsx
+    CostEstimateScreen.tsx
   lib/
     enrichment/           # ai-enricher, zoominfo-enricher, merger, commonroom-enricher
     hubspot/              # CRM API helpers (companies, contacts, lists, push-handler)
@@ -63,15 +76,16 @@ src/
 
 **Breadcrumb labels** (`NAV_STEPS` in `src/app/page.tsx`): Upload → Event Context → Enrichment → Review & Edit → Import Settings → Complete.
 
-**Internal `Step` union** (finer-grained): `"upload"` | `"context"` | `"enriching"` | `"verifying"` | `"enriched"` | `"prepush"` | `"pushing"` | `"complete"`.
+**Internal `Step` union** (finer-grained): `"starter"` | `"upload"` | `"context"` | `"enriching"` | `"verifying"` | `"costestimate"` | `"enriched"` | `"prepush"` | `"pushing"` | `"complete"`.
 
 Mapping:
 
 | User-facing step | Internal steps |
 |------------------|----------------|
+| Mode select / start | `starter` |
 | Upload | `upload` |
 | Event Context | `context` |
-| Enrichment | `enriching` (AI batches) then `verifying` (ZoomInfo/Common Room/Prospector chunk) |
+| Enrichment | `enriching` (AI/bulk job start), optional `costestimate` (bulk), then `verifying` (event verify path) |
 | Review & Edit | `enriched` |
 | Import Settings | `prepush` |
 | Complete | `pushing` (HubSpot NDJSON) then `complete` |
@@ -80,7 +94,16 @@ Mapping:
 
 - **Key:** `realm-enrichment-session-v1` (`SESSION_STORAGE_KEY` in `page.tsx`).
 - **Stored:** `step`, enriched rows snapshot, approved rows, `eventContext`, `listType`, `parseResult`.
+- **Bulk job key:** `realm-bulk-job-id` (`BULK_JOB_SESSION_KEY`) stores active bulk job ID for resume/polling.
 - **Purpose:** Refresh-safe progress across the wizard; cleared when starting a new import (see `sessionStorage.removeItem` usage in `page.tsx`).
+
+### Bulk job flow (bulk mode)
+
+- **Start:** `startBulkJob()` calls `POST /api/jobs/start` from `context` step.
+- **Progress:** UI enters `enriching` and polls `GET /api/jobs/[jobId]/status` every 5 seconds.
+- **Completion:** on `status === "complete"`, client loads rows from `GET /api/jobs/[jobId]/rows` and advances to `enriched`.
+- **Failure/cancel:** client returns to `context` and surfaces `state.error` (or cancellation copy).
+- **Diagnostics:** failed job-start responses log status + body in `console.error("[startBulkJob] failed:", res.status, errBody)`.
 
 ### NDJSON streaming — where and why
 
@@ -111,7 +134,7 @@ Mapping:
 
 ## 3. Enrichment pipeline — companies
 
-Order on the client (`runEnrichment` in `page.tsx`):
+Order on the client (`runEnrichment` in `page.tsx`, event mode):
 
 1. **AI enrichment** (batched `POST /api/enrich/ai`)
 2. **ZoomInfo verify** (`runZoomVerify` → chunked `POST /api/enrich/zoominfo`)
@@ -195,7 +218,7 @@ Order on the client (`runEnrichment` in `page.tsx`):
 
 ## 4. Enrichment pipeline — contacts
 
-Order on the client:
+Order on the client (event mode):
 
 1. **AI enrichment** (batched `/api/enrich/ai`)
 2. **ZoomInfo verify** (chunked `/api/enrich/zoominfo` — includes Common Room + Prospector stub + ZoomInfo)
@@ -325,13 +348,15 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 
 - **App accounting:** `enrichedCount` / `creditsUsed` in NDJSON `done` count successful **`enrichedByZoomInfo`** enrichments in the verify route (companies: per `enrichCompanyWithZoomInfo`; contacts: per `enrichContactWithZoomInfo` when the ZI path runs and returns enrichment).
 - **Operational notes (not hard-coded):** Business expectation is **~1 credit per successful contact/company enrich** on the ZoomInfo side; **search** steps are not counted in `creditsUsed`. Allocation and totals (e.g. **2,000 credits**, **6–70 credits per typical run**, sustainability ~**50 runs**) are **operational** — confirm in your ZoomInfo contract.
+- **Planning benchmark (1,550-row run):** **~930–1,240 credits** (60–80% match-rate assumption).
 
 ### Anthropic
 
 - **Billed per token** (input + output); exact pricing is account-specific.
 - **AI step:** Batches of **3** rows per `messages.create` call (companies or contacts).
 - **LinkedIn route:** **One** `/v1/messages` call per company/contact row that still needs a URL, with **web_search** tool — higher cost than plain completion.
-- Per-run estimates are **not** computed in code; for budgeting, multiply batches × approximate tokens + (missing LinkedIn count) × web-search-augmented calls.
+- **Cost estimate model used in bulk cost screen:** low `((needEnrichment / 3) * 0.015)`, high `((needEnrichment / 3) * 0.015 + (needEnrichment * 0.30 * 0.02))`.
+- **Planning benchmark (1,550-row run):** **~$10–20**.
 
 ### Vercel KV (`@vercel/kv`)
 
@@ -345,6 +370,7 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 - **`maxDuration = 9`** on `ai/route.ts` and `enrich/zoominfo/route.ts` (and `linkedin-search/route.ts`).
 - **Mitigation:** AI **batching** (3 rows), ZoomInfo **chunking** (15 rows per request), **NDJSON** for long streams.
 - **Scale:** Very large lists still spend linear time in **client-driven loops** (many HTTP round-trips). Architecture may need queues or background jobs if lists grow into the **hundreds+** per operator expectation.
+- **Planning benchmark runtime (1,550-row run):** **~1–1.5 hours**, based on bulk estimate model (`~0.5 min / 25 ZoomInfo rows`, `~0.4 min / 3 AI rows`, plus LinkedIn fallback and fixed overhead).
 
 ---
 
