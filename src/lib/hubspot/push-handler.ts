@@ -177,7 +177,10 @@ export async function handleHubSpotPushRequest(
           try {
             if (listType === "companies") {
               const c = row as EnrichedCompany;
-              const existing = await findExistingCompany(c.domain);
+              const existing =
+                typeof c.hubspotId === "string" && c.hubspotId.trim() !== ""
+                  ? c.hubspotId.trim()
+                  : await findExistingCompany(c.domain);
               let id: string;
               if (existing) {
                 id = await updateCompany(existing, c, pushExtras);
@@ -189,7 +192,10 @@ export async function handleHubSpotPushRequest(
               recordIds.push(id);
             } else {
               const c = row as EnrichedContact;
-              const existing = await findExistingContact(c.resolvedEmail);
+              const existing =
+                typeof c.hubspotId === "string" && c.hubspotId.trim() !== ""
+                  ? c.hubspotId.trim()
+                  : await findExistingContact(c.resolvedEmail);
               const contactPushExtras: HubSpotCompanyPushExtras | undefined =
                 (() => {
                   const rowLeadSource = useExistingLeadSource

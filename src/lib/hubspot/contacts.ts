@@ -2,6 +2,46 @@ import type { HubSpotCompanyPushExtras } from "@/lib/hubspot/companies";
 import type { EnrichedContact } from "@/lib/utils/types";
 import { hubspotFetch, readHubSpotError } from "@/lib/hubspot/http";
 
+type HubSpotContactPrecheckResult = {
+  hubspotId: string;
+  existingData: Record<string, string>;
+};
+
+const CONTACT_PRECHECK_PROPERTIES = [
+  "email",
+  "jobtitle",
+  "company",
+  "ds_liprofile",
+  "state",
+  "phone",
+  "job_level",
+  "job_function",
+] as const;
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function chunkValues(values: string[], size: number): string[][] {
+  const chunks: string[][] = [];
+  for (let i = 0; i < values.length; i += size) {
+    chunks.push(values.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function hubspotSearchWithBackoff(path: string, body: string): Promise<Response> {
+  const delays = [1000, 3000];
+  let attempt = 0;
+  while (true) {
+    const res = await hubspotFetch(path, { method: "POST", body });
+    if (res.status !== 429) return res;
+    if (attempt >= delays.length) return res;
+    await new Promise((resolve) => setTimeout(resolve, delays[attempt]!));
+    attempt += 1;
+  }
+}
+
 function isEmpty(val: string | null | undefined): boolean {
   if (val == null) return true;
   return String(val).trim() === "";
@@ -17,7 +57,7 @@ function contactProperties(
     email: contact.resolvedEmail?.trim() ?? "",
     jobtitle: contact.title?.trim() ?? "",
     company: contact.resolvedCompany?.trim() ?? "",
-    hs_linkedin_url: contact.linkedinUrl?.trim() ?? "",
+    ds_liprofile: contact.linkedinUrl?.trim() ?? "",
     state: contact.location?.trim() ?? "",
   };
   const phone = contact.phone?.trim();
@@ -51,7 +91,7 @@ function contactProperties(
 }
 
 export async function findExistingContact(email: string): Promise<string | null> {
-  const e = email.trim().toLowerCase();
+  const e = normalizeEmail(email);
   if (!e) return null;
 
   const res = await hubspotFetch("/crm/v3/objects/contacts/search", {
@@ -82,6 +122,65 @@ export async function findExistingContact(email: string): Promise<string | null>
   return id ?? null;
 }
 
+export async function batchCheckContactsInHubSpot(
+  emails: string[],
+): Promise<Map<string, HubSpotContactPrecheckResult>> {
+  const normalizedEmails = Array.from(
+    new Set(emails.map((email) => normalizeEmail(email)).filter((email) => Boolean(email))),
+  );
+  const results = new Map<string, HubSpotContactPrecheckResult>();
+  if (normalizedEmails.length === 0) return results;
+
+  for (const emailBatch of chunkValues(normalizedEmails, 100)) {
+    let after: string | undefined;
+    do {
+      const searchBody = {
+        filterGroups: [
+          {
+            filters: [
+              {
+                propertyName: "email",
+                operator: "IN",
+                values: emailBatch,
+              },
+            ],
+          },
+        ],
+        limit: 200,
+        properties: [...CONTACT_PRECHECK_PROPERTIES],
+        sorts: [{ propertyName: "hs_lastmodifieddate", direction: "DESCENDING" }],
+        ...(after ? { after } : {}),
+      };
+      const res = await hubspotSearchWithBackoff(
+        "/crm/v3/objects/contacts/search",
+        JSON.stringify(searchBody),
+      );
+
+      if (!res.ok) {
+        throw new Error(await readHubSpotError(res));
+      }
+
+      const json = (await res.json()) as {
+        results?: Array<{ id: string; properties?: Record<string, string | null> }>;
+        paging?: { next?: { after?: string } };
+      };
+      for (const row of json.results ?? []) {
+        const props = row.properties ?? {};
+        const normalized = normalizeEmail(String(props.email ?? ""));
+        if (!normalized || results.has(normalized)) continue;
+        const existingData: Record<string, string> = {};
+        for (const key of CONTACT_PRECHECK_PROPERTIES) {
+          existingData[key] = String(props[key] ?? "");
+        }
+        results.set(normalized, { hubspotId: String(row.id), existingData });
+      }
+      after = json.paging?.next?.after;
+    } while (after);
+  }
+
+  return results;
+}
+
 export async function createContact(
   contact: EnrichedContact,
   extras?: HubSpotCompanyPushExtras,
@@ -107,7 +206,7 @@ export async function updateContact(
   extras?: HubSpotCompanyPushExtras,
 ): Promise<string> {
   const res = await hubspotFetch(
-    `/crm/v3/objects/contacts/${encodeURIComponent(id)}?properties=firstname,lastname,email,jobtitle,company,hs_linkedin_url,state,phone,lead_source__deal_source,lead_source_description,hs_content_membership_notes,job_level,job_function,numemployees,industry,website`,
+    `/crm/v3/objects/contacts/${encodeURIComponent(id)}?properties=firstname,lastname,email,jobtitle,company,ds_liprofile,state,phone,lead_source__deal_source,lead_source_description,hs_content_membership_notes,job_level,job_function,numemployees,industry,website`,
   );
 
   if (!res.ok) {
@@ -134,8 +233,8 @@ export async function updateContact(
   if (isEmpty(ex.company)) {
     updates.company = contact.resolvedCompany?.trim() ?? "";
   }
-  if (isEmpty(ex.hs_linkedin_url)) {
-    updates.hs_linkedin_url = contact.linkedinUrl?.trim() ?? "";
+  if (isEmpty(ex.ds_liprofile)) {
+    updates.ds_liprofile = contact.linkedinUrl?.trim() ?? "";
   }
   if (isEmpty(ex.state)) {
     updates.state = contact.location?.trim() ?? "";

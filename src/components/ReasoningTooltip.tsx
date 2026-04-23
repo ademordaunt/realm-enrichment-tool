@@ -64,7 +64,7 @@ export function ReasoningTooltip({ text }: { text: string }) {
       <button
         ref={buttonRef}
         type="button"
-        className="cursor-help rounded p-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        className="inline-flex cursor-help items-center justify-center rounded p-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
         aria-label="Show AI reasoning"
         onClick={(e) => {
           e.stopPropagation();
@@ -75,7 +75,7 @@ export function ReasoningTooltip({ text }: { text: string }) {
       </button>
       {visible && coords ? (
         <div
-          className="w-64 whitespace-normal break-words rounded-lg border border-(--border-default) bg-white p-3 text-left text-sm leading-relaxed text-(--text-primary) shadow-(--shadow-card-hover) z-[9999]"
+          className="w-64 whitespace-normal wrap-break-word rounded-lg border border-(--border-default) bg-white p-3 text-left text-sm leading-relaxed text-(--text-primary) shadow-(--shadow-card-hover) z-9999"
           style={{
             position: "fixed",
             top: coords.top,

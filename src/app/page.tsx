@@ -274,6 +274,88 @@ type ZoomInfoVerifySummary =
   | { kind: "no_matches" }
   | { kind: "credentials" };
 
+type HubSpotPrecheckItem = {
+  id: string;
+  hubspotId: string | null;
+  hubspotComplete: boolean;
+  existingData: Record<string, string>;
+};
+
+function isBlank(value: string | null | undefined): boolean {
+  return value == null || value.trim() === "";
+}
+
+/** HubSpot property name → enriched row field name (companies). */
+const companyFieldMap: Record<string, string> = {
+  domain: "domain",
+  state: "state",
+  numberofemployees: "numberOfEmployees",
+  linkedin_company_page: "linkedinUrl",
+  industry: "industry",
+  description: "description",
+  city: "city",
+};
+
+/** HubSpot property name → enriched row field name (contacts). */
+const contactFieldMap: Record<string, string> = {
+  jobtitle: "title",
+  company: "resolvedCompany",
+  ds_liprofile: "linkedinUrl",
+  state: "location",
+  phone: "phone",
+  job_level: "ziManagementLevel",
+  job_function: "ziJobFunction",
+};
+
+function mergeHubSpotExistingIntoCompany(
+  merged: EnrichedCompany,
+  existing: Record<string, string>,
+): void {
+  for (const [hsKey, rowKey] of Object.entries(companyFieldMap)) {
+    const raw = existing[hsKey];
+    if (raw == null || String(raw).trim() === "") continue;
+    const val = String(raw).trim();
+    if (rowKey === "numberOfEmployees") {
+      if (merged.numberOfEmployees != null) continue;
+      const n = Number.parseInt(val, 10);
+      if (Number.isFinite(n)) merged.numberOfEmployees = n;
+      continue;
+    }
+    const cur = merged[rowKey as keyof EnrichedCompany];
+    if (typeof cur === "string" && !isBlank(cur)) continue;
+    if (cur != null && typeof cur !== "string") continue;
+    (merged as unknown as Record<string, unknown>)[rowKey] = val;
+  }
+  if (isBlank(merged.website) && !isBlank(merged.domain)) {
+    const d = merged.domain
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, "")
+      .replace(/^www\./, "")
+      .split("/")[0]!;
+    if (d) merged.website = `https://www.${d}`;
+  }
+}
+
+function contactPrecheckFieldEmpty(merged: EnrichedContact, rowKey: string): boolean {
+  const v = (merged as unknown as Record<string, unknown>)[rowKey];
+  if (v == null) return true;
+  if (typeof v === "string") return isBlank(v);
+  return false;
+}
+
+function mergeHubSpotExistingIntoContact(
+  merged: EnrichedContact,
+  existing: Record<string, string>,
+): void {
+  for (const [hsKey, rowKey] of Object.entries(contactFieldMap)) {
+    const raw = existing[hsKey];
+    if (raw == null || String(raw).trim() === "") continue;
+    if (!contactPrecheckFieldEmpty(merged, rowKey)) continue;
+    (merged as unknown as Record<string, unknown>)[rowKey] = String(raw).trim();
+  }
+}
+
 function computeZoomVerifyNonHighTotal(
   allRows: (EnrichedCompany | EnrichedContact)[],
   listType: "companies" | "contacts",
@@ -1004,6 +1086,77 @@ export default function Home() {
     return merged as EnrichedCompany[] | EnrichedContact[];
   };
 
+  const runHubSpotPreCheck = async (
+    aiRows: EnrichedCompany[] | EnrichedContact[],
+    listType: "companies" | "contacts",
+    signal?: AbortSignal,
+  ): Promise<EnrichedCompany[] | EnrichedContact[]> => {
+    setStep("verifying");
+    setProgress({
+      startRow: 0,
+      endRow: 0,
+      totalRows: 1,
+      detail: "Checking HubSpot for existing records…",
+    });
+    try {
+      const res = await fetch("/api/hubspot/precheck", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ listType, rows: aiRows }),
+        signal,
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string; detail?: string };
+        throw new Error(apiJsonErrorMessage(body) || `HubSpot pre-check failed (${res.status})`);
+      }
+
+      const payload = (await res.json()) as { results?: HubSpotPrecheckItem[] };
+      const byId = new Map<string, HubSpotPrecheckItem>(
+        (payload.results ?? []).map((result) => [result.id, result]),
+      );
+
+      if (listType === "companies") {
+        return (aiRows as EnrichedCompany[]).map((row) => {
+          const match = byId.get(row.id);
+          if (!match) return row;
+          const merged: EnrichedCompany = {
+            ...row,
+            hubspotId: match.hubspotId,
+            hubspotComplete: match.hubspotComplete,
+          };
+          if (match.hubspotComplete) {
+            mergeHubSpotExistingIntoCompany(merged, match.existingData);
+          }
+          return merged;
+        });
+      }
+
+      return (aiRows as EnrichedContact[]).map((row) => {
+        const match = byId.get(row.id);
+        if (!match) return row;
+        const merged: EnrichedContact = {
+          ...row,
+          hubspotId: match.hubspotId,
+          hubspotComplete: match.hubspotComplete,
+        };
+        if (match.hubspotComplete) {
+          mergeHubSpotExistingIntoContact(merged, match.existingData);
+        }
+        return merged;
+      });
+    } catch (error) {
+      console.error("[HubSpot pre-check] failed:", error);
+      return aiRows;
+    } finally {
+      setProgress({
+        startRow: 1,
+        endRow: 1,
+        totalRows: 1,
+        detail: "Checking HubSpot for existing records…",
+      });
+    }
+  };
+
   const runEnrichment = async (context: EventContext) => {
     if (!resolvedListType) return;
     setEventContext(context);
@@ -1127,10 +1280,13 @@ export default function Home() {
         | EnrichedCompany[]
         | EnrichedContact[];
 
-      // 2. ZoomInfo + Common Room — runs only after every AI batch above has finished.
-      let rowsAfterVerify: EnrichedCompany[] | EnrichedContact[] = aiRows;
+      // 2. HubSpot pre-check — runs after AI enrichment and before ZoomInfo.
+      const rowsAfterPrecheck = await runHubSpotPreCheck(aiRows, resolvedListType, ac.signal);
+
+      // 3. ZoomInfo + Common Room — runs only after every AI batch above has finished.
+      let rowsAfterVerify: EnrichedCompany[] | EnrichedContact[] = rowsAfterPrecheck;
       try {
-        rowsAfterVerify = await runZoomVerify(aiRows, resolvedListType, ac.signal);
+        rowsAfterVerify = await runZoomVerify(rowsAfterPrecheck, resolvedListType, ac.signal);
       } catch (verifyErr) {
         if (verifyErr instanceof Error && verifyErr.name === "AbortError") {
           setStep("context");
@@ -1147,10 +1303,10 @@ export default function Home() {
               : "ZoomInfo / Common Room step failed.",
           );
         }
-        rowsAfterVerify = aiRows;
+        rowsAfterVerify = rowsAfterPrecheck;
       }
 
-      // 3. LinkedIn web search fallback — after verify; per-row gap-fill when linkedinUrl still empty (contacts + companies).
+      // 4. LinkedIn web search fallback — after verify; per-row gap-fill when linkedinUrl still empty (contacts + companies).
       let finalRows: EnrichedCompany[] | EnrichedContact[] = rowsAfterVerify;
       if (resolvedListType === "contacts") {
         const contactRowsAfterVerify = rowsAfterVerify as EnrichedContact[];
@@ -1482,12 +1638,6 @@ export default function Home() {
                   </p>
                 </div>
               </section>
-            )}
-
-            {busy && (
-              <p className="text-sm text-zinc-600 dark:text-zinc-400" role="status">
-                Parsing…
-              </p>
             )}
 
             {error && (

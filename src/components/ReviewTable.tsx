@@ -75,6 +75,12 @@ function getDisplayConfidence(
 }
 
 function initialCompanyReviewStatus(company: EnrichedCompany): EnrichedCompany["status"] {
+  if (
+    company.hubspotComplete &&
+    getDisplayConfidence(company, "companies") !== "unresolved"
+  ) {
+    return "approved";
+  }
   if (getDisplayConfidence(company, "companies") === "unresolved") {
     return "skipped";
   }
@@ -82,11 +88,43 @@ function initialCompanyReviewStatus(company: EnrichedCompany): EnrichedCompany["
 }
 
 function initialContactReviewStatus(contact: EnrichedContact): EnrichedContact["status"] {
+  if (
+    contact.hubspotComplete &&
+    getDisplayConfidence(contact, "contacts") !== "unresolved"
+  ) {
+    return "approved";
+  }
   return getDisplayConfidence(contact, "contacts") !== "unresolved" ? "approved" : "pending";
 }
 
 function rowKey(id: string, field: string): string {
   return `${id}:${field}`;
+}
+
+/** Matches ConfidenceBadge footprint: inline, rounded-full, px-2 py-0.5 text-xs. */
+function HubSpotPrecheckBadge(props: { complete: boolean }) {
+  return (
+    <span
+      className="inline-flex shrink-0 items-center whitespace-nowrap rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+      title={props.complete ? "Complete in HubSpot" : "In HubSpot (incomplete)"}
+    >
+      {props.complete ? "✓ HS" : "~ HS"}
+    </span>
+  );
+}
+
+/** Sort: non-approved first; within approved/non-approved, tier by display confidence per spec. */
+function reviewSortTier(
+  row: EnrichedCompany | EnrichedContact,
+  listType: "companies" | "contacts",
+): number {
+  const approved = row.status === "approved";
+  const disp = getDisplayConfidence(row, listType);
+  const unresolved = disp === "unresolved";
+  if (!approved && unresolved) return 0;
+  if (!approved && !unresolved) return 1;
+  if (approved && unresolved) return 2;
+  return 3;
 }
 
 function EditableCell(props: {
@@ -535,6 +573,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   const sortedRows = useMemo(() => {
     if (listType === "companies") {
       return [...(rows as EnrichedCompany[])].sort((a, b) => {
+        const ta = reviewSortTier(a, "companies");
+        const tb = reviewSortTier(b, "companies");
+        if (ta !== tb) return ta - tb;
         const da = getDisplayConfidence(a, "companies");
         const db = getDisplayConfidence(b, "companies");
         const oa = CONFIDENCE_ORDER[da] ?? 99;
@@ -551,6 +592,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
       });
     }
     return [...(rows as EnrichedContact[])].sort((a, b) => {
+      const ta = reviewSortTier(a, "contacts");
+      const tb = reviewSortTier(b, "contacts");
+      if (ta !== tb) return ta - tb;
       const da = getDisplayConfidence(a, "contacts");
       const db = getDisplayConfidence(b, "contacts");
       const oa = CONFIDENCE_ORDER[da] ?? 99;
@@ -756,7 +800,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                 <th className="border-b border-(--border-default) px-2 py-2">
                   LinkedIn Profile
                 </th>
-                <th className="border-b border-(--border-default) px-2 py-2">Confidence</th>
+                <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">
+                  Confidence
+                </th>
                 <th className="border-b border-(--border-default) px-2 py-2">Reasoning</th>
               </tr>
             ) : (
@@ -769,7 +815,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                 <th className="border-b border-(--border-default) px-2 py-2">
                   LinkedIn Profile
                 </th>
-                <th className="border-b border-(--border-default) px-2 py-2">Confidence</th>
+                <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">
+                  Confidence
+                </th>
                 <th className="border-b border-(--border-default) px-2 py-2">Reasoning</th>
               </tr>
             )}
@@ -782,18 +830,22 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   return (
                     <tr key={row.id} className={rowShellClass(row, ri)}>
                       <td className="px-2 py-1.5 align-middle">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-zinc-300"
-                          checked={checked}
-                          onChange={(e) => toggleApprove(row.id, e.target.checked)}
-                          aria-label="Approve row"
-                        />
+                        <div className="flex items-center justify-center">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-zinc-300"
+                            checked={checked}
+                            onChange={(e) => toggleApprove(row.id, e.target.checked)}
+                            aria-label="Approve row"
+                          />
+                        </div>
                       </td>
-                      <td className={`max-w-48 px-2 py-1.5 align-top wrap-break-word ${muted ? "text-zinc-500" : ""}`}>
+                      <td
+                        className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${muted ? "text-zinc-500" : ""}`}
+                      >
                         {row.rawInput}
                       </td>
-                      <td className="max-w-48 px-2 py-1.5 align-top wrap-break-word">
+                      <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
                         <EditableCell
                           value={row.resolvedName}
                           edited={editedKeys.has(rowKey(row.id, "resolvedName"))}
@@ -809,7 +861,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="max-w-48 px-2 py-1.5 align-top wrap-break-word">
+                      <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
                         <EditableCell
                           value={row.domain}
                           edited={editedKeys.has(rowKey(row.id, "domain"))}
@@ -828,7 +880,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="max-w-56 px-2 py-1.5 align-top">
+                      <td className="max-w-56 px-2 py-1.5 align-middle">
                         <StateRegionCell
                           value={row.state}
                           edited={editedKeys.has(rowKey(row.id, "state"))}
@@ -844,7 +896,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="px-2 py-1.5 align-top">
+                      <td className="px-2 py-1.5 align-middle">
                         <EmployeesCell
                           value={row.numberOfEmployees}
                           edited={editedKeys.has(rowKey(row.id, "numberOfEmployees"))}
@@ -859,7 +911,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-top break-all whitespace-normal">
+                      <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal">
                         <LinkedInProfileCell
                           value={row.linkedinUrl}
                           edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
@@ -875,11 +927,18 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="px-2 py-1.5 align-middle">
-                        <ConfidenceBadge score={getDisplayConfidence(row, "companies")} />
+                      <td className="min-w-[120px] px-2 py-1.5 align-middle">
+                        <div className="flex flex-nowrap items-center gap-1.5">
+                          <ConfidenceBadge score={getDisplayConfidence(row, "companies")} />
+                          {row.hubspotId ? (
+                            <HubSpotPrecheckBadge complete={row.hubspotComplete === true} />
+                          ) : null}
+                        </div>
                       </td>
                       <td className="max-w-56 px-2 py-1.5 align-middle wrap-break-word">
-                        <ReasoningTooltip text={row.aiReasoning} />
+                        <div className="flex items-center justify-center">
+                          <ReasoningTooltip text={row.aiReasoning} />
+                        </div>
                       </td>
                     </tr>
                   );
@@ -897,15 +956,17 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   return (
                     <tr key={row.id} className={rowShellClass(row, ri)}>
                       <td className="px-2 py-1.5 align-middle">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-zinc-300"
-                          checked={checked}
-                          onChange={(e) => toggleApprove(row.id, e.target.checked)}
-                          aria-label="Approve row"
-                        />
+                        <div className="flex items-center justify-center">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-zinc-300"
+                            checked={checked}
+                            onChange={(e) => toggleApprove(row.id, e.target.checked)}
+                            aria-label="Approve row"
+                          />
+                        </div>
                       </td>
-                      <td className="max-w-48 px-2 py-1.5 align-top wrap-break-word">
+                      <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
                         <EditableCell
                           value={fullName}
                           edited={editedKeys.has(rowKey(row.id, "name"))}
@@ -925,7 +986,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="max-w-48 break-all px-2 py-1.5 align-top">
+                      <td className="max-w-48 break-all px-2 py-1.5 align-middle">
                         <EditableCell
                           value={sanitizeUnknown(row.rawEmail)}
                           edited={editedKeys.has(rowKey(row.id, "rawEmail"))}
@@ -943,7 +1004,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="max-w-48 px-2 py-1.5 align-top wrap-break-word">
+                      <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
                         <EditableCell
                           value={sanitizeCompanyName(row.resolvedCompany)}
                           edited={editedKeys.has(rowKey(row.id, "resolvedCompany"))}
@@ -960,7 +1021,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="max-w-48 px-2 py-1.5 align-top wrap-break-word">
+                      <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
                         <EditableCell
                           value={sanitizeUnknown(row.title)}
                           edited={editedKeys.has(rowKey(row.id, "title"))}
@@ -977,7 +1038,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-top break-all whitespace-normal">
+                      <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal">
                         <LinkedInProfileCell
                           value={sanitizeUnknown(row.linkedinUrl)}
                           edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
@@ -995,11 +1056,18 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="px-2 py-1.5 align-middle">
-                        <ConfidenceBadge score={getDisplayConfidence(row, "contacts")} />
+                      <td className="min-w-[120px] px-2 py-1.5 align-middle">
+                        <div className="flex flex-nowrap items-center gap-1.5">
+                          <ConfidenceBadge score={getDisplayConfidence(row, "contacts")} />
+                          {row.hubspotId ? (
+                            <HubSpotPrecheckBadge complete={row.hubspotComplete === true} />
+                          ) : null}
+                        </div>
                       </td>
                       <td className="max-w-56 px-2 py-1.5 align-middle wrap-break-word">
-                        <ReasoningTooltip text={row.aiReasoning} />
+                        <div className="flex items-center justify-center">
+                          <ReasoningTooltip text={row.aiReasoning} />
+                        </div>
                       </td>
                     </tr>
                   );

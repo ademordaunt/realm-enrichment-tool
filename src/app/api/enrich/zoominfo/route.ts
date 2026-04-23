@@ -110,6 +110,12 @@ export async function POST(request: Request): Promise<Response> {
           const globalI = chunkRowOffset + localI;
           const row = allRows[localI]!;
 
+          if (row.hubspotComplete === true) {
+            mergedRows.push(row);
+            emitProgress(globalI);
+            continue;
+          }
+
           if (listType === "companies" && row.confidenceScore === "high") {
             mergedRows.push(row);
             emitProgress(globalI);

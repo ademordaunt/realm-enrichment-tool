@@ -41,7 +41,8 @@ export interface EnrichedCompany {
   enrichedByCommonRoom: boolean;
   enrichedByAI: boolean;
   status: "pending" | "approved" | "skipped" | "error";
-  hubspotId?: string;
+  hubspotId?: string | null;
+  hubspotComplete?: boolean;
   hubspotAction?: "create" | "update";
   revenue?: number;
   industry?: string;
@@ -75,7 +76,8 @@ export interface EnrichedContact {
   enrichedByCommonRoom: boolean;
   enrichedByAI: boolean;
   status: "pending" | "approved" | "skipped" | "error";
-  hubspotId?: string;
+  hubspotId?: string | null;
+  hubspotComplete?: boolean;
   hubspotAction?: "create" | "update";
   /** ZoomInfo → HubSpot only (push); not shown in review UI. */
   ziManagementLevel?: string;

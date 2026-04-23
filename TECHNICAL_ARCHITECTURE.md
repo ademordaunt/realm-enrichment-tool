@@ -87,7 +87,7 @@ Mapping:
 **1) ZoomInfo verify — `POST /api/enrich/zoominfo`**
 
 - **Content-Type:** `application/x-ndjson; charset=utf-8`.
-- **Events:** `progress` (row range + optional `detail`), then `done` with `{ type: "done", listType, rows, enrichedCount, creditsUsed }`, or `error` (optional `zoomInfoAuthFailure`).
+- **Events:** `progress` (row range + optional `detail`), then `done` with `{ type: "done", listType, rows, enrichedCount, cachedCount, creditsUsed }`, or `error` (optional `zoomInfoAuthFailure`).
 - **Why:** Serverless **`export const maxDuration = 9`** (seconds) on this route. Streaming lets the client show progress while work is in flight; the response still completes within one invocation.
 
 **2) HubSpot push — `POST /api/hubspot/push`**
@@ -167,7 +167,11 @@ Order on the client (`runEnrichment` in `page.tsx`):
 
 **Industry:** Response uses **`industries`** (array); first element’s `name` is read — **not** a top-level `industry` string (historical naming pitfall is documented in §7).
 
-**Credits (app-side counting):** In `zoominfo/route.ts`, `enrichedCount` increments when `enrichCompanyWithZoomInfo` returns `zi.enrichedByZoomInfo`. The `done` event sets `creditsUsed` equal to that count (operational mirror of ZoomInfo billable enrichments).
+**Credits/cache accounting (app-side):**
+
+- `enrichedCount`: rows that triggered a net-new ZoomInfo enrich.
+- `cachedCount`: rows served from enrichment cache (`enrichedByZoomInfo` cache hits).
+- `creditsUsed`: currently set equal to `enrichedCount` in the `done` event payload.
 
 ### Merge — companies (`mergeEnrichedCompany` in `merger.ts`)
 
@@ -310,6 +314,8 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 | **Contacts — properties written** | `firstname`, `lastname`, `email`, `jobtitle`, `company`, `hs_linkedin_url`, `state`, `phone`, `lead_source__deal_source`, `lead_source_description`, `hs_content_membership_notes`, `job_level`, `job_function`, `numemployees`, `industry`, `website` (see `contacts.ts`). |
 | **Lists** | Create: `POST /crm/v3/lists` with `name`, `objectTypeId` (`0-2` companies, `0-1` contacts), `processingType: "MANUAL"`, optional `folderId`. Membership: `PUT /crm/v3/lists/{listId}/memberships/add` with JSON array of record IDs. |
 | **Folders** | `GET /crm/v3/lists/folders` — parsed by `list-folders.ts`; UI uses folder id on list create in `push-handler` (`createStaticListForPush`). |
+| **Import Settings folder UX** | `PrePushScreen` uses a placeholder `Select a folder` (disabled), then explicit `No Folder`, then live folders. If placeholder or `No Folder` is chosen, `folderId` is omitted in push payload. |
+| **Success screen list URL** | Uses HubSpot object-list path: `https://app.hubspot.com/contacts/{portalId}/objectLists/{listId}/filters`. |
 
 ---
 
@@ -331,6 +337,7 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 
 - **TTL:** `60 * 60 * 24 * 30` seconds (**30 days**) for both company and contact cache keys in `enrichment-cache.ts`.
 - **Keys:** `company:<normalized_name>`, `contact:<normalized_email>`.
+- **Connectivity probe:** `checkKvConnectivity()` writes/reads `__health_check__` and logs explicit misconfiguration/health errors (called once at module load in `enrich/zoominfo/route.ts`).
 - **Free tier:** Subject to Vercel KV limits; heavy duplicate imports benefit from cache; sustained high QPS may require a paid tier (monitor Vercel dashboard).
 
 ### Vercel Functions
@@ -394,12 +401,14 @@ Open the Next.js dev server (default `http://localhost:3000`).
 
 ### Required env for full enrichment
 
-At minimum for a full path: `ANTHROPIC_API_KEY`, ZoomInfo pair, `HUBSPOT_ACCESS_TOKEN` for push, `COMMON_ROOM_API_KEY` if testing CR, and Vercel KV env vars for `@vercel/kv` if testing cache.
+At minimum for a full path: `ANTHROPIC_API_KEY`, ZoomInfo pair, `HUBSPOT_ACCESS_TOKEN` for push, `COMMON_ROOM_API_KEY` if testing CR, and Vercel KV env vars (`KV_REST_API_URL`, `KV_REST_API_TOKEN`) if testing cache.
 
 ### Testing without burning ZoomInfo credits
 
-- **KV cache:** After a successful company enrich, **`setCachedCompany`** stores by **normalized company name** key; **`enrichCompanyWithZoomInfo`** short-circuits when cache says `enrichedByZoomInfo` and fills gaps from cache.
-- **Contacts:** `getCachedContact(email)` similar pattern.
+- **KV cache:** After successful ZoomInfo enrich, rows are cached and reused.
+- **Companies:** cache key uses resolved company name fallback (`resolvedName ?? rawInput/rawName`), normalized to `company:<normalized_name>`.
+- **Contacts:** cache key uses email, normalized to `contact:<normalized_email>`; contact verify route can skip ZoomInfo when cache has `enrichedByZoomInfo`.
+- **Verify summary:** UI distinguishes net-new enrich (`enrichedCount`) vs cached rows (`cachedCount`) and reports `0 credits` when all served from cache.
 - Re-use the **same** CSV company name / email to hit cache within TTL (**30 days**).
 
 ---
@@ -409,7 +418,7 @@ At minimum for a full path: `ANTHROPIC_API_KEY`, ZoomInfo pair, `HUBSPOT_ACCESS_
 ```text
 {"type":"progress","start":1,"end":1,"total":57,"detail":"ZoomInfo enriching 1 of 40 companies…"}
 …
-{"type":"done","listType":"companies","rows":[…],"enrichedCount":12,"creditsUsed":12}
+{"type":"done","listType":"companies","rows":[…],"enrichedCount":12,"cachedCount":5,"creditsUsed":12}
 ```
 
 ---

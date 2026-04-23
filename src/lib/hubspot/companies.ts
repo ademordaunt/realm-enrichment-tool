@@ -7,13 +7,112 @@ export type HubSpotCompanyPushExtras = {
   notes?: string;
 };
 
-function normalizeDomain(domain: string): string {
+export function normalizeDomain(domain: string): string {
   return domain
     .trim()
     .toLowerCase()
     .replace(/^https?:\/\//, "")
     .replace(/^www\./, "")
     .split("/")[0]!;
+}
+
+type HubSpotCompanyPrecheckResult = {
+  hubspotId: string;
+  existingData: Record<string, string>;
+};
+
+const COMPANY_PRECHECK_PROPERTIES = [
+  "domain",
+  "state",
+  "numberofemployees",
+  "linkedin_company_page",
+  "industry",
+  "description",
+  "city",
+] as const;
+
+function chunkValues(values: string[], size: number): string[][] {
+  const chunks: string[][] = [];
+  for (let i = 0; i < values.length; i += size) {
+    chunks.push(values.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function hubspotSearchWithBackoff(path: string, body: string): Promise<Response> {
+  const delays = [1000, 3000];
+  let attempt = 0;
+  while (true) {
+    const res = await hubspotFetch(path, { method: "POST", body });
+    if (res.status !== 429) return res;
+    if (attempt >= delays.length) return res;
+    await new Promise((resolve) => setTimeout(resolve, delays[attempt]!));
+    attempt += 1;
+  }
+}
+
+export async function batchCheckCompaniesInHubSpot(
+  domains: string[],
+): Promise<Map<string, HubSpotCompanyPrecheckResult>> {
+  const normalizedDomains = Array.from(
+    new Set(
+      domains
+        .map((domain) => normalizeDomain(domain))
+        .filter((domain) => Boolean(domain)),
+    ),
+  );
+
+  const results = new Map<string, HubSpotCompanyPrecheckResult>();
+  if (normalizedDomains.length === 0) return results;
+
+  for (const domainBatch of chunkValues(normalizedDomains, 100)) {
+    let after: string | undefined;
+    do {
+      const searchBody = {
+        filterGroups: [
+          {
+            filters: [
+              {
+                propertyName: "domain",
+                operator: "IN",
+                values: domainBatch,
+              },
+            ],
+          },
+        ],
+        limit: 200,
+        properties: [...COMPANY_PRECHECK_PROPERTIES],
+        sorts: [{ propertyName: "hs_lastmodifieddate", direction: "DESCENDING" }],
+        ...(after ? { after } : {}),
+      };
+      const res = await hubspotSearchWithBackoff(
+        "/crm/v3/objects/companies/search",
+        JSON.stringify(searchBody),
+      );
+
+      if (!res.ok) {
+        throw new Error(await readHubSpotError(res));
+      }
+
+      const json = (await res.json()) as {
+        results?: Array<{ id: string; properties?: Record<string, string | null> }>;
+        paging?: { next?: { after?: string } };
+      };
+      for (const row of json.results ?? []) {
+        const props = row.properties ?? {};
+        const normalized = normalizeDomain(String(props.domain ?? ""));
+        if (!normalized || results.has(normalized)) continue;
+        const existingData: Record<string, string> = {};
+        for (const key of COMPANY_PRECHECK_PROPERTIES) {
+          existingData[key] = String(props[key] ?? "");
+        }
+        results.set(normalized, { hubspotId: String(row.id), existingData });
+      }
+      after = json.paging?.next?.after;
+    } while (after);
+  }
+
+  return results;
 }
 
 function websiteFromDomain(domain: string): string {
