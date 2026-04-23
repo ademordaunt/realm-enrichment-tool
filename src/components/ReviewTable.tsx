@@ -986,7 +986,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="max-w-48 break-all px-2 py-1.5 align-middle">
+                      <td className="min-w-0 max-w-48 break-all px-2 py-1.5 align-middle">
                         <EditableCell
                           value={sanitizeUnknown(row.rawEmail)}
                           edited={editedKeys.has(rowKey(row.id, "rawEmail"))}

@@ -143,6 +143,25 @@ function linkedInUrlFromSocialMediaUrls(attrs: Record<string, unknown>): string 
   return null;
 }
 
+async function enrichWithRetry<T>(
+  fn: () => Promise<T>,
+  retries = 3,
+): Promise<T> {
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const status = (err as { status?: number })?.status;
+      if (status === 429 && i < retries - 1) {
+        await sleep(2000 * (i + 1));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Max retries exceeded");
+}
+
 /**
  * Search then enrich company. Returns partial ZoomInfo fields plus `originalConfidence`
  * for merge mode; merger applies gap-fill vs ZoomInfo-wins.
@@ -394,6 +413,209 @@ export async function enrichCompanyWithZoomInfo(
   await setCachedCompany(cacheKeyName, mergedFull);
 
   return ziMeta(out);
+}
+
+export async function enrichCompaniesWithZoomInfo(
+  companies: EnrichedCompany[],
+): Promise<Map<string, ZoomInfoCompanyEnrichmentResult>> {
+  const out = new Map<string, ZoomInfoCompanyEnrichmentResult>();
+  if (companies.length === 0) return out;
+
+  const cacheKeyById = new Map<string, string>();
+  const companyIdToRowId = new Map<string, string>();
+  const needsSearch: EnrichedCompany[] = [];
+  const ziMetaFor = (
+    row: EnrichedCompany,
+    fields: Partial<EnrichedCompany>,
+    options?: { cachedHit?: boolean },
+  ): ZoomInfoCompanyEnrichmentResult => ({
+    ...fields,
+    originalConfidence: row.confidenceScore,
+    ...(options?.cachedHit ? { cachedHit: true } : {}),
+  });
+
+  for (const company of companies) {
+    const cacheKeyName = company.resolvedName ?? company.rawInput;
+    cacheKeyById.set(company.id, cacheKeyName);
+    const cached = await getCachedCompany(cacheKeyName);
+    if (cached?.enrichedByZoomInfo) {
+      const partial: Partial<EnrichedCompany> = {};
+      if (!company.linkedinUrl?.trim() && cached.linkedinUrl?.trim()) {
+        partial.linkedinUrl = cached.linkedinUrl.trim();
+      }
+      if (
+        company.numberOfEmployees == null &&
+        cached.numberOfEmployees != null &&
+        !Number.isNaN(Number(cached.numberOfEmployees))
+      ) {
+        partial.numberOfEmployees = Number(cached.numberOfEmployees);
+      }
+      if (!company.state?.trim() && cached.state?.trim()) partial.state = cached.state.trim();
+      if (!company.domain?.trim() && cached.domain?.trim()) partial.domain = cached.domain.trim();
+      if (!company.resolvedName?.trim() && cached.resolvedName?.trim()) {
+        partial.resolvedName = cached.resolvedName.trim();
+      }
+      if (
+        company.revenue == null &&
+        cached.revenue != null &&
+        !Number.isNaN(Number(cached.revenue))
+      ) {
+        partial.revenue = Number(cached.revenue);
+      }
+      if (!company.industry?.trim() && cached.industry?.trim()) partial.industry = cached.industry.trim();
+      if (!company.description?.trim() && cached.description?.trim()) {
+        partial.description = cached.description.trim();
+      }
+      if (!company.city?.trim() && cached.city?.trim()) partial.city = cached.city.trim();
+      partial.enrichedByZoomInfo = true;
+      out.set(company.id, ziMetaFor(company, partial, { cachedHit: true }));
+      continue;
+    }
+    needsSearch.push(company);
+  }
+
+  if (needsSearch.length === 0) return out;
+
+  for (const company of needsSearch) {
+    const searchBody = {
+      data: {
+        type: "CompanySearch",
+        attributes: {
+          companyName: company.rawInput,
+          ...(company.domain ? { companyWebsite: company.domain } : {}),
+        },
+      },
+    };
+    const searchRes = await enrichWithRetry(() =>
+      zoomInfoFetch(SEARCH_COMPANY_URL, { method: "POST", body: JSON.stringify(searchBody) }, true),
+    );
+    if (!searchRes.ok) {
+      out.set(company.id, ziMetaFor(company, {}));
+      continue;
+    }
+    const searchJson = (await searchRes.json()) as unknown;
+    const searchData = isRecord(searchJson) ? searchJson.data : undefined;
+    const searchResults = Array.isArray(searchData) ? searchData : [];
+    const firstResource = isRecord(searchResults[0]) ? searchResults[0] : null;
+    const rawCompanyId = firstResource?.id;
+    const companyId =
+      typeof rawCompanyId === "string"
+        ? rawCompanyId
+        : typeof rawCompanyId === "number"
+          ? String(rawCompanyId)
+          : null;
+    if (!companyId || !hasCompanySearchMatch(searchJson, firstCompanySearchHit(searchJson))) {
+      out.set(company.id, ziMetaFor(company, {}));
+      continue;
+    }
+    companyIdToRowId.set(companyId, company.id);
+  }
+
+  if (companyIdToRowId.size === 0) return out;
+
+  const enrichBody = {
+    data: {
+      type: "CompanyEnrich",
+      attributes: {
+        matchCompanyInput: Array.from(companyIdToRowId.keys()).map((companyId) => ({ companyId })),
+        outputFields: [
+          "id",
+          "name",
+          "website",
+          "socialMediaUrls",
+          "employeeCount",
+          "state",
+          "revenue",
+          "industries",
+          "description",
+          "city",
+        ],
+      },
+    },
+  };
+
+  const enrichRes = await enrichWithRetry(() =>
+    zoomInfoFetch(ENRICH_COMPANY_URL, { method: "POST", body: JSON.stringify(enrichBody) }, true),
+  );
+  if (!enrichRes.ok) {
+    for (const company of needsSearch) {
+      if (!out.has(company.id)) out.set(company.id, ziMetaFor(company, {}));
+    }
+    return out;
+  }
+
+  const enrichJson = (await enrichRes.json()) as unknown;
+  const enrichDataRoot = isRecord(enrichJson) ? enrichJson.data : undefined;
+  const enrichItems = Array.isArray(enrichDataRoot)
+    ? enrichDataRoot
+    : enrichDataRoot && isRecord(enrichDataRoot)
+      ? [enrichDataRoot]
+      : [];
+
+  for (const item of enrichItems) {
+    if (!isRecord(item)) continue;
+    const idRaw = item.id;
+    const zoomCompanyId =
+      typeof idRaw === "string"
+        ? idRaw
+        : typeof idRaw === "number"
+          ? String(idRaw)
+          : null;
+    if (!zoomCompanyId) continue;
+    const rowId = companyIdToRowId.get(zoomCompanyId);
+    if (!rowId) continue;
+    const company = needsSearch.find((row) => row.id === rowId);
+    if (!company) continue;
+    const attrs = isRecord(item.attributes) ? item.attributes : {};
+    const linkedInUrl = linkedInUrlFromSocialMediaUrls(attrs);
+    const employeeCountRaw = attrs.employeeCount;
+    const employeeCount =
+      employeeCountRaw != null && !Number.isNaN(Number(employeeCountRaw))
+        ? Number(employeeCountRaw)
+        : null;
+    const state = typeof attrs.state === "string" ? attrs.state.trim() : null;
+    const revenueRaw = attrs.revenue;
+    const revenue =
+      revenueRaw != null && !Number.isNaN(Number(revenueRaw)) ? Number(revenueRaw) : null;
+    const industries = attrs.industries;
+    let industry: string | null = null;
+    if (Array.isArray(industries) && industries.length > 0) {
+      const first = industries[0];
+      if (isRecord(first) && typeof first.name === "string") industry = first.name.trim() || null;
+    }
+    const description =
+      typeof attrs.description === "string" ? attrs.description.trim() || null : null;
+    const city = typeof attrs.city === "string" ? attrs.city.trim() || null : null;
+
+    const partial: Partial<EnrichedCompany> = {};
+    if (linkedInUrl) partial.linkedinUrl = linkedInUrl;
+    if (employeeCount != null) partial.numberOfEmployees = employeeCount;
+    if (state) partial.state = state;
+    if (typeof attrs.website === "string" && attrs.website.trim()) {
+      partial.domain = normalizeDomain(attrs.website);
+    }
+    if (typeof attrs.name === "string" && attrs.name.trim()) partial.resolvedName = attrs.name.trim();
+    if (revenue != null) partial.revenue = revenue;
+    if (industry) partial.industry = industry;
+    if (description) partial.description = description;
+    if (city) partial.city = city;
+    partial.enrichedByZoomInfo = true;
+
+    const mergedFull: EnrichedCompany = {
+      ...company,
+      ...partial,
+      confidenceScore: "high",
+      enrichedByZoomInfo: true,
+    };
+    const cacheKeyName = cacheKeyById.get(company.id) ?? (company.resolvedName ?? company.rawInput);
+    await setCachedCompany(cacheKeyName, mergedFull);
+    out.set(company.id, ziMetaFor(company, partial));
+  }
+
+  for (const company of needsSearch) {
+    if (!out.has(company.id)) out.set(company.id, ziMetaFor(company, {}));
+  }
+  return out;
 }
 
 export async function enrichContactWithZoomInfo(
@@ -666,6 +888,185 @@ export async function enrichContactWithZoomInfo(
   }
 
   return ziMeta(out);
+}
+
+export async function enrichContactsWithZoomInfo(
+  contacts: EnrichedContact[],
+): Promise<Map<string, ZoomInfoContactEnrichmentResult>> {
+  const out = new Map<string, ZoomInfoContactEnrichmentResult>();
+  if (contacts.length === 0) return out;
+
+  const personIdToRowId = new Map<string, string>();
+  const enrichInputsByRowId = new Map<string, { emailAddress?: string; personId?: string }>();
+  const ziMetaFor = (
+    row: EnrichedContact,
+    fields: Partial<EnrichedContact>,
+  ): ZoomInfoContactEnrichmentResult => ({
+    ...fields,
+    originalConfidence: row.confidenceScore,
+  });
+
+  for (const contact of contacts) {
+    const rawEmail = contact.rawEmail?.trim() ?? "";
+    const hasWorkEmail = Boolean(rawEmail) && !contact.isPersonalEmail;
+    if (hasWorkEmail) {
+      enrichInputsByRowId.set(contact.id, { emailAddress: rawEmail });
+      continue;
+    }
+    const searchBody = {
+      data: {
+        type: "ContactSearch",
+        attributes: {
+          firstName: contact.firstName,
+          lastName: contact.lastName,
+          ...(contact.rawEmail && !contact.isPersonalEmail
+            ? { emailAddress: contact.rawEmail }
+            : {}),
+          ...(contact.resolvedCompany ? { companyName: contact.resolvedCompany } : {}),
+        },
+      },
+    };
+    const searchRes = await enrichWithRetry(() =>
+      zoomInfoFetch(SEARCH_CONTACT_URL, { method: "POST", body: JSON.stringify(searchBody) }, true),
+    );
+    if (!searchRes.ok) {
+      out.set(contact.id, ziMetaFor(contact, {}));
+      continue;
+    }
+    const searchJson = (await searchRes.json()) as unknown;
+    const searchData = isRecord(searchJson) ? searchJson.data : undefined;
+    const searchResults = Array.isArray(searchData) ? searchData : [];
+    const firstResource = isRecord(searchResults[0]) ? searchResults[0] : null;
+    const rawPid = firstResource?.id;
+    const personId =
+      typeof rawPid === "string"
+        ? rawPid
+        : typeof rawPid === "number"
+          ? String(rawPid)
+          : null;
+    if (!personId) {
+      out.set(contact.id, ziMetaFor(contact, {}));
+      continue;
+    }
+    personIdToRowId.set(personId, contact.id);
+    enrichInputsByRowId.set(contact.id, { personId });
+  }
+
+  const matchPersonInput = contacts
+    .map((row) => enrichInputsByRowId.get(row.id))
+    .filter(Boolean) as Array<{ emailAddress?: string; personId?: string }>;
+
+  if (matchPersonInput.length === 0) return out;
+
+  const enrichBody = {
+    data: {
+      type: "ContactEnrich",
+      attributes: {
+        matchPersonInput,
+        outputFields: [
+          "id",
+          "firstName",
+          "lastName",
+          "jobTitle",
+          "externalUrls",
+          "state",
+          "city",
+          "companyName",
+          "companyId",
+          "companyPrimaryIndustry",
+          "companyEmployeeCount",
+          "companyWebsite",
+          "managementLevel",
+          "jobFunction",
+          "phone",
+          "mobilePhone",
+          "email",
+          "contactAccuracyScore",
+        ],
+      },
+    },
+  };
+  const enrichRes = await enrichWithRetry(() =>
+    zoomInfoFetch(ENRICH_CONTACT_URL, { method: "POST", body: JSON.stringify(enrichBody) }, true),
+  );
+  if (!enrichRes.ok) {
+    for (const contact of contacts) if (!out.has(contact.id)) out.set(contact.id, ziMetaFor(contact, {}));
+    return out;
+  }
+
+  const enrichJson = (await enrichRes.json()) as unknown;
+  const enrichDataRoot = isRecord(enrichJson) ? enrichJson.data : undefined;
+  const enrichItems = Array.isArray(enrichDataRoot)
+    ? enrichDataRoot
+    : enrichDataRoot && isRecord(enrichDataRoot)
+      ? [enrichDataRoot]
+      : [];
+
+  for (const item of enrichItems) {
+    if (!isRecord(item)) continue;
+    const attrs = isRecord(item.attributes) ? item.attributes : {};
+    const rawPid = item.id;
+    const personId =
+      typeof rawPid === "string" ? rawPid : typeof rawPid === "number" ? String(rawPid) : null;
+    let rowId = personId ? personIdToRowId.get(personId) : undefined;
+    if (!rowId && typeof attrs.email === "string") {
+      const normalizedEmail = attrs.email.trim().toLowerCase();
+      const byEmail = contacts.find((row) => row.rawEmail.trim().toLowerCase() === normalizedEmail);
+      rowId = byEmail?.id;
+    }
+    if (!rowId) continue;
+    const contact = contacts.find((row) => row.id === rowId);
+    if (!contact) continue;
+
+    const linkedinUrl = Array.isArray(attrs.externalUrls)
+      ? (attrs.externalUrls.find(
+          (u: unknown): u is { url: string } => isUrlObject(u) && u.url.includes("linkedin.com"),
+        )?.url ?? null)
+      : null;
+    const ziAttrStr = (v: unknown): string | null => {
+      if (typeof v === "string") return v.trim() || null;
+      if (typeof v === "number" && !Number.isNaN(v)) return String(v);
+      if (isRecord(v) && typeof v.name === "string") return v.name.trim() || null;
+      return null;
+    };
+    const result: Partial<EnrichedContact> = {};
+    if (typeof attrs.jobTitle === "string" && attrs.jobTitle.trim()) result.title = attrs.jobTitle.trim();
+    if (typeof linkedinUrl === "string" && linkedinUrl.trim()) result.linkedinUrl = linkedinUrl.trim();
+    if (typeof attrs.companyName === "string" && attrs.companyName.trim()) {
+      result.resolvedCompany = attrs.companyName.trim();
+    }
+    const city = typeof attrs.city === "string" ? attrs.city.trim() : "";
+    const state = typeof attrs.state === "string" ? attrs.state.trim() : "";
+    const loc = [city, state].filter(Boolean).join(", ");
+    if (loc) result.location = loc;
+    const phone = typeof attrs.phone === "string" ? attrs.phone.trim() : "";
+    const mobile = typeof attrs.mobilePhone === "string" ? attrs.mobilePhone.trim() : "";
+    if (phone || mobile) result.phone = phone || mobile;
+    const ml = ziAttrStr(attrs.managementLevel);
+    if (ml) result.ziManagementLevel = ml;
+    const jf = ziAttrStr(attrs.jobFunction);
+    if (jf) result.ziJobFunction = jf;
+    const emp = ziAttrStr(attrs.companyEmployeeCount);
+    if (emp) result.ziCompanyEmployeeCount = emp;
+    const ind = ziAttrStr(attrs.companyPrimaryIndustry);
+    if (ind) result.ziCompanyPrimaryIndustry = ind;
+    const web = ziAttrStr(attrs.companyWebsite);
+    if (web) result.ziCompanyWebsite = web;
+    result.enrichedByZoomInfo = true;
+
+    const mergedFull: EnrichedContact = {
+      ...contact,
+      ...result,
+      confidenceScore: "high",
+      enrichedByZoomInfo: true,
+    };
+    const cacheEmail = contact.rawEmail?.trim();
+    if (cacheEmail) await setCachedContact(cacheEmail, mergedFull);
+    out.set(contact.id, ziMetaFor(contact, result));
+  }
+
+  for (const contact of contacts) if (!out.has(contact.id)) out.set(contact.id, ziMetaFor(contact, {}));
+  return out;
 }
 
 export { sleep as delayBetweenZoomInfoCalls };

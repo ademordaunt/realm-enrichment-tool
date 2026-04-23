@@ -429,6 +429,8 @@ export interface EventContextFormProps {
   onBackToUpload?: () => void;
   /** Original upload file name — used to pre-fill Event Name once. */
   sourceFileName?: string | null;
+  /** From starter screen; stored on submitted EventContext. */
+  importMode?: "event" | "bulk";
 }
 
 export function EventContextForm({
@@ -438,6 +440,7 @@ export function EventContextForm({
   initialValues = null,
   onBackToUpload,
   sourceFileName = null,
+  importMode = "event",
 }: EventContextFormProps) {
   const [eventName, setEventName] = useState("");
   const [monthName, setMonthName] = useState<string>("");
@@ -518,14 +521,20 @@ export function EventContextForm({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!monthYearForPrompt.trim()) return;
-    if (!region.trim() && !noStateRegionSelected) return;
+    if (!eventName.trim()) return;
+    if (importMode === "event") {
+      if (!monthYearForPrompt.trim()) return;
+      if (!region.trim() && !noStateRegionSelected) return;
+    }
+    const eventDateForSubmit =
+      importMode === "bulk" && !monthYearForPrompt.trim() ? "" : monthYearForPrompt.trim();
     onSubmit({
       eventName: eventName.trim(),
-      eventDate: monthYearForPrompt.trim(),
+      eventDate: eventDateForSubmit,
       region: region.trim(),
       audienceLevel: listType === "contacts" ? audienceLevel.trim() : "",
       listType,
+      importMode,
     });
   };
 
@@ -543,16 +552,21 @@ export function EventContextForm({
 
       <form onSubmit={handleSubmit} className={`flex flex-col ${cardClass}`}>
         <div>
-          <h2 className="text-lg font-semibold text-(--realm-navy)">Event Context</h2>
+          <h2 className="text-lg font-semibold text-(--realm-navy)">
+            {importMode === "bulk" ? "List Context" : "Event Context"}
+          </h2>
           <p className="mt-1 text-sm text-(--text-muted)">
-            Describe the event so AI enrichment can resolve names accurately.
+            {importMode === "bulk"
+              ? "Describe the list so AI can resolve company names accurately."
+              : "Describe the event so AI enrichment can resolve names accurately."}
           </p>
         </div>
 
         <div className="grid gap-5 sm:grid-cols-2">
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium text-(--text-primary)">
-              Event Name <span className="text-(--color-error)">*</span>
+              {importMode === "bulk" ? "List Name" : "Event Name"}{" "}
+              <span className="text-(--color-error)">*</span>
             </span>
             <div className="relative">
               <input
@@ -574,12 +588,13 @@ export function EventContextForm({
 
           <div className="flex flex-col gap-1 text-sm sm:col-span-2">
             <span className="font-medium text-(--text-primary)">
-              Event Date <span className="text-(--color-error)">*</span>
+              Event Date{" "}
+              {importMode === "event" ? <span className="text-(--color-error)">*</span> : null}
             </span>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="relative">
                 <select
-                  required
+                  required={importMode === "event"}
                   className={selectClass}
                   value={monthName}
                   onChange={(e) => setMonthName(e.target.value)}
@@ -601,7 +616,7 @@ export function EventContextForm({
               </div>
               <div className="relative">
                 <select
-                  required
+                  required={importMode === "event"}
                   className={selectClass}
                   value={year}
                   onChange={(e) => setYear(e.target.value)}
@@ -626,12 +641,13 @@ export function EventContextForm({
 
           <label className="flex flex-col gap-1 text-sm">
             <span className="font-medium text-(--text-primary)">
-              State / Region <span className="text-(--color-error)">*</span>
+              State / Region{" "}
+              {importMode === "event" ? <span className="text-(--color-error)">*</span> : null}
             </span>
             {region ? (
               <div className="relative">
                 <select
-                  required
+                  required={importMode === "event"}
                   className={selectClass}
                   value={region}
                   onChange={(e) => {
@@ -742,13 +758,16 @@ export function EventContextForm({
               htmlFor="audience-type"
             >
               <span className="font-medium text-(--text-primary)">
-                Audience Type <span className="text-(--color-error)">*</span>
+                Audience Type{" "}
+                {importMode === "event" ? <span className="text-(--color-error)">*</span> : null}
               </span>
               <div className="relative">
                 <input
                   id="audience-type"
-                  required
-                  aria-label="Audience type (required)"
+                  required={importMode === "event"}
+                  aria-label={
+                    importMode === "event" ? "Audience type (required)" : "Audience type (optional)"
+                  }
                   className={`${inputWithTrailingIconClass} ${!audienceTouched ? "text-(--text-muted)" : ""}`}
                   value={audienceLevel}
                   onChange={(e) => setAudienceLevel(e.target.value)}
@@ -772,7 +791,7 @@ export function EventContextForm({
             disabled={disabled}
             className="rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Run AI Enrichment
+            {importMode === "bulk" ? "Run AI Cleaning" : "Run Enrichment Pipeline"}
           </button>
         </div>
       </form>

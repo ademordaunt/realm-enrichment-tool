@@ -266,7 +266,7 @@ export async function POST(request: Request): Promise<Response> {
           }
 
           if (localI < allRows.length - 1) {
-            await delayBetweenZoomInfoCalls(200);
+            await delayBetweenZoomInfoCalls(50);
           }
         }
 

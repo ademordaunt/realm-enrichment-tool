@@ -371,6 +371,9 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 | `COMMON_ROOM_API_KEY` | Common Room members API. **Server only.** |
 | `HUBSPOT_ACCESS_TOKEN` | HubSpot CRM API. **Server only.** |
 | `NEXT_PUBLIC_HUBSPOT_PORTAL_ID` | Portal ID for building list URLs in **`SuccessScreen.tsx`** — **public** (not a secret). |
+| `QSTASH_TOKEN` | Upstash QStash publish token for background job queueing. **Server only.** |
+| `QSTASH_CURRENT_SIGNING_KEY` / `QSTASH_NEXT_SIGNING_KEY` | Upstash signature verification keys for `/api/jobs/process`. **Server only.** |
+| `NEXT_PUBLIC_APP_URL` | Base URL used when publishing QStash callback URL (`/api/jobs/process`). Public env. |
 
 KV uses Vercel’s env wiring for `@vercel/kv` (see Vercel project settings).
 

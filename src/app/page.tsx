@@ -1,13 +1,17 @@
 "use client";
 
+import { CostEstimateScreen } from "@/components/CostEstimateScreen";
+import { BulkProgressScreen } from "@/components/BulkProgressScreen";
 import { EventContextForm } from "@/components/EventContextForm";
 import { EnrichmentProgress } from "@/components/EnrichmentProgress";
+import { StarterScreen } from "@/components/StarterScreen";
 import type { PrePushSettings } from "@/components/PrePushScreen";
 import { PrePushScreen } from "@/components/PrePushScreen";
 import { applyInitialReviewStatus, ReviewTable } from "@/components/ReviewTable";
 import { SuccessScreen } from "@/components/SuccessScreen";
 import type { HubSpotPushDonePayload } from "@/lib/hubspot/push-result";
 import type {
+  BulkJobState,
   EnrichedCompany,
   EnrichedContact,
   EventContext,
@@ -38,6 +42,7 @@ const PREVIEW_MAX_ROWS = 50;
 /** Rows per ZoomInfo verify request — aligned with API `maxDuration` and inter-row delay. */
 const ZOOM_VERIFY_CHUNK_SIZE = 15;
 const SESSION_STORAGE_KEY = "realm-enrichment-session-v1";
+const BULK_JOB_SESSION_KEY = "realm-bulk-job-id";
 
 /** Prefer `detail` from standardized API error JSON; fall back to `error`. */
 function apiJsonErrorMessage(o: { error?: string; detail?: string }): string {
@@ -83,12 +88,15 @@ const UPLOAD_FADE_IN = "animate-[fadeIn_0.3s_ease-in]";
 
 function breadcrumbIndex(s: Step): number {
   switch (s) {
+    case "starter":
+      return -1;
     case "upload":
       return 0;
     case "context":
       return 1;
     case "enriching":
     case "verifying":
+    case "costestimate":
       return 2;
     case "enriched":
       return 3;
@@ -103,10 +111,12 @@ function breadcrumbIndex(s: Step): number {
 }
 
 type Step =
+  | "starter"
   | "upload"
   | "context"
   | "enriching"
   | "verifying"
+  | "costestimate"
   | "enriched"
   | "prepush"
   | "pushing"
@@ -114,6 +124,7 @@ type Step =
 
 type PersistedSession = {
   step: Step;
+  wizardImportMode?: "event" | "bulk";
   enrichedData: EnrichedCompany[] | EnrichedContact[] | null;
   approvedRows: Array<EnrichedCompany | EnrichedContact>;
   eventContext: EventContext | null;
@@ -701,7 +712,25 @@ async function consumePushNdjson(
 }
 
 export default function Home() {
-  const [step, setStep] = useState<Step>("upload");
+  const [step, setStep] = useState<Step>("starter");
+  const [wizardImportMode, setWizardImportMode] = useState<"event" | "bulk">("event");
+  const [bulkSmallListBypass, setBulkSmallListBypass] = useState(false);
+  const [showEnrichmentInterruptedBanner, setShowEnrichmentInterruptedBanner] = useState(false);
+  const [costEstimateMeta, setCostEstimateMeta] = useState<{
+    totalRows: number;
+    hubspotCompleteCount: number;
+  } | null>(null);
+  const [precheckHubspotSkipCount, setPrecheckHubspotSkipCount] = useState<number | null>(null);
+  const [bulkJobId, setBulkJobId] = useState<string | null>(null);
+  const [bulkJobState, setBulkJobState] = useState<BulkJobState | null>(null);
+  const bulkPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const bulkContinueRef = useRef<{
+    rows: EnrichedCompany[] | EnrichedContact[];
+    listType: "companies" | "contacts";
+    signal: AbortSignal;
+  } | null>(null);
+  /** Resolves when the user taps Proceed on the bulk cost estimate screen (runEnrichment awaits this). */
+  const bulkCostGateResolveRef = useRef<(() => void) | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -788,6 +817,10 @@ export default function Home() {
         clearTimeout(enrichmentBannerTimeoutRef.current);
         enrichmentBannerTimeoutRef.current = null;
       }
+      if (bulkPollTimerRef.current) {
+        clearInterval(bulkPollTimerRef.current);
+        bulkPollTimerRef.current = null;
+      }
     };
   }, []);
 
@@ -807,7 +840,17 @@ export default function Home() {
         setResult(saved.parseResult);
       }
       if (saved.eventContext) {
-        setEventContext(saved.eventContext);
+        const ec = saved.eventContext as EventContext;
+        setEventContext({
+          ...ec,
+          importMode: ec.importMode ?? saved.wizardImportMode ?? "event",
+        });
+      }
+      if (saved.wizardImportMode === "bulk" || saved.wizardImportMode === "event") {
+        setWizardImportMode(saved.wizardImportMode);
+      } else if (saved.eventContext) {
+        const im = (saved.eventContext as EventContext).importMode;
+        if (im === "bulk" || im === "event") setWizardImportMode(im);
       }
       if (saved.enrichedData) {
         setEnriched(saved.enrichedData);
@@ -819,29 +862,127 @@ export default function Home() {
       if (Array.isArray(saved.approvedRows)) {
         restoredApprovedIdsRef.current = new Set(saved.approvedRows.map((r) => r.id));
       }
-      setStep(saved.step ?? "upload");
+      let nextStep = (saved.step ?? "starter") as Step;
+      if (nextStep === "enriching" || nextStep === "verifying") {
+        nextStep = "context";
+        setShowEnrichmentInterruptedBanner(true);
+      }
+      setStep(nextStep);
+      if (typeof window !== "undefined") {
+        const savedBulkJobId = window.sessionStorage.getItem(BULK_JOB_SESSION_KEY);
+        if (savedBulkJobId) {
+          setBulkJobId(savedBulkJobId);
+        }
+      }
     } catch {
       clearSessionSnapshot();
     }
   }, [clearSessionSnapshot]);
 
+  const stopJobPolling = useCallback(() => {
+    if (bulkPollTimerRef.current) {
+      clearInterval(bulkPollTimerRef.current);
+      bulkPollTimerRef.current = null;
+    }
+  }, []);
+
+  const loadCompletedBulkRows = useCallback(
+    async (jobId: string, listType: "companies" | "contacts") => {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/rows`, {
+        method: "GET",
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        throw new Error(`Failed to load completed rows (${res.status})`);
+      }
+      const payload = (await res.json()) as {
+        rows: EnrichedCompany[] | EnrichedContact[];
+      };
+      setEnriched(payload.rows);
+      setEnrichedListType(listType);
+      setStep("enriched");
+      setShowEnrichmentInterruptedBanner(false);
+      setProgress(null);
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(BULK_JOB_SESSION_KEY);
+      }
+      setBulkJobId(null);
+    },
+    [],
+  );
+
+  const startJobPolling = useCallback(
+    (jobId: string) => {
+      stopJobPolling();
+      const tick = async () => {
+        try {
+          const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/status`, {
+            method: "GET",
+            cache: "no-store",
+          });
+          if (!res.ok) return;
+          const state = (await res.json()) as BulkJobState;
+          setBulkJobState(state);
+          setProgress({
+            startRow: 1,
+            endRow: state.processedRows,
+            totalRows: state.totalRows || 1,
+            detail: `Bulk job ${state.currentPhase}: ${state.processedRows} of ${state.totalRows}`,
+          });
+
+          if (state.status === "complete") {
+            stopJobPolling();
+            await loadCompletedBulkRows(jobId, state.listType);
+            return;
+          }
+          if (state.status === "failed" || state.status === "cancelled") {
+            stopJobPolling();
+            return;
+          }
+        } catch (err) {
+          console.error("[bulk-job] polling failed", err);
+        }
+      };
+      void tick();
+      bulkPollTimerRef.current = setInterval(() => {
+        void tick();
+      }, 5000);
+    },
+    [loadCompletedBulkRows, stopJobPolling],
+  );
+
+  useEffect(() => {
+    if (bulkJobId && wizardImportMode === "bulk") {
+      startJobPolling(bulkJobId);
+    }
+    return () => {
+      stopJobPolling();
+    };
+  }, [bulkJobId, wizardImportMode, startJobPolling, stopJobPolling]);
+
   useEffect(() => {
     if (typeof window === "undefined" || !sessionHydratedRef.current) return;
     const payload: PersistedSession = {
       step,
+      wizardImportMode,
       enrichedData: enriched,
       approvedRows: approvedRowsForPush,
       eventContext,
       listType: enrichedListType,
       parseResult: result,
     };
-    window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
-  }, [step, enriched, approvedRowsForPush, eventContext, enrichedListType, result]);
+    try {
+      window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+    } catch (e) {
+      console.warn("[session] Failed to persist snapshot (quota or access):", e);
+    }
+  }, [step, wizardImportMode, enriched, approvedRowsForPush, eventContext, enrichedListType, result]);
 
   const parseFile = useCallback(
     async (f: File, listType?: "companies" | "contacts") => {
       setBusy(true);
       setError(null);
+      setBulkSmallListBypass(false);
       try {
         const body = new FormData();
         body.append("file", f);
@@ -984,6 +1125,11 @@ export default function Home() {
     () => workingRows.slice(0, PREVIEW_MAX_ROWS),
     [workingRows],
   );
+  const showBulkSmallListWarning =
+    wizardImportMode === "bulk" &&
+    effectiveRowCount > 0 &&
+    effectiveRowCount < 200 &&
+    !bulkSmallListBypass;
 
   useEffect(() => {
     setPreviewRowsOverride(null);
@@ -1086,6 +1232,109 @@ export default function Home() {
     return merged as EnrichedCompany[] | EnrichedContact[];
   };
 
+  const runZoomVerifyAndLinkedInTail = async (
+    rowsAfterPrecheck: EnrichedCompany[] | EnrichedContact[],
+    listType: "companies" | "contacts",
+    signal: AbortSignal,
+  ): Promise<void> => {
+    let rowsAfterVerify: EnrichedCompany[] | EnrichedContact[] = rowsAfterPrecheck;
+    try {
+      rowsAfterVerify = await runZoomVerify(rowsAfterPrecheck, listType, signal);
+    } catch (verifyErr) {
+      if (verifyErr instanceof Error && verifyErr.name === "AbortError") {
+        setStep("context");
+        throw verifyErr;
+      }
+      if (verifyErr instanceof ZoomInfoVerifyError && verifyErr.zoomInfoAuthFailure) {
+        setZoomInfoVerifySummary({ kind: "credentials" });
+        setEnrichError(null);
+      } else {
+        setZoomInfoVerifySummary(null);
+        setEnrichError(
+          verifyErr instanceof Error
+            ? verifyErr.message
+            : "ZoomInfo / Common Room step failed.",
+        );
+      }
+      rowsAfterVerify = rowsAfterPrecheck;
+    }
+
+    let finalRows: EnrichedCompany[] | EnrichedContact[] = rowsAfterVerify;
+    if (listType === "contacts") {
+      const contactRowsAfterVerify = rowsAfterVerify as EnrichedContact[];
+      const missingLinkedInTotal = contactRowsAfterVerify.filter((r) =>
+        needsLinkedInLookup(r),
+      ).length;
+      if (missingLinkedInTotal > 0) {
+        setProgress({
+          startRow: 1,
+          endRow: 0,
+          totalRows: missingLinkedInTotal,
+          detail: `Searching for remaining LinkedIn URLs: 0 of ${missingLinkedInTotal}…`,
+        });
+        finalRows = await runLinkedInLookupPass(
+          contactRowsAfterVerify,
+          signal,
+          (done, total) => {
+            setProgress({
+              startRow: 1,
+              endRow: done,
+              totalRows: total,
+              detail: `Searching for remaining LinkedIn URLs: ${done} of ${total}…`,
+            });
+          },
+        );
+      }
+    }
+
+    if (listType === "companies") {
+      const companyRowsAfterVerify = rowsAfterVerify as EnrichedCompany[];
+      const missingCompanyLinkedIn = companyRowsAfterVerify.filter((r) =>
+        needsCompanyLinkedInLookup(r),
+      ).length;
+      if (missingCompanyLinkedIn > 0) {
+        setProgress({
+          startRow: 1,
+          endRow: 0,
+          totalRows: missingCompanyLinkedIn,
+          detail: `Finding remaining company LinkedIn profiles… (0 of ${missingCompanyLinkedIn})`,
+        });
+        finalRows = await runCompanyLinkedInLookupPass(
+          companyRowsAfterVerify,
+          signal,
+          (done, total) => {
+            setProgress({
+              startRow: 1,
+              endRow: done,
+              totalRows: total,
+              detail: `Finding remaining company LinkedIn profiles… (${done} of ${total})`,
+            });
+          },
+        );
+      }
+    }
+
+    setEnriched(finalRows);
+    setEnrichedListType(listType);
+    setStep("enriched");
+    fireEnrichmentCompleteNotification();
+    if (
+      typeof window !== "undefined" &&
+      typeof Notification !== "undefined" &&
+      Notification.permission !== "granted"
+    ) {
+      setCompletionBannerText("✓ Enrichment complete — your results are ready below.");
+      setShowEnrichmentCompleteBanner(true);
+      if (enrichmentBannerTimeoutRef.current) {
+        clearTimeout(enrichmentBannerTimeoutRef.current);
+      }
+      enrichmentBannerTimeoutRef.current = setTimeout(() => {
+        setShowEnrichmentCompleteBanner(false);
+        enrichmentBannerTimeoutRef.current = null;
+      }, 5000);
+    }
+  };
+
   const runHubSpotPreCheck = async (
     aiRows: EnrichedCompany[] | EnrichedContact[],
     listType: "companies" | "contacts",
@@ -1178,7 +1427,9 @@ export default function Home() {
       detail: null,
       fromCache: false,
     });
+    let pausedForCostEstimate = false;
     try {
+      setPrecheckHubspotSkipCount(null);
       const batchErrors: string[] = [];
       const aiRowsMerged =
         resolvedListType === "companies"
@@ -1282,105 +1533,37 @@ export default function Home() {
 
       // 2. HubSpot pre-check — runs after AI enrichment and before ZoomInfo.
       const rowsAfterPrecheck = await runHubSpotPreCheck(aiRows, resolvedListType, ac.signal);
+      const hubspotCompleteCount = rowsAfterPrecheck.filter((r) => r.hubspotComplete === true)
+        .length;
+      setPrecheckHubspotSkipCount(hubspotCompleteCount);
 
-      // 3. ZoomInfo + Common Room — runs only after every AI batch above has finished.
-      let rowsAfterVerify: EnrichedCompany[] | EnrichedContact[] = rowsAfterPrecheck;
-      try {
-        rowsAfterVerify = await runZoomVerify(rowsAfterPrecheck, resolvedListType, ac.signal);
-      } catch (verifyErr) {
-        if (verifyErr instanceof Error && verifyErr.name === "AbortError") {
-          setStep("context");
+      if (wizardImportMode === "bulk") {
+        pausedForCostEstimate = true;
+        bulkContinueRef.current = {
+          rows: rowsAfterPrecheck,
+          listType: resolvedListType,
+          signal: ac.signal,
+        };
+        setCostEstimateMeta({
+          totalRows: workingRows.length,
+          hubspotCompleteCount,
+        });
+        setProgress(null);
+        setStep("costestimate");
+        await new Promise<void>((resolve) => {
+          bulkCostGateResolveRef.current = resolve;
+        });
+        bulkCostGateResolveRef.current = null;
+        const pending = bulkContinueRef.current;
+        bulkContinueRef.current = null;
+        setCostEstimateMeta(null);
+        pausedForCostEstimate = false;
+        if (!pending) {
           return;
         }
-        if (verifyErr instanceof ZoomInfoVerifyError && verifyErr.zoomInfoAuthFailure) {
-          setZoomInfoVerifySummary({ kind: "credentials" });
-          setEnrichError(null);
-        } else {
-          setZoomInfoVerifySummary(null);
-          setEnrichError(
-            verifyErr instanceof Error
-              ? verifyErr.message
-              : "ZoomInfo / Common Room step failed.",
-          );
-        }
-        rowsAfterVerify = rowsAfterPrecheck;
-      }
-
-      // 4. LinkedIn web search fallback — after verify; per-row gap-fill when linkedinUrl still empty (contacts + companies).
-      let finalRows: EnrichedCompany[] | EnrichedContact[] = rowsAfterVerify;
-      if (resolvedListType === "contacts") {
-        const contactRowsAfterVerify = rowsAfterVerify as EnrichedContact[];
-        const missingLinkedInTotal = contactRowsAfterVerify.filter((r) =>
-          needsLinkedInLookup(r),
-        ).length;
-        if (missingLinkedInTotal > 0) {
-          // EnrichmentProgress uses endRow/totalRows for bar % — use lookup progress, not full list size.
-          setProgress({
-            startRow: 1,
-            endRow: 0,
-            totalRows: missingLinkedInTotal,
-            detail: `Searching for remaining LinkedIn URLs: 0 of ${missingLinkedInTotal}…`,
-          });
-          finalRows = await runLinkedInLookupPass(
-            contactRowsAfterVerify,
-            ac.signal,
-            (done, total) => {
-              setProgress({
-                startRow: 1,
-                endRow: done,
-                totalRows: total,
-                detail: `Searching for remaining LinkedIn URLs: ${done} of ${total}…`,
-              });
-            },
-          );
-        }
-      }
-
-      if (resolvedListType === "companies") {
-        const companyRowsAfterVerify = rowsAfterVerify as EnrichedCompany[];
-        const missingCompanyLinkedIn = companyRowsAfterVerify.filter((r) =>
-          needsCompanyLinkedInLookup(r),
-        ).length;
-        if (missingCompanyLinkedIn > 0) {
-          setProgress({
-            startRow: 1,
-            endRow: 0,
-            totalRows: missingCompanyLinkedIn,
-            detail: `Finding remaining company LinkedIn profiles… (0 of ${missingCompanyLinkedIn})`,
-          });
-          finalRows = await runCompanyLinkedInLookupPass(
-            companyRowsAfterVerify,
-            ac.signal,
-            (done, total) => {
-              setProgress({
-                startRow: 1,
-                endRow: done,
-                totalRows: total,
-                detail: `Finding remaining company LinkedIn profiles… (${done} of ${total})`,
-              });
-            },
-          );
-        }
-      }
-
-      setEnriched(finalRows);
-      setEnrichedListType(resolvedListType);
-      setStep("enriched");
-      fireEnrichmentCompleteNotification();
-      if (
-        typeof window !== "undefined" &&
-        typeof Notification !== "undefined" &&
-        Notification.permission !== "granted"
-      ) {
-        setCompletionBannerText("✓ Enrichment complete — your results are ready below.");
-        setShowEnrichmentCompleteBanner(true);
-        if (enrichmentBannerTimeoutRef.current) {
-          clearTimeout(enrichmentBannerTimeoutRef.current);
-        }
-        enrichmentBannerTimeoutRef.current = setTimeout(() => {
-          setShowEnrichmentCompleteBanner(false);
-          enrichmentBannerTimeoutRef.current = null;
-        }, 5000);
+        await runZoomVerifyAndLinkedInTail(pending.rows, pending.listType, pending.signal);
+      } else {
+        await runZoomVerifyAndLinkedInTail(rowsAfterPrecheck, resolvedListType, ac.signal);
       }
     } catch (e) {
       if (e instanceof Error && e.name === "AbortError") {
@@ -1390,12 +1573,81 @@ export default function Home() {
       setEnrichError(e instanceof Error ? e.message : "Enrichment failed.");
       setStep("context");
     } finally {
-      enrichAbortRef.current = null;
-      setProgress(null);
+      if (!pausedForCostEstimate) {
+        enrichAbortRef.current = null;
+        setProgress(null);
+      }
     }
   };
 
+  const startBulkJob = useCallback(
+    async (context: EventContext) => {
+      if (!resolvedListType) return;
+      setEventContext(context);
+      setEnrichError(null);
+      setZoomInfoVerifySummary(null);
+      try {
+        const res = await fetch("/api/jobs/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            listType: resolvedListType,
+            eventContext: context,
+            rows: workingRows,
+          }),
+        });
+        if (!res.ok) {
+          const errBody = await res.text().catch(() => "unknown");
+          console.error("[startBulkJob] failed:", res.status, errBody);
+          setEnrichError("Failed to start bulk job. Please try again.");
+          setStep("context");
+          return;
+        }
+        const payload = (await res.json()) as { jobId?: string };
+        const jobId = String(payload.jobId ?? "");
+        if (!jobId) {
+          setEnrichError("Failed to start bulk job. Please try again.");
+          setStep("context");
+          return;
+        }
+        setBulkJobId(jobId);
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(BULK_JOB_SESSION_KEY, jobId);
+        }
+        setStep("enriching");
+        startJobPolling(jobId);
+      } catch {
+        setEnrichError("Failed to start bulk job. Please try again.");
+        setStep("context");
+      }
+    },
+    [resolvedListType, startJobPolling, workingRows],
+  );
+
+  const proceedFromCostEstimate = () => {
+    const resolve = bulkCostGateResolveRef.current;
+    bulkCostGateResolveRef.current = null;
+    resolve?.();
+  };
+
+  const backFromCostEstimate = () => {
+    bulkContinueRef.current = null;
+    const resolve = bulkCostGateResolveRef.current;
+    bulkCostGateResolveRef.current = null;
+    resolve?.();
+    setCostEstimateMeta(null);
+    enrichAbortRef.current?.abort();
+    enrichAbortRef.current = null;
+    setProgress(null);
+    setStep("context");
+  };
+
   const cancelEnrichmentToContext = useCallback(() => {
+    bulkContinueRef.current = null;
+    const resolve = bulkCostGateResolveRef.current;
+    bulkCostGateResolveRef.current = null;
+    resolve?.();
+    setCostEstimateMeta(null);
     enrichAbortRef.current?.abort();
     setProgress(null);
     setStep("context");
@@ -1422,7 +1674,22 @@ export default function Home() {
       }
       setShowSuccessFlash(false);
       setShowEnrichmentCompleteBanner(false);
-      setStep("upload");
+      setBulkSmallListBypass(false);
+      setShowEnrichmentInterruptedBanner(false);
+      bulkContinueRef.current = null;
+      const resolveGate = bulkCostGateResolveRef.current;
+      bulkCostGateResolveRef.current = null;
+      resolveGate?.();
+      setCostEstimateMeta(null);
+      setPrecheckHubspotSkipCount(null);
+      setWizardImportMode("event");
+      setBulkJobId(null);
+      setBulkJobState(null);
+      stopJobPolling();
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(BULK_JOB_SESSION_KEY);
+      }
+      setStep("starter");
       setFile(null);
       setResult(null);
       setListOverride(null);
@@ -1443,12 +1710,32 @@ export default function Home() {
       setDupFeedback(null);
       setDuplicateSessionTotal(null);
     },
-    [clearSessionSnapshot],
+    [clearSessionSnapshot, stopJobPolling],
   );
 
   const startNewImport = useCallback(() => {
     resetToUpload(true);
   }, [resetToUpload]);
+
+  const cancelBulkJob = useCallback(async () => {
+    const activeJobId = bulkJobId;
+    if (activeJobId) {
+      try {
+        await fetch(`/api/jobs/${encodeURIComponent(activeJobId)}/cancel`, {
+          method: "POST",
+        });
+      } catch {
+        // best-effort cancel
+      }
+    }
+    stopJobPolling();
+    setBulkJobId(null);
+    setBulkJobState(null);
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem(BULK_JOB_SESSION_KEY);
+    }
+    resetToUpload(true);
+  }, [bulkJobId, resetToUpload, stopJobPolling]);
 
   const runHubSpotPush = useCallback(
     async (settings: PrePushSettings) => {
@@ -1559,42 +1846,58 @@ export default function Home() {
           <span className="text-white font-semibold">Realm</span>
           <span className="text-white font-semibold">.Security</span>
         </div>
-        <nav
-          className="hidden max-w-[min(100vw-8rem,40rem)] flex-wrap items-center justify-center gap-x-0.5 gap-y-1 text-center text-[10px] leading-tight sm:max-w-none sm:text-xs md:col-start-2 md:row-start-1 md:flex md:text-sm"
-          aria-label="Import steps"
-        >
-          {NAV_STEPS.map((label, i) => {
-            const isCurrent = i === bc;
-            const isDone = i < bc;
-            return (
-              <span key={label} className="inline-flex items-center">
-                {i > 0 ? (
-                  <span className="px-0.5 text-white/30 sm:px-1" aria-hidden>
-                    ·
+        {step !== "starter" ? (
+          <nav
+            className="hidden max-w-[min(100vw-8rem,40rem)] flex-wrap items-center justify-center gap-x-0.5 gap-y-1 text-center text-[10px] leading-tight sm:max-w-none sm:text-xs md:col-start-2 md:row-start-1 md:flex md:text-sm"
+            aria-label="Import steps"
+          >
+            {NAV_STEPS.map((label, i) => {
+              const isCurrent = i === bc;
+              const isDone = i < bc;
+              return (
+                <span key={label} className="inline-flex items-center">
+                  {i > 0 ? (
+                    <span className="px-0.5 text-white/30 sm:px-1" aria-hidden>
+                      ·
+                    </span>
+                  ) : null}
+                  <span
+                    className={
+                      isCurrent
+                        ? "font-semibold text-white"
+                        : isDone
+                          ? "text-white/60"
+                          : "text-white/30"
+                    }
+                  >
+                    {label}
                   </span>
-                ) : null}
-                <span
-                  className={
-                    isCurrent
-                      ? "font-semibold text-white"
-                      : isDone
-                        ? "text-white/60"
-                        : "text-white/30"
-                  }
-                >
-                  {label}
                 </span>
-              </span>
-            );
-          })}
-        </nav>
+              );
+            })}
+          </nav>
+        ) : null}
         <div className="hidden min-w-0 md:col-start-3 md:row-start-1 md:block" aria-hidden />
       </header>
 
-      <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 px-4 pb-8 pt-22 sm:px-6">
-        {step === "context" ||
-        step === "enriched" ||
-        step === "prepush" ? (
+      <main className="mx-auto flex w-full max-w-7xl min-h-0 flex-1 flex-col gap-6 px-4 pb-8 pt-22 sm:px-6">
+        {showEnrichmentInterruptedBanner ? (
+          <div
+            className="flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 sm:flex-row sm:items-center sm:justify-between dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100"
+            role="status"
+          >
+            <p className="text-sm">Enrichment was interrupted. Click Run to start again.</p>
+            <button
+              type="button"
+              onClick={() => setShowEnrichmentInterruptedBanner(false)}
+              className="shrink-0 rounded-lg border border-amber-800/20 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/60 dark:text-amber-50 dark:hover:bg-amber-900"
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : null}
+
+        {step === "enriched" || step === "prepush" ? (
           <button
             type="button"
             onClick={() => resetToUpload(true)}
@@ -1604,8 +1907,36 @@ export default function Home() {
           </button>
         ) : null}
 
+        {step === "starter" && (
+          <StarterScreen
+            onSelectMode={(mode) => {
+              setWizardImportMode(mode);
+              setStep("upload");
+            }}
+          />
+        )}
+
+        {step === "costestimate" && costEstimateMeta ? (
+          <CostEstimateScreen
+            totalRows={costEstimateMeta.totalRows}
+            hubspotCompleteCount={costEstimateMeta.hubspotCompleteCount}
+            onProceed={proceedFromCostEstimate}
+            onBack={backFromCostEstimate}
+          />
+        ) : null}
+
         {step === "upload" && (
-          <div className="flex min-h-[calc(100vh-3.5rem)] w-full flex-col items-center justify-center py-12">
+          <div className="flex w-full flex-1 flex-col justify-center py-8">
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+            {!result ? (
+              <button
+                type="button"
+                onClick={() => setStep("starter")}
+                className="self-start text-sm text-(--text-muted) hover:text-(--text-primary)"
+              >
+                ← Back
+              </button>
+            ) : null}
             {!result && (
               <section
                 className={`relative flex min-h-55 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-(--border-default) bg-(--bg-card) px-6 py-10 transition-colors ${
@@ -1668,6 +1999,33 @@ export default function Home() {
               <section
                 className={`flex w-full flex-col gap-6 rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card) sm:p-6 ${UPLOAD_FADE_IN}`}
               >
+                {showBulkSmallListWarning ? (
+                  <div
+                    className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100"
+                    role="status"
+                  >
+                    <p>
+                      This list has fewer than 200 records. Consider using Marketing Event List mode
+                      instead.
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className="rounded-lg border border-amber-800/25 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/50 dark:text-amber-50 dark:hover:bg-amber-900/80"
+                        onClick={() => resetToUpload(false)}
+                      >
+                        Go Back to Start
+                      </button>
+                      <button
+                        type="button"
+                        className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`}
+                        onClick={() => setBulkSmallListBypass(true)}
+                      >
+                        Continue Anyway
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="flex w-full flex-wrap items-start justify-between gap-3 text-sm text-(--text-primary)">
                   <p className="min-w-0 flex-1">
                     ✓ <span className="font-semibold">{file.name}</span> — {effectiveRowCount}{" "}
@@ -1803,23 +2161,36 @@ export default function Home() {
                     </table>
                 </div>
 
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    disabled={!resolvedListType || effectiveRowCount === 0}
-                    onClick={() => setStep("context")}
-                    className={PRIMARY_ACTION_BUTTON}
-                  >
-                    Continue →
-                  </button>
-                </div>
+                {!showBulkSmallListWarning ? (
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      disabled={!resolvedListType || effectiveRowCount === 0}
+                      onClick={() => setStep("context")}
+                      className={PRIMARY_ACTION_BUTTON}
+                    >
+                      Continue →
+                    </button>
+                  </div>
+                ) : null}
               </section>
             )}
+            </div>
           </div>
         )}
 
         {step === "context" && resolvedListType && (
-          <>
+          <div className="flex w-full flex-1 flex-col justify-center gap-4 py-6">
+            <button
+              type="button"
+              onClick={() => {
+                setStep("upload");
+                setEnrichError(null);
+              }}
+              className="self-start text-sm text-(--text-muted) hover:text-(--text-primary)"
+            >
+              ← Back
+            </button>
             {enrichError && (
               <div
                 className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-100"
@@ -1832,12 +2203,26 @@ export default function Home() {
               listType={resolvedListType}
               sourceFileName={file?.name ?? null}
               initialValues={eventContext}
-              onSubmit={(ctx) => void runEnrichment(ctx)}
+              importMode={wizardImportMode}
+              onSubmit={(ctx) =>
+                wizardImportMode === "bulk"
+                  ? void startBulkJob(ctx)
+                  : void runEnrichment(ctx)
+              }
             />
-          </>
+          </div>
         )}
 
-        {step === "enriching" && progress && (
+        {step === "enriching" && wizardImportMode === "bulk" && bulkJobId ? (
+          <BulkProgressScreen
+            jobState={bulkJobState}
+            onCancel={() => {
+              void cancelBulkJob();
+            }}
+          />
+        ) : null}
+
+        {step === "enriching" && wizardImportMode === "event" && progress && (
           <div className="flex flex-col gap-4">
             <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
               <p
@@ -1872,11 +2257,21 @@ export default function Home() {
         )}
 
         {step === "verifying" && progress && (
-          <EnrichmentProgress
-            endRow={progress.endRow}
-            totalRows={progress.totalRows}
-            verifyDetail={progress.detail}
-          />
+          <div className="flex flex-col gap-3">
+            <EnrichmentProgress
+              endRow={progress.endRow}
+              totalRows={progress.totalRows}
+              verifyDetail={progress.detail}
+            />
+            {wizardImportMode === "event" &&
+            precheckHubspotSkipCount != null &&
+            precheckHubspotSkipCount > 0 ? (
+              <p className="text-center text-xs text-(--text-muted)" role="status">
+                {precheckHubspotSkipCount} record{precheckHubspotSkipCount === 1 ? "" : "s"} found in
+                HubSpot — skipping ZoomInfo for those
+              </p>
+            ) : null}
+          </div>
         )}
 
         {step === "pushing" && pushProgress && (

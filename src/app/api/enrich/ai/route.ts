@@ -60,6 +60,10 @@ export async function POST(request: Request): Promise<Response> {
     const listTypeNorm = listType === "companies" ? "companies" : "contacts";
     const audienceLevelRaw = String(context.audienceLevel ?? "").trim();
 
+    const importModeRaw = context.importMode;
+    const importMode: EventContext["importMode"] =
+      importModeRaw === "bulk" ? "bulk" : "event";
+
     const ctx: EventContext = {
       eventName: String(context.eventName ?? "").trim(),
       eventDate: String(context.eventDate ?? "").trim(),
@@ -69,15 +73,26 @@ export async function POST(request: Request): Promise<Response> {
           ? audienceLevelRaw || "Business professionals"
           : audienceLevelRaw,
       listType: listTypeNorm,
+      importMode,
     };
 
-    const required: (keyof EventContext)[] =
-      listTypeNorm === "contacts"
-        ? ["eventName", "eventDate", "audienceLevel"]
-        : ["eventName", "eventDate"];
-    const missing = required.filter((k) => !String(ctx[k] ?? "").trim());
-    if (missing.length > 0) {
-      return badRequest(`Missing required context fields: ${missing.join(", ")}`);
+    if (importMode === "bulk") {
+      if (!ctx.eventName.trim()) {
+        return badRequest("Missing required context fields: eventName");
+      }
+      ctx.eventDate = ctx.eventDate.trim() || "Not specified";
+      if (listTypeNorm === "contacts") {
+        ctx.audienceLevel = ctx.audienceLevel.trim() || "Business professionals";
+      }
+    } else {
+      const required: (keyof EventContext)[] =
+        listTypeNorm === "contacts"
+          ? ["eventName", "eventDate", "audienceLevel"]
+          : ["eventName", "eventDate"];
+      const missing = required.filter((k) => !String(ctx[k] ?? "").trim());
+      if (missing.length > 0) {
+        return badRequest(`Missing required context fields: ${missing.join(", ")}`);
+      }
     }
 
     const typedRows =

@@ -6,8 +6,8 @@ This spec covers four phases of upgrades to the Realm Enrichment Tool:
 
 1. **Phase 1 — HubSpot Pre-Check / Deduplication** (all imports)
 2. **Phase 2 — Starter Screen + Cost Estimate UI** (all imports, required before Gartner)
-3. **Phase 3 — Background Job Architecture** (bulk imports only, required before Gartner)
-4. **Phase 4 — Progress / Status Page** (bulk imports only, required before Gartner)
+3. **Phase 3 — Background Job Architecture** (bulk imports only, required before Gartner, **in progress**)
+4. **Phase 4 — Progress / Status Page** (bulk imports only, required before Gartner, **complete**)
 
 Target use case driving this work: **Gartner May 2026 — ~1,550 companies**
 

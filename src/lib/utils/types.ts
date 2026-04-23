@@ -96,6 +96,33 @@ export interface EventContext {
   region: string;
   audienceLevel: string;
   listType: "companies" | "contacts";
+  /** Browser-driven event list vs large bulk list (cost estimate UI only until Phase 3). */
+  importMode: "event" | "bulk";
+}
+
+export interface BulkJobState {
+  jobId: string;
+  status: "queued" | "running" | "complete" | "failed" | "cancelled";
+  importMode: "bulk";
+  listType: "companies" | "contacts";
+  eventContext: EventContext;
+  totalRows: number;
+  processedRows: number;
+  currentPhase: "ai" | "precheck" | "zoominfo" | "linkedin" | "complete";
+  aiComplete: boolean;
+  precheckComplete: boolean;
+  zoomInfoComplete: boolean;
+  linkedInComplete: boolean;
+  enrichedCount: number;
+  cachedCount: number;
+  hubspotSkippedCount: number;
+  creditsUsed: number;
+  checkpointChunk: number;
+  totalAiChunks: number;
+  totalZoomChunks: number;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
 }
 
 /** One segment when a CSV contains multiple header blocks */
