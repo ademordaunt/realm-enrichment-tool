@@ -65,12 +65,13 @@ export async function POST(request: Request): Promise<Response> {
       return badRequest("No data rows were found below the header row.");
     }
 
-    if (
-      primary.listType === "companies" &&
-      !primary.headers?.includes("company")
-    ) {
+    const hasCompanyColumn =
+      primary.headers?.some(
+        (h) => h === "company" || h === "companyname",
+      ) ?? false;
+    if (primary.listType === "companies" && !hasCompanyColumn) {
       return badRequest(
-        'Company list is missing a Company column (for example "Company:").',
+        'Company list is missing a Company column (for example "Company" or "Company Name").',
       );
     }
 

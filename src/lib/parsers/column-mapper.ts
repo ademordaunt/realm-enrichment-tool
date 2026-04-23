@@ -1,5 +1,83 @@
 import type { ListType, RawCompanyRow, RawContactRow } from "@/lib/utils/types";
 
+const US_STATE_ABBREVS = new Set([
+  "AL",
+  "AK",
+  "AZ",
+  "AR",
+  "CA",
+  "CO",
+  "CT",
+  "DE",
+  "FL",
+  "GA",
+  "HI",
+  "ID",
+  "IL",
+  "IN",
+  "IA",
+  "KS",
+  "KY",
+  "LA",
+  "ME",
+  "MD",
+  "MA",
+  "MI",
+  "MN",
+  "MS",
+  "MO",
+  "MT",
+  "NE",
+  "NV",
+  "NH",
+  "NJ",
+  "NM",
+  "NY",
+  "NC",
+  "ND",
+  "OH",
+  "OK",
+  "OR",
+  "PA",
+  "RI",
+  "SC",
+  "SD",
+  "TN",
+  "TX",
+  "UT",
+  "VT",
+  "VA",
+  "WA",
+  "WV",
+  "WI",
+  "WY",
+  "DC",
+]);
+
+/** Strips Gartner-style US state/region suffixes from company name strings. */
+export function extractCompanyAndState(raw: string): { name: string; state: string } {
+  const usPattern = /\s*-\s*US\s*-\s*([A-Z]{2})\d*\s*$/i;
+  const dashPattern = /\s+-\s+([A-Z]{2})\s*$/i;
+  const trailingPattern = /\s+([A-Z]{2})\s*$/i;
+
+  const patterns = [usPattern, dashPattern, trailingPattern] as const;
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    if (match?.[1] && US_STATE_ABBREVS.has(match[1]!.toUpperCase())) {
+      return {
+        name: raw.replace(pattern, "").trim(),
+        state: match[1]!.toUpperCase(),
+      };
+    }
+  }
+
+  return { name: raw.trim(), state: "" };
+}
+
+function isCompanyHeader(h: string): boolean {
+  return h === "company" || h === "companyname";
+}
+
 /** Lowercase, trim, strip non-alphanumeric for header matching */
 export function normalizeHeader(header: string): string {
   return header
@@ -161,9 +239,12 @@ export function detectListType(normalizedHeaders: string[]): ListType {
   const hasLast = nonempty.includes("last") || nonempty.includes("lastname");
   const hasEmail = nonempty.includes("email") || nonempty.includes("emailaddress");
   const onlyCompany =
-    nonempty.length === 1 && nonempty[0] === "company";
+    nonempty.length === 1 && isCompanyHeader(nonempty[0]!);
 
-  if (onlyCompany || (nonempty.every((h) => h === "company") && nonempty.length >= 1)) {
+  if (
+    onlyCompany ||
+    (nonempty.every((h) => isCompanyHeader(h)) && nonempty.length >= 1)
+  ) {
     return "companies";
   }
 
@@ -172,7 +253,11 @@ export function detectListType(normalizedHeaders: string[]): ListType {
     return "contacts";
   }
 
-  if (nonempty.includes("company") && !hasFirst && !hasLast) {
+  if (
+    (nonempty.includes("company") || nonempty.includes("companyname")) &&
+    !hasFirst &&
+    !hasLast
+  ) {
     return "companies";
   }
 
@@ -188,17 +273,22 @@ function mapCompanyRow(
   values: string[],
 ): { row: RawCompanyRow; missingCompany: boolean } {
   const normalized = headers.map(normalizeHeader);
-  const companyIdx = normalized.findIndex((h) => h === "company");
-  const rawName =
+  const companyIdx = normalized.findIndex((h) => isCompanyHeader(h));
+  const rawValue =
     companyIdx >= 0 ? (values[companyIdx] ?? "").trim() : "";
+  const { name: cleanedName, state: extractedState } =
+    extractCompanyAndState(rawValue);
 
-  const row: RawCompanyRow = { rawName };
+  const row: RawCompanyRow = { rawName: cleanedName };
   for (let i = 0; i < headers.length; i++) {
     const key = normalizeHeader(headers[i]);
     if (!key) continue;
     const val = (values[i] ?? "").trim();
-    if (key === "company") continue;
+    if (isCompanyHeader(key)) continue;
     row[key] = val;
+  }
+  if (extractedState && !row["state"]) {
+    row["state"] = extractedState;
   }
   return { row, missingCompany: companyIdx < 0 };
 }
@@ -244,7 +334,11 @@ function inferListTypeFromFirstRow(
 
   if (hasNameParts && !hasCompanyName) return "contacts";
   if (hasCompanyName && !hasNameParts) return "companies";
-  if (normalizedHeaders.filter(Boolean).length === 1 && normalizedHeaders.includes("company")) {
+  if (
+    normalizedHeaders.filter(Boolean).length === 1 &&
+    (normalizedHeaders.includes("company") ||
+      normalizedHeaders.includes("companyname"))
+  ) {
     return "companies";
   }
   if (hasNameParts) return "contacts";
