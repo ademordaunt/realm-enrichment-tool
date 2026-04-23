@@ -2122,27 +2122,48 @@ export default function Home() {
                         </p>
                       ) : null}
                     </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="mt-3 flex w-full flex-wrap items-center justify-between gap-2 gap-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          className="rounded-lg border border-amber-700/30 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/50 dark:text-amber-50 dark:hover:bg-amber-900/80"
+                          onClick={() => {
+                            const [a, b] = duplicatePair;
+                            const removeIndex = Math.max(a, b);
+                            const base = previewRowsOverride ?? displayRows;
+                            setPreviewRowsOverride(base.filter((_, i) => i !== removeIndex));
+                            setDupFeedback("removed");
+                          }}
+                        >
+                          Remove Duplicate
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded-lg border border-amber-700/30 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/50 dark:text-amber-50 dark:hover:bg-amber-900/80"
+                          onClick={() => {
+                            setDuplicateExemptPairs((prev) =>
+                              new Set(prev).add(`${duplicatePair[0]}-${duplicatePair[1]}`),
+                            );
+                            setDupFeedback("kept");
+                          }}
+                        >
+                          Keep Both
+                        </button>
+                      </div>
                       <button
                         type="button"
-                        className="rounded-lg border border-amber-700/30 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/50 dark:text-amber-50 dark:hover:bg-amber-900/80"
-                        onClick={() => {
-                          const [a, b] = duplicatePair;
-                          const removeIndex = Math.max(a, b);
-                          const base = previewRowsOverride ?? displayRows;
-                          setPreviewRowsOverride(base.filter((_, i) => i !== removeIndex));
-                          setDupFeedback("removed");
-                        }}
-                      >
-                        Remove Duplicate
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-amber-700/30 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/50 dark:text-amber-50 dark:hover:bg-amber-900/80"
+                        className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-600 hover:border-red-400 hover:bg-red-50 dark:border-red-700/50 dark:bg-zinc-950 dark:text-red-400 dark:hover:border-red-500 dark:hover:bg-red-950/30"
                         onClick={() => {
                           if (!resolvedListType) return;
                           const base = previewRowsOverride ?? displayRows;
-                          const { rows: next, removed } = removeAllDuplicateRows(
+                          const pairCountBefore = listAllDuplicatePairs(
+                            base,
+                            resolvedListType,
+                            duplicateExemptPairs,
+                          ).length;
+                          const duplicateBannerTotal =
+                            duplicateSessionTotal ?? pairCountBefore;
+                          const { rows: next } = removeAllDuplicateRows(
                             base,
                             resolvedListType,
                           );
@@ -2152,10 +2173,10 @@ export default function Home() {
                           if (removeAllDupMsgTimeoutRef.current) {
                             clearTimeout(removeAllDupMsgTimeoutRef.current);
                           }
+                          const dupWord =
+                            duplicateBannerTotal === 1 ? "duplicate" : "duplicates";
                           setRemoveAllDupConfirm(
-                            `Removed ${removed} duplicate row${
-                              removed === 1 ? "" : "s"
-                            } from this import.`,
+                            `Removed ${duplicateBannerTotal} ${dupWord} from this import.`,
                           );
                           removeAllDupMsgTimeoutRef.current = setTimeout(() => {
                             setRemoveAllDupConfirm(null);
@@ -2164,18 +2185,6 @@ export default function Home() {
                         }}
                       >
                         Remove All Duplicates
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-amber-700/30 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/50 dark:text-amber-50 dark:hover:bg-amber-900/80"
-                        onClick={() => {
-                          setDuplicateExemptPairs((prev) =>
-                            new Set(prev).add(`${duplicatePair[0]}-${duplicatePair[1]}`),
-                          );
-                          setDupFeedback("kept");
-                        }}
-                      >
-                        Keep Both
                       </button>
                     </div>
                     {dupFeedback ? (
