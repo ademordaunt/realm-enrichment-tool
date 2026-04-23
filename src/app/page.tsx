@@ -178,6 +178,22 @@ function findFirstDuplicatePair(
   return all.length > 0 ? all[0]! : null;
 }
 
+/** Keep the first row per dedup key; drop later duplicates. */
+function removeAllDuplicateRows(
+  rows: Array<RawCompanyRow | RawContactRow>,
+  kind: "companies" | "contacts",
+): { rows: Array<RawCompanyRow | RawContactRow>; removed: number } {
+  const seen = new Set<string>();
+  const out: Array<RawCompanyRow | RawContactRow> = [];
+  for (const row of rows) {
+    const k = rowDedupKey(row, kind);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(row);
+  }
+  return { rows: out, removed: rows.length - out.length };
+}
+
 function duplicateDisplayName(
   row: RawCompanyRow | RawContactRow,
   kind: "companies" | "contacts",
@@ -771,10 +787,12 @@ export default function Home() {
   const [dupFeedback, setDupFeedback] = useState<"removed" | "kept" | null>(null);
   /** Snapshot of unresolved duplicate-pair count when the user first sees the duplicate card (for "N of M" UI). */
   const [duplicateSessionTotal, setDuplicateSessionTotal] = useState<number | null>(null);
+  const [removeAllDupConfirm, setRemoveAllDupConfirm] = useState<string | null>(null);
   const [showSuccessFlash, setShowSuccessFlash] = useState(false);
 
   const enrichAbortRef = useRef<AbortController | null>(null);
   const uploadFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const removeAllDupMsgTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enrichmentBannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoredApprovedIdsRef = useRef<Set<string> | null>(null);
   const sessionHydratedRef = useRef(false);
@@ -812,6 +830,10 @@ export default function Home() {
       if (uploadFlashTimeoutRef.current) {
         clearTimeout(uploadFlashTimeoutRef.current);
         uploadFlashTimeoutRef.current = null;
+      }
+      if (removeAllDupMsgTimeoutRef.current) {
+        clearTimeout(removeAllDupMsgTimeoutRef.current);
+        removeAllDupMsgTimeoutRef.current = null;
       }
       if (enrichmentBannerTimeoutRef.current) {
         clearTimeout(enrichmentBannerTimeoutRef.current);
@@ -1136,6 +1158,11 @@ export default function Home() {
     setDuplicateExemptPairs(new Set());
     setDupFeedback(null);
     setDuplicateSessionTotal(null);
+    setRemoveAllDupConfirm(null);
+    if (removeAllDupMsgTimeoutRef.current) {
+      clearTimeout(removeAllDupMsgTimeoutRef.current);
+      removeAllDupMsgTimeoutRef.current = null;
+    }
   }, [result, segmentIndex]);
 
   const runZoomVerify = async (
@@ -1709,6 +1736,11 @@ export default function Home() {
       setDuplicateExemptPairs(new Set());
       setDupFeedback(null);
       setDuplicateSessionTotal(null);
+      setRemoveAllDupConfirm(null);
+      if (removeAllDupMsgTimeoutRef.current) {
+        clearTimeout(removeAllDupMsgTimeoutRef.current);
+        removeAllDupMsgTimeoutRef.current = null;
+      }
     },
     [clearSessionSnapshot, stopJobPolling],
   );
@@ -2108,6 +2140,35 @@ export default function Home() {
                         type="button"
                         className="rounded-lg border border-amber-700/30 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/50 dark:text-amber-50 dark:hover:bg-amber-900/80"
                         onClick={() => {
+                          if (!resolvedListType) return;
+                          const base = previewRowsOverride ?? displayRows;
+                          const { rows: next, removed } = removeAllDuplicateRows(
+                            base,
+                            resolvedListType,
+                          );
+                          setPreviewRowsOverride(next);
+                          setDuplicateExemptPairs(new Set());
+                          setDupFeedback(null);
+                          if (removeAllDupMsgTimeoutRef.current) {
+                            clearTimeout(removeAllDupMsgTimeoutRef.current);
+                          }
+                          setRemoveAllDupConfirm(
+                            `Removed ${removed} duplicate row${
+                              removed === 1 ? "" : "s"
+                            } from this import.`,
+                          );
+                          removeAllDupMsgTimeoutRef.current = setTimeout(() => {
+                            setRemoveAllDupConfirm(null);
+                            removeAllDupMsgTimeoutRef.current = null;
+                          }, 4000);
+                        }}
+                      >
+                        Remove All Duplicates
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-lg border border-amber-700/30 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/50 dark:text-amber-50 dark:hover:bg-amber-900/80"
+                        onClick={() => {
                           setDuplicateExemptPairs((prev) =>
                             new Set(prev).add(`${duplicatePair[0]}-${duplicatePair[1]}`),
                           );
@@ -2124,6 +2185,16 @@ export default function Home() {
                           : "Kept both rows for this pair."}
                       </p>
                     ) : null}
+                  </div>
+                ) : null}
+
+                {removeAllDupConfirm ? (
+                  <div
+                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    {removeAllDupConfirm}
                   </div>
                 ) : null}
 
