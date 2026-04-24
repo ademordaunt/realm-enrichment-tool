@@ -54,13 +54,20 @@ export async function addRecordsToList(listId: string, recordIds: string[]): Pro
         `/crm/v3/lists/${encodeURIComponent(listId)}/memberships/add`,
         {
           method: "PUT",
-          body: JSON.stringify({ recordIdsToAdd: chunk.map((id) => String(id)) }),
+          body: JSON.stringify({ recordIds: chunk.map((id) => String(id)) }),
         },
       );
       if (res.ok) {
         lastError = null;
         break;
       }
+      const rawText = await res.clone().text();
+      console.error("[HubSpot] addRecordsToList chunk failed", {
+        chunkIndex: Math.floor(i / LIST_MEMBERSHIP_CHUNK_SIZE) + 1,
+        attempt,
+        status: res.status,
+        body: rawText,
+      });
       lastError = await readHubSpotError(res);
       if (attempt < 1) {
         await new Promise((r) => setTimeout(r, 2000));
