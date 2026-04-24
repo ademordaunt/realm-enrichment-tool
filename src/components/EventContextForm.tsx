@@ -489,6 +489,7 @@ export function EventContextForm({
   }, [initialValues, sourceFileName]);
 
   useEffect(() => {
+    if (importMode === "bulk") return;
     if (regionManuallySelected.current) return;
     const detected = detectRegionFromEventName(eventName);
     if (
@@ -518,7 +519,7 @@ export function EventContextForm({
     }
     setNoStateRegionSelected(false);
     setAutoDetectedRegion(true);
-  }, [eventName, region, noStateRegionSelected]);
+  }, [importMode, eventName, region, noStateRegionSelected]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

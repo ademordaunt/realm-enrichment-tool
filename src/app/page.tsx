@@ -8,6 +8,7 @@ import { StarterScreen } from "@/components/StarterScreen";
 import type { PrePushSettings } from "@/components/PrePushScreen";
 import { PrePushScreen } from "@/components/PrePushScreen";
 import { applyInitialReviewStatus, ReviewTable } from "@/components/ReviewTable";
+import { PreReviewGate } from "@/components/PreReviewGate";
 import { SuccessScreen } from "@/components/SuccessScreen";
 import type { HubSpotPushDonePayload } from "@/lib/hubspot/push-result";
 import type {
@@ -20,6 +21,7 @@ import type {
   RawCompanyRow,
   RawContactRow,
 } from "@/lib/utils/types";
+import { shouldOpenPreReviewGate } from "@/lib/utils/prereview";
 import {
   ENRICHMENT_BATCH_SIZE,
   needsCompanyLinkedInLookup,
@@ -98,6 +100,7 @@ function breadcrumbIndex(s: Step): number {
     case "verifying":
     case "costestimate":
       return 2;
+    case "prereview":
     case "enriched":
       return 3;
     case "prepush":
@@ -117,6 +120,7 @@ type Step =
   | "enriching"
   | "verifying"
   | "costestimate"
+  | "prereview"
   | "enriched"
   | "prepush"
   | "pushing"
@@ -892,6 +896,7 @@ export default function Home() {
         setEventContext({
           ...ec,
           importMode: ec.importMode ?? saved.wizardImportMode ?? "event",
+          region: saved.wizardImportMode === "bulk" ? "" : (ec.region ?? ""),
         });
       }
       if (saved.wizardImportMode === "bulk" || saved.wizardImportMode === "event") {
@@ -927,6 +932,19 @@ export default function Home() {
     }
   }, [clearSessionSnapshot]);
 
+  const advanceToReview = useCallback(
+    (rows: EnrichedCompany[] | EnrichedContact[], listType: "companies" | "contacts") => {
+      setEnriched(rows);
+      setEnrichedListType(listType);
+      if (shouldOpenPreReviewGate(listType, rows)) {
+        setStep("prereview");
+      } else {
+        setStep("enriched");
+      }
+    },
+    [],
+  );
+
   const stopJobPolling = useCallback(() => {
     if (bulkPollTimerRef.current) {
       clearInterval(bulkPollTimerRef.current);
@@ -946,9 +964,7 @@ export default function Home() {
       const payload = (await res.json()) as {
         rows: EnrichedCompany[] | EnrichedContact[];
       };
-      setEnriched(payload.rows);
-      setEnrichedListType(listType);
-      setStep("enriched");
+      advanceToReview(payload.rows, listType);
       setShowEnrichmentInterruptedBanner(false);
       setProgress(null);
       if (typeof window !== "undefined") {
@@ -957,7 +973,7 @@ export default function Home() {
       setBulkJobId(null);
       setBulkJobState(null);
     },
-    [],
+    [advanceToReview],
   );
 
   const handleContinueToReview = useCallback(async () => {
@@ -1386,9 +1402,7 @@ export default function Home() {
       }
     }
 
-    setEnriched(finalRows);
-    setEnrichedListType(listType);
-    setStep("enriched");
+    advanceToReview(finalRows, listType);
     fireEnrichmentCompleteNotification();
     if (
       typeof window !== "undefined" &&
@@ -1997,7 +2011,7 @@ export default function Home() {
           </div>
         ) : null}
 
-        {step === "enriched" ? (
+        {step === "enriched" || step === "prereview" ? (
           <button
             type="button"
             onClick={() => resetToUpload(true)}
@@ -2454,6 +2468,17 @@ export default function Home() {
               You can leave this tab. We&apos;ll notify you when the push is complete.
             </p>
           </div>
+        )}
+
+        {step === "prereview" && enriched && enrichedListType && (
+          <PreReviewGate
+            rows={enriched}
+            listType={enrichedListType}
+            onContinue={(updatedRows) => {
+              setEnriched(updatedRows);
+              setStep("enriched");
+            }}
+          />
         )}
 
         {step === "enriched" && enriched && enrichedListType && (
