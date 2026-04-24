@@ -30,6 +30,7 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed }: SuccessScr
       : null;
 
   const failed = result.errors.length;
+  const membershipError = result.errors.some((e) => e.rowId === "membership");
 
   return (
     <section className="flex flex-col gap-6 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
@@ -96,6 +97,13 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed }: SuccessScr
             </ul>
           ) : null}
         </div>
+      ) : null}
+
+      {membershipError ? (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+          ⚠️ List was created but some records may not have been added as members. You can manually
+          add them in HubSpot.
+        </p>
       ) : null}
 
       <div className="flex flex-col gap-2 text-sm text-zinc-800 dark:text-zinc-200">

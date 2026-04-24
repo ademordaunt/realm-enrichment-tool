@@ -54,7 +54,7 @@ export async function addRecordsToList(listId: string, recordIds: string[]): Pro
         `/crm/v3/lists/${encodeURIComponent(listId)}/memberships/add`,
         {
           method: "PUT",
-          body: JSON.stringify(chunk.map((id) => String(id))),
+          body: JSON.stringify({ recordIdsToAdd: chunk.map((id) => String(id)) }),
         },
       );
       if (res.ok) {

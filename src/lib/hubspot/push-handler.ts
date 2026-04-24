@@ -286,8 +286,6 @@ export async function handleHubSpotPushRequest(
           write({ type: "progress", current: i + 1, total });
         }
 
-        await addRecordsToList(listId, recordIds);
-
         const totalPushed = created + updated;
 
         const done: NdjsonDone = {
@@ -300,6 +298,19 @@ export async function handleHubSpotPushRequest(
           totalPushed,
           ...(folderId ? { folderId } : {}),
         };
+
+        try {
+          await addRecordsToList(listId, recordIds);
+        } catch (membershipErr) {
+          const msg =
+            membershipErr instanceof Error ? membershipErr.message : String(membershipErr);
+          console.error("[hubspot/push] membership add failed:", msg);
+          done.errors.push({
+            rowId: "membership",
+            error: `List created but membership add failed: ${msg}`,
+          });
+        }
+
         write(done);
         controller.close();
       } catch (e) {
