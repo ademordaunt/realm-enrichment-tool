@@ -1997,7 +1997,7 @@ export default function Home() {
           </div>
         ) : null}
 
-        {step === "enriched" || step === "prepush" ? (
+        {step === "enriched" ? (
           <button
             type="button"
             onClick={() => resetToUpload(true)}
@@ -2418,7 +2418,7 @@ export default function Home() {
             precheckHubspotSkipCount > 0 ? (
               <p className="text-center text-xs text-(--text-muted)" role="status">
                 {precheckHubspotSkipCount} record{precheckHubspotSkipCount === 1 ? "" : "s"} found in
-                HubSpot — skipping ZoomInfo for those
+                HubSpot ✓
               </p>
             ) : null}
           </div>

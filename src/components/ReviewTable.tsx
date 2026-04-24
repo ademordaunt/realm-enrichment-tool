@@ -31,7 +31,7 @@ function websiteFromDomain(domain: string): string {
   return d ? `https://www.${d}` : "";
 }
 
-type FilterKey = "all" | "needs_review" | "approved" | "skipped";
+type FilterKey = "all" | "needs_review" | "approved";
 
 const CONFIDENCE_ORDER: Record<EnrichedCompany["confidenceScore"], number> = {
   unresolved: 0,
@@ -99,6 +99,18 @@ function initialContactReviewStatus(contact: EnrichedContact): EnrichedContact["
 
 function rowKey(id: string, field: string): string {
   return `${id}:${field}`;
+}
+
+function missingContactFieldsReason(contact: EnrichedContact): string | null {
+  const missing: string[] = [];
+  if (!sanitizeCompanyName(contact.resolvedCompany)) missing.push("company");
+  if (!sanitizeUnknown(contact.title)) missing.push("title");
+  if (!sanitizeUnknown(contact.linkedinUrl)) missing.push("LinkedIn profile");
+  if (missing.length === 0) return null;
+  if (missing.length === 1 && missing[0] === "LinkedIn profile") {
+    return "Could not find LinkedIn profile.";
+  }
+  return `Missing required fields: ${missing.join(", ")}.`;
 }
 
 /** Matches ConfidenceBadge footprint: inline, rounded-full, px-2 py-0.5 text-xs. */
@@ -651,22 +663,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     return out.length > 0 ? out : sortedRows;
   }, [stableRowOrder, rowsById, sortedRows]);
 
-  const approveAllHigh = useCallback(() => {
-    if (listType === "companies") {
-      setRows(
-        (rows as EnrichedCompany[]).map((r) =>
-          r.confidenceScore === "high" ? { ...r, status: "approved" as const } : r,
-        ),
-      );
-    } else {
-      setRows(
-        (rows as EnrichedContact[]).map((r) =>
-          r.confidenceScore === "high" ? { ...r, status: "approved" as const } : r,
-        ),
-      );
-    }
-  }, [listType, rows, setRows]);
-
   const selectAll = useCallback(() => {
     if (listType === "companies") {
       setRows((rows as EnrichedCompany[]).map((r) => ({ ...r, status: "approved" as const })));
@@ -711,21 +707,18 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     if (f === "all") return displayRows;
     return displayRows.filter((r) => {
       if (f === "approved") return r.status === "approved";
-      if (f === "skipped") return r.status === "skipped";
-      return r.status === "pending";
+      return r.status !== "approved";
     });
   }, [displayRows, filter]);
 
-  const { approvedCount, needsReviewCount, skippedCount } = useMemo(() => {
+  const { approvedCount, needsReviewCount } = useMemo(() => {
     let a = 0;
     let n = 0;
-    let s = 0;
     for (const r of rows) {
       if (r.status === "approved") a++;
-      else if (r.status === "pending") n++;
-      else s++;
+      else n++;
     }
-    return { approvedCount: a, needsReviewCount: n, skippedCount: s };
+    return { approvedCount: a, needsReviewCount: n };
   }, [rows]);
 
   const unresolvedApprovedCount = useMemo(
@@ -771,19 +764,10 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         <span>{approvedCount} Approved</span>
         {" · "}
         <span>{needsReviewCount} Need Review</span>
-        {" · "}
-        <span>{skippedCount} Skipped</span>
       </p>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="rounded-lg border border-(--border-default) bg-white px-3 py-1.5 text-xs font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
-            onClick={approveAllHigh}
-          >
-            Approve All High Confidence
-          </button>
           <button
             type="button"
             className="rounded-lg border border-(--border-default) bg-white px-3 py-1.5 text-xs font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
@@ -811,9 +795,8 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
               onChange={(e) => setFilter(e.target.value as FilterKey)}
             >
               <option value="all">All</option>
-              <option value="needs_review">Needs Review</option>
               <option value="approved">Approved</option>
-              <option value="skipped">Skipped</option>
+              <option value="needs_review">Needs Review</option>
             </select>
             <span
               className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
@@ -830,10 +813,10 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
           <thead className="bg-(--bg-muted) text-(--text-secondary) text-sm font-semibold">
             {listType === "companies" ? (
               <tr>
-                <th className="sticky left-0 z-20 w-12 min-w-12 max-w-12 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
-                  Approve
+                <th className="sticky left-0 z-20 w-16 min-w-16 max-w-16 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 text-center shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                  ✓
                 </th>
-                <th className="sticky left-[48px] z-21 w-40 min-w-40 max-w-48 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                <th className="sticky left-[64px] z-21 w-40 min-w-40 max-w-48 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
                   Raw Input
                 </th>
                 <th className="border-b border-(--border-default) px-2 py-2">Company Name</th>
@@ -854,10 +837,10 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
               </tr>
             ) : (
               <tr>
-                <th className="sticky left-0 z-20 w-12 min-w-12 max-w-12 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
-                  Approve
+                <th className="sticky left-0 z-20 w-16 min-w-16 max-w-16 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 text-center shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                  ✓
                 </th>
-                <th className="sticky left-[48px] z-21 w-40 min-w-40 max-w-48 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                <th className="sticky left-[64px] z-21 w-40 min-w-40 max-w-48 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
                   Name
                 </th>
                 <th className="border-b border-(--border-default) px-2 py-2">Email</th>
@@ -881,7 +864,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   return (
                     <tr key={row.id} className={rowShellClass(row, ri)}>
                       <td
-                        className={`sticky left-0 z-10 w-12 min-w-12 max-w-12 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
+                        className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
                       >
                         <div className="flex items-center justify-center">
                           <input
@@ -894,7 +877,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         </div>
                       </td>
                       <td
-                        className={`sticky left-[48px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)} ${muted ? "text-zinc-500" : ""}`}
+                        className={`sticky left-[64px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)} ${muted ? "text-zinc-500" : ""}`}
                       >
                         {row.rawInput}
                       </td>
@@ -1009,7 +992,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   return (
                     <tr key={row.id} className={rowShellClass(row, ri)}>
                       <td
-                        className={`sticky left-0 z-10 w-12 min-w-12 max-w-12 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
+                        className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
                       >
                         <div className="flex items-center justify-center">
                           <input
@@ -1022,7 +1005,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         </div>
                       </td>
                       <td
-                        className={`sticky left-[48px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
+                        className={`sticky left-[64px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
                       >
                         <EditableCell
                           value={fullName}
@@ -1123,7 +1106,13 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       </td>
                       <td className="max-w-56 px-2 py-1.5 align-middle wrap-break-word">
                         <div className="flex items-center justify-center">
-                          <ReasoningTooltip text={row.aiReasoning} />
+                          <ReasoningTooltip
+                            text={
+                              getDisplayConfidence(row, "contacts") === "unresolved"
+                                ? missingContactFieldsReason(row) ?? row.aiReasoning
+                                : row.aiReasoning
+                            }
+                          />
                         </div>
                       </td>
                     </tr>

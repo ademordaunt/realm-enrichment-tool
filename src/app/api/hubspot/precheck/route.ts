@@ -98,6 +98,7 @@ export async function POST(request: Request): Promise<Response> {
       const email = normalizeEmail(String(row.rawEmail || row.resolvedEmail || ""));
       const match = email ? lookup.get(email) : undefined;
       const existingData = { ...EMPTY_CONTACT_EXISTING_DATA, ...(match?.existingData ?? {}) };
+      // A contact only counts as "complete in HubSpot" when title + company + LinkedIn are all present.
       const hubspotComplete =
         isNonEmpty(existingData.jobtitle) &&
         isNonEmpty(existingData.company) &&
