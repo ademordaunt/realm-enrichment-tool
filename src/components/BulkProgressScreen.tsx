@@ -63,6 +63,13 @@ export function BulkProgressScreen({
     if (!jobState || jobState.totalRows <= 0) return 0;
     return Math.min(100, Math.round((jobState.processedRows / jobState.totalRows) * 100));
   }, [jobState]);
+  const estimatedCompleteTime = useMemo(() => {
+    if (!jobState) return null;
+    const needsWork = Math.max(0, jobState.totalRows - (jobState.hubspotSkippedCount ?? 0));
+    const estimatedSeconds = needsWork * 5;
+    const completionDate = new Date(Date.now() + estimatedSeconds * 1000);
+    return completionDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }, [jobState?.totalRows, jobState?.hubspotSkippedCount]);
 
   if (!jobState) return null;
 
@@ -167,25 +174,26 @@ export function BulkProgressScreen({
       <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
         <p className="text-base font-semibold text-(--realm-navy)">✅ Enrichment Complete</p>
         <p className="mt-2 text-sm font-medium text-(--text-primary)">{name}</p>
-        <dl className="mt-4 space-y-2 text-sm text-(--text-primary)">
+        <div className="mt-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-(--text-muted)">Records</p>
+        </div>
+        <dl className="mt-2 space-y-2 text-sm text-(--text-primary)">
           <div className="flex justify-between gap-4">
             <dt className="text-(--text-muted)">Records processed</dt>
             <dd className="tabular-nums">{jobState.totalRows}</dd>
           </div>
           <div className="flex justify-between gap-4">
-            <dt className="text-(--text-muted)">ZoomInfo enriched</dt>
-            <dd className="tabular-nums">{jobState.enrichedCount}</dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-(--text-muted)">From cache</dt>
-            <dd className="tabular-nums">{jobState.cachedCount}</dd>
-          </div>
-          <div className="flex justify-between gap-4">
-            <dt className="text-(--text-muted)">HubSpot skipped</dt>
+            <dt className="text-(--text-muted)">Found in HubSpot</dt>
             <dd className="tabular-nums">{jobState.hubspotSkippedCount}</dd>
           </div>
+        </dl>
+        <div className="mt-4 border-t border-(--border-default)" />
+        <div className="mt-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-(--text-muted)">Cost & time</p>
+        </div>
+        <dl className="mt-2 space-y-2 text-sm text-(--text-primary)">
           <div className="flex justify-between gap-4">
-            <dt className="text-(--text-muted)">Credits used</dt>
+            <dt className="text-(--text-muted)">ZoomInfo credits used</dt>
             <dd className="tabular-nums">{jobState.creditsUsed}</dd>
           </div>
           <div className="flex justify-between gap-4">
@@ -211,7 +219,9 @@ export function BulkProgressScreen({
         {jobState.eventContext.eventName || "Bulk import"}
       </p>
       <p className="mt-1 text-sm text-(--text-muted)">
-        Running in background — feel free to leave this tab.
+        {estimatedCompleteTime
+          ? `Running in background — check back around ${estimatedCompleteTime}.`
+          : "Running in background — this may take a while."}
       </p>
 
       <div className="mt-4">

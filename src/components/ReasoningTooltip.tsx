@@ -75,7 +75,7 @@ export function ReasoningTooltip({ text }: { text: string }) {
       </button>
       {visible && coords ? (
         <div
-          className="w-64 whitespace-normal wrap-break-word rounded-lg border border-(--border-default) bg-white p-3 text-left text-sm leading-relaxed text-(--text-primary) shadow-(--shadow-card-hover) z-9999"
+          className="z-50 w-64 whitespace-normal wrap-break-word rounded-lg border border-(--border-default) bg-white p-3 text-left text-sm leading-relaxed text-(--text-primary) shadow-lg"
           style={{
             position: "fixed",
             top: coords.top,

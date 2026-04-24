@@ -2095,37 +2095,42 @@ export default function Home() {
               </div>
             )}
 
-            {result && file && !showSuccessFlash && (
+            {result && file && !showSuccessFlash && showBulkSmallListWarning && (
               <section
                 className={`flex w-full flex-col gap-6 rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card) sm:p-6 ${UPLOAD_FADE_IN}`}
               >
-                {showBulkSmallListWarning ? (
-                  <div
-                    className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100"
-                    role="status"
-                  >
-                    <p>
-                      This list has fewer than 200 records. Consider using Marketing Event List mode
-                      instead.
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className="rounded-lg border border-amber-800/25 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/50 dark:text-amber-50 dark:hover:bg-amber-900/80"
-                        onClick={() => resetToUpload(false)}
-                      >
-                        Go Back to Start
-                      </button>
-                      <button
-                        type="button"
-                        className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`}
-                        onClick={() => setBulkSmallListBypass(true)}
-                      >
-                        Continue Anyway
-                      </button>
-                    </div>
+                <div
+                  className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100"
+                  role="status"
+                >
+                  <p>
+                    This list has fewer than 200 records. Consider using Marketing Event List mode
+                    instead.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="rounded-lg border border-amber-800/25 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/50 dark:text-amber-50 dark:hover:bg-amber-900/80"
+                      onClick={() => resetToUpload(false)}
+                    >
+                      Go Back to Start
+                    </button>
+                    <button
+                      type="button"
+                      className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`}
+                      onClick={() => setBulkSmallListBypass(true)}
+                    >
+                      Continue Anyway
+                    </button>
                   </div>
-                ) : null}
+                </div>
+              </section>
+            )}
+
+            {result && file && !showSuccessFlash && !showBulkSmallListWarning && (
+              <section
+                className={`flex w-full flex-col gap-6 rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card) sm:p-6 ${UPLOAD_FADE_IN}`}
+              >
                 <div className="flex w-full flex-wrap items-start justify-between gap-3 text-sm text-(--text-primary)">
                   <p className="min-w-0 flex-1">
                     ✓ <span className="font-semibold">{file.name}</span> — {effectiveRowCount}{" "}
@@ -2218,42 +2223,44 @@ export default function Home() {
                           Keep Both
                         </button>
                       </div>
-                      <button
-                        type="button"
-                        className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-600 hover:border-red-400 hover:bg-red-50 dark:border-red-700/50 dark:bg-zinc-950 dark:text-red-400 dark:hover:border-red-500 dark:hover:bg-red-950/30"
-                        onClick={() => {
-                          if (!resolvedListType) return;
-                          const base = previewRowsOverride ?? displayRows;
-                          const pairCountBefore = listAllDuplicatePairs(
-                            base,
-                            resolvedListType,
-                            duplicateExemptPairs,
-                          ).length;
-                          const duplicateBannerTotal =
-                            duplicateSessionTotal ?? pairCountBefore;
-                          const { rows: next } = removeAllDuplicateRows(
-                            base,
-                            resolvedListType,
-                          );
-                          setPreviewRowsOverride(next);
-                          setDuplicateExemptPairs(new Set());
-                          setDupFeedback(null);
-                          if (removeAllDupMsgTimeoutRef.current) {
-                            clearTimeout(removeAllDupMsgTimeoutRef.current);
-                          }
-                          const dupWord =
-                            duplicateBannerTotal === 1 ? "duplicate" : "duplicates";
-                          setRemoveAllDupConfirm(
-                            `Removed ${duplicateBannerTotal} ${dupWord} from this import.`,
-                          );
-                          removeAllDupMsgTimeoutRef.current = setTimeout(() => {
-                            setRemoveAllDupConfirm(null);
-                            removeAllDupMsgTimeoutRef.current = null;
-                          }, 4000);
-                        }}
-                      >
-                        Remove All Duplicates
-                      </button>
+                      {remainingDuplicatePairsCount > 1 ? (
+                        <button
+                          type="button"
+                          className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-sm font-medium text-red-600 hover:border-red-400 hover:bg-red-50 dark:border-red-700/50 dark:bg-zinc-950 dark:text-red-400 dark:hover:border-red-500 dark:hover:bg-red-950/30"
+                          onClick={() => {
+                            if (!resolvedListType) return;
+                            const base = previewRowsOverride ?? displayRows;
+                            const pairCountBefore = listAllDuplicatePairs(
+                              base,
+                              resolvedListType,
+                              duplicateExemptPairs,
+                            ).length;
+                            const duplicateBannerTotal =
+                              duplicateSessionTotal ?? pairCountBefore;
+                            const { rows: next } = removeAllDuplicateRows(
+                              base,
+                              resolvedListType,
+                            );
+                            setPreviewRowsOverride(next);
+                            setDuplicateExemptPairs(new Set());
+                            setDupFeedback(null);
+                            if (removeAllDupMsgTimeoutRef.current) {
+                              clearTimeout(removeAllDupMsgTimeoutRef.current);
+                            }
+                            const dupWord =
+                              duplicateBannerTotal === 1 ? "duplicate" : "duplicates";
+                            setRemoveAllDupConfirm(
+                              `Removed ${duplicateBannerTotal} ${dupWord} from this import.`,
+                            );
+                            removeAllDupMsgTimeoutRef.current = setTimeout(() => {
+                              setRemoveAllDupConfirm(null);
+                              removeAllDupMsgTimeoutRef.current = null;
+                            }, 4000);
+                          }}
+                        >
+                          Remove All Duplicates
+                        </button>
+                      ) : null}
                     </div>
                     {dupFeedback ? (
                       <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
