@@ -2,7 +2,7 @@ import { batchCheckCompaniesInHubSpot, normalizeDomain } from "@/lib/hubspot/com
 import { batchCheckContactsInHubSpot } from "@/lib/hubspot/contacts";
 import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 type PrecheckResult = {
   id: string;

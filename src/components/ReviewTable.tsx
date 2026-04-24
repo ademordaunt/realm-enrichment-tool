@@ -549,11 +549,20 @@ function LinkedInProfileCell(props: {
 export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewTableProps) {
   const [editedKeys, setEditedKeys] = useState<Set<string>>(() => new Set());
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [stableRowOrder, setStableRowOrder] = useState<string[]>([]);
 
   useEffect(() => {
     setEditedKeys(new Set());
     setFilter("all");
   }, [rows, listType]);
+
+  const rowsById = useMemo(() => {
+    const m: Record<string, EnrichedCompany | EnrichedContact> = {};
+    for (const r of rows) {
+      m[r.id] = r;
+    }
+    return m;
+  }, [rows]);
 
   const markEdited = useCallback((id: string, field: string) => {
     setEditedKeys((prev) => {
@@ -614,6 +623,34 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     });
   }, [rows, listType]);
 
+  useEffect(() => {
+    if (rows.length === 0) {
+      setStableRowOrder([]);
+      return;
+    }
+    setStableRowOrder((prev) => {
+      if (prev.length === 0) {
+        return sortedRows.map((r) => r.id);
+      }
+      const rowIdSet = new Set(rows.map((r) => r.id));
+      const stale = prev.some((id) => !rowIdSet.has(id));
+      if (stale || prev.length !== rows.length) {
+        return sortedRows.map((r) => r.id);
+      }
+      return prev;
+    });
+  }, [rows, sortedRows, listType]);
+
+  const displayRows = useMemo(() => {
+    if (stableRowOrder.length === 0) return sortedRows;
+    const out: (EnrichedCompany | EnrichedContact)[] = [];
+    for (const id of stableRowOrder) {
+      const r = rowsById[id];
+      if (r) out.push(r);
+    }
+    return out.length > 0 ? out : sortedRows;
+  }, [stableRowOrder, rowsById, sortedRows]);
+
   const approveAllHigh = useCallback(() => {
     if (listType === "companies") {
       setRows(
@@ -671,13 +708,13 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
 
   const visibleRows = useMemo(() => {
     const f = filter;
-    if (f === "all") return sortedRows;
-    return sortedRows.filter((r) => {
+    if (f === "all") return displayRows;
+    return displayRows.filter((r) => {
       if (f === "approved") return r.status === "approved";
       if (f === "skipped") return r.status === "skipped";
       return r.status === "pending";
     });
-  }, [sortedRows, filter]);
+  }, [displayRows, filter]);
 
   const { approvedCount, needsReviewCount, skippedCount } = useMemo(() => {
     let a = 0;
@@ -718,6 +755,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     }
     const stripe = rowIndex % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)";
     return `${base} ${stripe}`;
+  };
+
+  const rowStickyBgClass = (r: EnrichedCompany | EnrichedContact, rowIndex: number) => {
+    if (r.status === "approved") return "bg-(--conf-high-bg)";
+    if (r.status === "skipped") return "bg-(--bg-muted) opacity-70";
+    return rowIndex % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)";
   };
 
   return (
@@ -782,13 +825,17 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-(--border-default)">
+      <div className="min-w-0 overflow-x-auto rounded-lg border border-(--border-default)">
         <table className="min-w-full border-separate border-spacing-0 text-left text-xs sm:text-sm">
           <thead className="bg-(--bg-muted) text-(--text-secondary) text-sm font-semibold">
             {listType === "companies" ? (
               <tr>
-                <th className="border-b border-(--border-default) px-2 py-2">Approve</th>
-                <th className="border-b border-(--border-default) px-2 py-2">Raw Input</th>
+                <th className="sticky left-0 z-20 w-12 min-w-12 max-w-12 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                  Approve
+                </th>
+                <th className="sticky left-[48px] z-21 w-40 min-w-40 max-w-48 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                  Raw Input
+                </th>
                 <th className="border-b border-(--border-default) px-2 py-2">Company Name</th>
                 <th className="border-b border-(--border-default) px-2 py-2">
                   Company Domain Name
@@ -807,8 +854,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
               </tr>
             ) : (
               <tr>
-                <th className="border-b border-(--border-default) px-2 py-2">Approve</th>
-                <th className="border-b border-(--border-default) px-2 py-2">Name</th>
+                <th className="sticky left-0 z-20 w-12 min-w-12 max-w-12 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                  Approve
+                </th>
+                <th className="sticky left-[48px] z-21 w-40 min-w-40 max-w-48 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
+                  Name
+                </th>
                 <th className="border-b border-(--border-default) px-2 py-2">Email</th>
                 <th className="border-b border-(--border-default) px-2 py-2">Company</th>
                 <th className="border-b border-(--border-default) px-2 py-2">Title</th>
@@ -829,7 +880,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   const checked = row.status === "approved";
                   return (
                     <tr key={row.id} className={rowShellClass(row, ri)}>
-                      <td className="px-2 py-1.5 align-middle">
+                      <td
+                        className={`sticky left-0 z-10 w-12 min-w-12 max-w-12 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
+                      >
                         <div className="flex items-center justify-center">
                           <input
                             type="checkbox"
@@ -841,7 +894,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         </div>
                       </td>
                       <td
-                        className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${muted ? "text-zinc-500" : ""}`}
+                        className={`sticky left-[48px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)} ${muted ? "text-zinc-500" : ""}`}
                       >
                         {row.rawInput}
                       </td>
@@ -955,7 +1008,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   )}`;
                   return (
                     <tr key={row.id} className={rowShellClass(row, ri)}>
-                      <td className="px-2 py-1.5 align-middle">
+                      <td
+                        className={`sticky left-0 z-10 w-12 min-w-12 max-w-12 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
+                      >
                         <div className="flex items-center justify-center">
                           <input
                             type="checkbox"
@@ -966,7 +1021,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           />
                         </div>
                       </td>
-                      <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
+                      <td
+                        className={`sticky left-[48px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
+                      >
                         <EditableCell
                           value={fullName}
                           edited={editedKeys.has(rowKey(row.id, "name"))}

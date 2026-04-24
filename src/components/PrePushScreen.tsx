@@ -293,250 +293,253 @@ export function PrePushScreen({
   }, []);
 
   return (
-    <section className="flex flex-col gap-6">
-      <div>
-        <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">Ready to Import</h2>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Review your import settings before pushing to HubSpot.
-        </p>
-      </div>
-
-      <div className={CARD_PANEL}>
-        <h3 className="mb-3 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Summary</h3>
-        <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-          <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
-            {listType === "companies" ? (
-              <>
-                <thead className="bg-zinc-100 dark:bg-zinc-800/80">
-                  <tr>
-                    <th className={TABLE_HEAD_CELL}>Name</th>
-                    <th className={TABLE_HEAD_CELL}>Domain</th>
-                    <th className={TABLE_HEAD_CELL}>Website</th>
-                    <th className={TABLE_HEAD_CELL}>LinkedIn</th>
-                    <th className={TABLE_HEAD_CELL}>State/Region</th>
-                    <th className={TABLE_HEAD_CELL}>Number of Employees</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(approvedRows as EnrichedCompany[]).map((row) => (
-                    <tr key={row.id} className={TABLE_ROW}>
-                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.resolvedName}</td>
-                      <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                        {row.domain}
-                      </td>
-                      <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                        {websiteFromDomain(row.domain)}
-                      </td>
-                      <td className="max-w-40 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                        {row.linkedinUrl || "—"}
-                      </td>
-                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.state || "—"}</td>
-                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                        {row.numberOfEmployees != null ? String(row.numberOfEmployees) : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </>
-            ) : (
-              <>
-                <thead className="bg-zinc-100 dark:bg-zinc-800/80">
-                  <tr>
-                    <th className={TABLE_HEAD_CELL}>First Name</th>
-                    <th className={TABLE_HEAD_CELL}>Last Name</th>
-                    <th className={TABLE_HEAD_CELL}>Email</th>
-                    <th className={TABLE_HEAD_CELL}>Company Name</th>
-                    <th className={TABLE_HEAD_CELL}>Title</th>
-                    <th className={TABLE_HEAD_CELL}>LinkedIn</th>
-                    <th className={TABLE_HEAD_CELL}>Membership Notes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {contactRowsForTable.map((row) => (
-                    <tr key={row.id} className={TABLE_ROW}>
-                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.firstName}</td>
-                      <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.lastName}</td>
-                      <td className="max-w-44 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                        {row.rawEmail}
-                      </td>
-                      <td className="max-w-40 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
-                        <PrePushEditableCell
-                          value={row.resolvedCompany}
-                          onSave={(v) => patchContact(row.id, { resolvedCompany: v })}
-                        />
-                      </td>
-                      <td className="max-w-36 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
-                        <PrePushEditableCell
-                          value={row.title}
-                          onSave={(v) => patchContact(row.id, { title: v })}
-                        />
-                      </td>
-                      <td className="max-w-36 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
-                        <PrePushEditableCell
-                          value={row.linkedinUrl}
-                          breakAll
-                          onSave={(v) => patchContact(row.id, { linkedinUrl: v })}
-                        />
-                      </td>
-                      <td className="align-middle px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                        <div className="flex min-h-9 w-full items-center">
-                          <div className="w-full min-w-0">
-                            <PrePushEditableCell
-                              value={row.membershipNotes ?? ""}
-                              onSave={(v) => patchContact(row.id, { membershipNotes: v })}
-                            />
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </>
-            )}
-          </table>
+    <>
+      <section className="flex flex-col gap-6 pb-32">
+        <div>
+          <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">Ready to Import</h2>
+          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            Review your import settings before pushing to HubSpot.
+          </p>
         </div>
-      </div>
 
-      <div className={`${CARD_PANEL} grid gap-4 sm:grid-cols-2`}>
-        <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 sm:col-span-2">
-          Import Settings
-        </h3>
+        <div className={`${CARD_PANEL} grid gap-4 sm:grid-cols-2`}>
+          <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 sm:col-span-2">
+            Import Settings
+          </h3>
 
-        <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">
-            List Name <span className="text-red-600">*</span>
-          </span>
-          <input
-            className={FIELD_CONTROL}
-            value={listName}
-            onChange={(e) => setListName(e.target.value)}
-          />
-        </label>
+          <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+            <span className="font-medium text-zinc-800 dark:text-zinc-200">
+              List Name <span className="text-red-600">*</span>
+            </span>
+            <input
+              className={FIELD_CONTROL}
+              value={listName}
+              onChange={(e) => setListName(e.target.value)}
+            />
+          </label>
 
-        <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">HubSpot Folder</span>
-          {foldersLoading ? (
-            <span className="text-sm text-zinc-500">Loading folders…</span>
-          ) : foldersError ? (
-            <div className="flex flex-col gap-1">
-              <p className="text-xs text-amber-800 dark:text-amber-200">
-                Could not load folders — enter manually
-              </p>
-              <input
-                className={FIELD_CONTROL}
-                value={folderManual}
-                onChange={(e) => setFolderManual(e.target.value)}
-                placeholder="Folder ID or name per HubSpot"
-              />
-            </div>
-          ) : (
-            <SelectCaretWrap>
-              <select
-                className={SELECT_WITH_CARET}
-                value={folderId}
-                onChange={(e) => setFolderId(e.target.value)}
-              >
-                <option value={FOLDER_PLACEHOLDER_VALUE} disabled>
-                  Select a folder
-                </option>
-                <option value="">No Folder</option>
-                {(folders ?? []).map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.name}
-                  </option>
-                ))}
-              </select>
-            </SelectCaretWrap>
-          )}
-        </label>
-
-        {listType === "contacts" ? (
-          <>
-            <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-              <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                Lead Source <span className="text-red-600">*</span>
-              </span>
-              {hasExistingLeadSourceValues ? (
-                <label className="mb-1 inline-flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-                  <input
-                    type="checkbox"
-                    checked={useExistingLeadSource}
-                    onChange={(e) => setUseExistingLeadSource(e.target.checked)}
-                  />
-                  Use existing Lead Source values from CSV
-                </label>
-              ) : null}
+          <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+            <span className="font-medium text-zinc-800 dark:text-zinc-200">HubSpot Folder</span>
+            {foldersLoading ? (
+              <span className="text-sm text-zinc-500">Loading folders…</span>
+            ) : foldersError ? (
+              <div className="flex flex-col gap-1">
+                <p className="text-xs text-amber-800 dark:text-amber-200">
+                  Could not load folders — enter manually
+                </p>
+                <input
+                  className={FIELD_CONTROL}
+                  value={folderManual}
+                  onChange={(e) => setFolderManual(e.target.value)}
+                  placeholder="Folder ID or name per HubSpot"
+                />
+              </div>
+            ) : (
               <SelectCaretWrap>
                 <select
-                  className={`${SELECT_WITH_CARET} ${useExistingLeadSource ? "opacity-60" : ""}`}
-                  value={leadSource}
-                  onChange={(e) => setLeadSource(e.target.value)}
-                  disabled={useExistingLeadSource}
-                  required
+                  className={SELECT_WITH_CARET}
+                  value={folderId}
+                  onChange={(e) => setFolderId(e.target.value)}
                 >
-                  <option value="">Select lead source</option>
-                  {LEAD_SOURCE_OPTIONS.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
+                  <option value={FOLDER_PLACEHOLDER_VALUE} disabled>
+                    Select a folder
+                  </option>
+                  <option value="">No Folder</option>
+                  {(folders ?? []).map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.name}
                     </option>
                   ))}
                 </select>
               </SelectCaretWrap>
-            </label>
+            )}
+          </label>
 
-            <label className="flex flex-col gap-1 text-sm sm:col-span-2">
-              <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                Lead Source Description <span className="text-red-600">*</span>
-              </span>
-              {hasExistingLeadSourceDescriptionValues ? (
-                <label className="mb-1 inline-flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
-                  <input
-                    type="checkbox"
-                    checked={useExistingLeadSourceDescription}
-                    onChange={(e) => setUseExistingLeadSourceDescription(e.target.checked)}
-                  />
-                  Use existing values from CSV (varies per contact)
-                </label>
-              ) : null}
-              <input
-                className={`${FIELD_CONTROL} ${useExistingLeadSourceDescription ? "opacity-60" : ""}`}
-                value={leadSourceDescription}
-                onChange={(e) => setLeadSourceDescription(e.target.value)}
-                disabled={useExistingLeadSourceDescription}
-              />
-            </label>
-          </>
-        ) : null}
-      </div>
+          {listType === "contacts" ? (
+            <>
+              <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+                <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                  Lead Source <span className="text-red-600">*</span>
+                </span>
+                {hasExistingLeadSourceValues ? (
+                  <label className="mb-1 inline-flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={useExistingLeadSource}
+                      onChange={(e) => setUseExistingLeadSource(e.target.checked)}
+                    />
+                    Use existing Lead Source values from CSV
+                  </label>
+                ) : null}
+                <SelectCaretWrap>
+                  <select
+                    className={`${SELECT_WITH_CARET} ${useExistingLeadSource ? "opacity-60" : ""}`}
+                    value={leadSource}
+                    onChange={(e) => setLeadSource(e.target.value)}
+                    disabled={useExistingLeadSource}
+                    required
+                  >
+                    <option value="">Select lead source</option>
+                    {LEAD_SOURCE_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                  </select>
+                </SelectCaretWrap>
+              </label>
 
-      <div className="flex flex-col gap-3 border-t border-zinc-100 pt-4 dark:border-zinc-800">
-        <div className="flex items-center justify-between">
-          <button
-            type="button"
-            onClick={onBack}
-            className="rounded-lg bg-zinc-200 px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
-          >
-            ← Back to Review
-          </button>
-          <button
-            type="button"
-            disabled={!canPush}
-            onClick={handlePush}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold ${
-              canPush
-                ? "bg-blue-600 text-white hover:bg-blue-700"
-                : "cursor-not-allowed bg-zinc-300 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"
-            }`}
-          >
-            Push to HubSpot →
-          </button>
+              <label className="flex flex-col gap-1 text-sm sm:col-span-2">
+                <span className="font-medium text-zinc-800 dark:text-zinc-200">
+                  Lead Source Description <span className="text-red-600">*</span>
+                </span>
+                {hasExistingLeadSourceDescriptionValues ? (
+                  <label className="mb-1 inline-flex items-center gap-2 text-sm text-zinc-700 dark:text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={useExistingLeadSourceDescription}
+                      onChange={(e) => setUseExistingLeadSourceDescription(e.target.checked)}
+                    />
+                    Use existing values from CSV (varies per contact)
+                  </label>
+                ) : null}
+                <input
+                  className={`${FIELD_CONTROL} ${useExistingLeadSourceDescription ? "opacity-60" : ""}`}
+                  value={leadSourceDescription}
+                  onChange={(e) => setLeadSourceDescription(e.target.value)}
+                  disabled={useExistingLeadSourceDescription}
+                />
+              </label>
+            </>
+          ) : null}
         </div>
-        <div className="ml-auto max-w-xs text-right text-sm text-(--text-muted)">
-          💡 After pushing, open the HubSpot list
-          <br />
-          and click &quot;Enrich&quot; to run native data enrichment.
+
+        <div className={CARD_PANEL}>
+          <h3 className="mb-3 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Summary</h3>
+          <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
+              {listType === "companies" ? (
+                <>
+                  <thead className="bg-zinc-100 dark:bg-zinc-800/80">
+                    <tr>
+                      <th className={TABLE_HEAD_CELL}>Name</th>
+                      <th className={TABLE_HEAD_CELL}>Domain</th>
+                      <th className={TABLE_HEAD_CELL}>Website</th>
+                      <th className={TABLE_HEAD_CELL}>LinkedIn</th>
+                      <th className={TABLE_HEAD_CELL}>State/Region</th>
+                      <th className={TABLE_HEAD_CELL}>Number of Employees</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(approvedRows as EnrichedCompany[]).map((row) => (
+                      <tr key={row.id} className={TABLE_ROW}>
+                        <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.resolvedName}</td>
+                        <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                          {row.domain}
+                        </td>
+                        <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                          {websiteFromDomain(row.domain)}
+                        </td>
+                        <td className="max-w-40 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                          {row.linkedinUrl || "—"}
+                        </td>
+                        <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.state || "—"}</td>
+                        <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                          {row.numberOfEmployees != null ? String(row.numberOfEmployees) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </>
+              ) : (
+                <>
+                  <thead className="bg-zinc-100 dark:bg-zinc-800/80">
+                    <tr>
+                      <th className={TABLE_HEAD_CELL}>First Name</th>
+                      <th className={TABLE_HEAD_CELL}>Last Name</th>
+                      <th className={TABLE_HEAD_CELL}>Email</th>
+                      <th className={TABLE_HEAD_CELL}>Company Name</th>
+                      <th className={TABLE_HEAD_CELL}>Title</th>
+                      <th className={TABLE_HEAD_CELL}>LinkedIn</th>
+                      <th className={TABLE_HEAD_CELL}>Membership Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contactRowsForTable.map((row) => (
+                      <tr key={row.id} className={TABLE_ROW}>
+                        <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.firstName}</td>
+                        <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.lastName}</td>
+                        <td className="max-w-44 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                          {row.rawEmail}
+                        </td>
+                        <td className="max-w-40 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
+                          <PrePushEditableCell
+                            value={row.resolvedCompany}
+                            onSave={(v) => patchContact(row.id, { resolvedCompany: v })}
+                          />
+                        </td>
+                        <td className="max-w-36 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
+                          <PrePushEditableCell
+                            value={row.title}
+                            onSave={(v) => patchContact(row.id, { title: v })}
+                          />
+                        </td>
+                        <td className="max-w-36 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
+                          <PrePushEditableCell
+                            value={row.linkedinUrl}
+                            breakAll
+                            onSave={(v) => patchContact(row.id, { linkedinUrl: v })}
+                          />
+                        </td>
+                        <td className="align-middle px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                          <div className="flex min-h-9 w-full items-center">
+                            <div className="w-full min-w-0">
+                              <PrePushEditableCell
+                                value={row.membershipNotes ?? ""}
+                                onSave={(v) => patchContact(row.id, { membershipNotes: v })}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </>
+              )}
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50 border-t border-zinc-200 bg-white/95 px-4 py-4 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/95">
+        <div className="pointer-events-auto mx-auto flex w-full max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-start">
+            <button
+              type="button"
+              onClick={onBack}
+              className="rounded-lg bg-zinc-200 px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+            >
+              ← Back to Review
+            </button>
+            <button
+              type="button"
+              disabled={!canPush}
+              onClick={handlePush}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+                canPush
+                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  : "cursor-not-allowed bg-zinc-300 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"
+              }`}
+            >
+              Push to HubSpot →
+            </button>
+          </div>
+          <p className="max-w-md text-right text-sm text-(--text-muted) sm:text-left">
+            💡 After pushing, open the HubSpot list and click &quot;Enrich&quot; to run native data
+            enrichment.
+          </p>
         </div>
       </div>
-    </section>
+    </>
   );
 }

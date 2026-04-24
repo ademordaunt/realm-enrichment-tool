@@ -8,7 +8,7 @@ export function getHubSpotAccessToken(): string {
   return t;
 }
 
-/** HubSpot CRM fetch with Bearer auth. Retries once after 500ms on HTTP 429. */
+/** HubSpot CRM fetch with Bearer auth. Up to 3 attempts with backoff on HTTP 429. */
 export async function hubspotFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = getHubSpotAccessToken();
   const url = path.startsWith("http") ? path : `${HUBSPOT_API}${path}`;
@@ -21,10 +21,12 @@ export async function hubspotFetch(path: string, init: RequestInit = {}): Promis
   }
 
   let res = await fetch(url, { ...init, headers });
-
-  if (res.status === 429) {
-    await new Promise((r) => setTimeout(r, 500));
-    res = await fetch(url, { ...init, headers });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (res.status !== 429) break;
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+      res = await fetch(url, { ...init, headers });
+    }
   }
 
   return res;

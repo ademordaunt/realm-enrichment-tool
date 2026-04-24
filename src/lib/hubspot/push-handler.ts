@@ -2,6 +2,7 @@ import type { HubSpotCompanyPushExtras } from "@/lib/hubspot/companies";
 import {
   createCompany,
   findExistingCompany,
+  normalizeDomain,
   updateCompany,
 } from "@/lib/hubspot/companies";
 import {
@@ -18,7 +19,44 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+function deduplicateApproved(
+  approved: Array<EnrichedCompany | EnrichedContact>,
+  listType: "companies" | "contacts",
+): Array<EnrichedCompany | EnrichedContact> {
+  const seenKey = new Set<string>();
+  const domainDeduped = approved.filter((row) => {
+    const key =
+      listType === "companies"
+        ? normalizeDomain((row as EnrichedCompany).domain ?? "")
+        : (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? "";
+    if (!key) return true;
+    if (seenKey.has(key)) return false;
+    seenKey.add(key);
+    return true;
+  });
+
+  if (listType !== "companies") return domainDeduped;
+
+  const seenNameState = new Set<string>();
+  return domainDeduped.filter((row) => {
+    const c = row as EnrichedCompany;
+    const name = (c.resolvedName ?? "").trim().toLowerCase();
+    const state = (c.state ?? "").trim().toLowerCase();
+    if (!name) return true;
+    const nsKey = `${name}|${state}`;
+    if (seenNameState.has(nsKey)) return false;
+    seenNameState.add(nsKey);
+    return true;
+  });
+}
+
 type NdjsonProgress = { type: "progress"; current: number; total: number };
+type NdjsonListCreated = {
+  type: "list_created";
+  listId: string;
+  listName: string;
+  folderId?: string;
+};
 type NdjsonDone = { type: "done" } & HubSpotPushDonePayload;
 type NdjsonError = { type: "error"; message: string };
 
@@ -152,15 +190,16 @@ export async function handleHubSpotPushRequest(
         }
       : undefined;
 
-  const approved = rows.filter((r) => isRecord(r) && r.status === "approved") as Array<
+  const approvedRaw = rows.filter((r) => isRecord(r) && r.status === "approved") as Array<
     EnrichedCompany | EnrichedContact
   >;
+  const approved = deduplicateApproved(approvedRaw, listType);
 
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const write = (obj: NdjsonProgress | NdjsonDone | NdjsonError) => {
+      const write = (obj: NdjsonProgress | NdjsonListCreated | NdjsonDone | NdjsonError) => {
         controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
       };
 
@@ -171,6 +210,15 @@ export async function handleHubSpotPushRequest(
         const recordIds: string[] = [];
 
         const total = approved.length;
+
+        const objectTypeId = listType === "companies" ? "0-2" : "0-1";
+        const listId = await createStaticListForPush(listName, objectTypeId, folderId);
+        write({
+          type: "list_created",
+          listId,
+          listName,
+          ...(folderId ? { folderId } : {}),
+        });
 
         for (let i = 0; i < approved.length; i++) {
           const row = approved[i]!;
@@ -231,11 +279,13 @@ export async function handleHubSpotPushRequest(
             errors.push({ rowId: row.id, error: message });
           }
 
+          if (i > 0 && i % 50 === 0) {
+            await new Promise((r) => setTimeout(r, 500));
+          }
+
           write({ type: "progress", current: i + 1, total });
         }
 
-        const objectTypeId = listType === "companies" ? "0-2" : "0-1";
-        const listId = await createStaticListForPush(listName, objectTypeId, folderId);
         await addRecordsToList(listId, recordIds);
 
         const totalPushed = created + updated;
@@ -248,6 +298,7 @@ export async function handleHubSpotPushRequest(
           listId,
           listName,
           totalPushed,
+          ...(folderId ? { folderId } : {}),
         };
         write(done);
         controller.close();

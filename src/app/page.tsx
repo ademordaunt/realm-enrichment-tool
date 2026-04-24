@@ -659,8 +659,15 @@ function fallbackAiContactRows(rows: RawContactRow[], errMsg: string): EnrichedC
   });
 }
 
+type HubSpotPushListSnapshot = {
+  listId: string;
+  listName: string;
+  folderId?: string;
+};
+
 type PushNdjsonEvent =
   | { type: "progress"; current: number; total: number }
+  | { type: "list_created"; listId: string; listName: string; folderId?: string }
   | {
       type: "done";
       created: number;
@@ -669,12 +676,14 @@ type PushNdjsonEvent =
       listId: string;
       listName: string;
       totalPushed: number;
+      folderId?: string;
     }
   | { type: "error"; message: string };
 
 async function consumePushNdjson(
   res: Response,
   onProgress: (e: { current: number; total: number }) => void,
+  onListCreated?: (e: HubSpotPushListSnapshot) => void,
 ): Promise<HubSpotPushDonePayload> {
   const reader = res.body?.getReader();
   if (!reader) {
@@ -690,6 +699,14 @@ async function consumePushNdjson(
     const msg = JSON.parse(t) as PushNdjsonEvent;
     if (msg.type === "progress") {
       onProgress({ current: msg.current, total: msg.total });
+    } else if (msg.type === "list_created") {
+      onListCreated?.({
+        listId: msg.listId,
+        listName: msg.listName,
+        ...(typeof msg.folderId === "string" && msg.folderId.trim() !== ""
+          ? { folderId: msg.folderId.trim() }
+          : {}),
+      });
     } else if (msg.type === "error") {
       throw new Error(msg.message);
     } else if (msg.type === "done") {
@@ -700,6 +717,9 @@ async function consumePushNdjson(
         listId: msg.listId,
         listName: msg.listName,
         totalPushed: msg.totalPushed,
+        ...(typeof msg.folderId === "string" && msg.folderId.trim() !== ""
+          ? { folderId: msg.folderId.trim() }
+          : {}),
       };
     }
   };
@@ -740,6 +760,8 @@ export default function Home() {
   const [bulkJobId, setBulkJobId] = useState<string | null>(null);
   const [bulkJobState, setBulkJobState] = useState<BulkJobState | null>(null);
   const bulkPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const bulkCompleteNotifiedRef = useRef(false);
+  const [bulkRowsContinueLoading, setBulkRowsContinueLoading] = useState(false);
   const bulkContinueRef = useRef<{
     rows: EnrichedCompany[] | EnrichedContact[];
     listType: "companies" | "contacts";
@@ -776,6 +798,10 @@ export default function Home() {
   const [pushProgress, setPushProgress] = useState<{ current: number; total: number } | null>(
     null,
   );
+  const [pushListCreatedMeta, setPushListCreatedMeta] = useState<HubSpotPushListSnapshot | null>(
+    null,
+  );
+  const pushListCreatedRef = useRef<HubSpotPushListSnapshot | null>(null);
   const [pushResult, setPushResult] = useState<HubSpotPushDonePayload | null>(null);
   const [pushError, setPushError] = useState<string | null>(null);
   const [lastPushLeadSource, setLastPushLeadSource] = useState<string | null>(null);
@@ -929,9 +955,25 @@ export default function Home() {
         window.sessionStorage.removeItem(BULK_JOB_SESSION_KEY);
       }
       setBulkJobId(null);
+      setBulkJobState(null);
     },
     [],
   );
+
+  const handleContinueToReview = useCallback(async () => {
+    const jobId = bulkJobId;
+    const listType = bulkJobState?.listType;
+    if (!jobId || !listType) return;
+    setBulkRowsContinueLoading(true);
+    setEnrichError(null);
+    try {
+      await loadCompletedBulkRows(jobId, listType);
+    } catch (e) {
+      setEnrichError(e instanceof Error ? e.message : "Failed to load completed rows.");
+    } finally {
+      setBulkRowsContinueLoading(false);
+    }
+  }, [bulkJobId, bulkJobState?.listType, loadCompletedBulkRows]);
 
   const startJobPolling = useCallback(
     (jobId: string) => {
@@ -954,7 +996,10 @@ export default function Home() {
 
           if (state.status === "complete") {
             stopJobPolling();
-            await loadCompletedBulkRows(jobId, state.listType);
+            if (!bulkCompleteNotifiedRef.current) {
+              bulkCompleteNotifiedRef.current = true;
+              fireEnrichmentCompleteNotification();
+            }
             return;
           }
           if (state.status === "failed" || state.status === "cancelled") {
@@ -1638,6 +1683,7 @@ export default function Home() {
           return;
         }
         setBulkJobId(jobId);
+        bulkCompleteNotifiedRef.current = false;
         if (typeof window !== "undefined") {
           window.sessionStorage.setItem(BULK_JOB_SESSION_KEY, jobId);
         }
@@ -1712,6 +1758,7 @@ export default function Home() {
       setWizardImportMode("event");
       setBulkJobId(null);
       setBulkJobState(null);
+      bulkCompleteNotifiedRef.current = false;
       stopJobPolling();
       if (typeof window !== "undefined") {
         window.sessionStorage.removeItem(BULK_JOB_SESSION_KEY);
@@ -1763,6 +1810,7 @@ export default function Home() {
     stopJobPolling();
     setBulkJobId(null);
     setBulkJobState(null);
+    bulkCompleteNotifiedRef.current = false;
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem(BULK_JOB_SESSION_KEY);
     }
@@ -1776,6 +1824,8 @@ export default function Home() {
       if (approved.length === 0) return;
       setPushError(null);
       setLastPushLeadSource(settings.leadSource);
+      pushListCreatedRef.current = null;
+      setPushListCreatedMeta(null);
       setStep("pushing");
       setPushProgress({ current: 0, total: approved.length });
       try {
@@ -1805,9 +1855,19 @@ export default function Home() {
               `HubSpot push failed (${res.status})`,
           );
         }
-        const done = await consumePushNdjson(res, (p) => {
-          setPushProgress({ current: p.current, total: p.total });
-        });
+        const done = await consumePushNdjson(
+          res,
+          (p) => {
+            setPushProgress({ current: p.current, total: p.total });
+          },
+          (list) => {
+            pushListCreatedRef.current = list;
+            setPushListCreatedMeta(list);
+            if (typeof console !== "undefined" && console.info) {
+              console.info("[hubspot/push] list_created", list.listId, list.listName);
+            }
+          },
+        );
         setPushResult(done);
         setStep("complete");
         firePushCompleteNotification();
@@ -1829,6 +1889,7 @@ export default function Home() {
       } catch (e) {
         const message = e instanceof Error ? e.message : "HubSpot push failed.";
         setPushError(message);
+        const listSnap = pushListCreatedRef.current as HubSpotPushListSnapshot | null;
         setPushResult({
           created: 0,
           updated: 0,
@@ -1838,13 +1899,20 @@ export default function Home() {
               error: message,
             },
           ],
-          listId: "",
-          listName: settings.listName || eventContext.eventName,
+          listId: listSnap?.listId ?? "",
+          listName: listSnap?.listName ?? (settings.listName || eventContext.eventName),
           totalPushed: 0,
+          ...(listSnap?.folderId?.trim()
+            ? { folderId: listSnap.folderId.trim() }
+            : settings.folderId?.trim()
+              ? { folderId: settings.folderId.trim() }
+              : {}),
         });
         setStep("complete");
       } finally {
         setPushProgress(null);
+        pushListCreatedRef.current = null;
+        setPushListCreatedMeta(null);
       }
     },
     [enrichedListType, eventContext, reviewRows],
@@ -2299,6 +2367,8 @@ export default function Home() {
             onCancel={() => {
               void cancelBulkJob();
             }}
+            onContinueToReview={() => void handleContinueToReview()}
+            continueLoading={bulkRowsContinueLoading}
           />
         ) : null}
 
@@ -2359,6 +2429,20 @@ export default function Home() {
             <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100" role="status">
               Pushing record {pushProgress.current} of {pushProgress.total} to HubSpot…
             </p>
+            {pushListCreatedMeta ? (
+              <p
+                className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-950 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100"
+                role="status"
+              >
+                HubSpot list created: <span className="font-medium">{pushListCreatedMeta.listName}</span>{" "}
+                — list ID <span className="font-mono">{pushListCreatedMeta.listId}</span>
+                {pushListCreatedMeta.folderId ? (
+                  <span className="block mt-1 text-emerald-900/80 dark:text-emerald-200/80">
+                    Folder ID: <span className="font-mono">{pushListCreatedMeta.folderId}</span>
+                  </span>
+                ) : null}
+              </p>
+            ) : null}
             <p className="text-sm text-(--text-muted) text-center mt-2">
               You can leave this tab. We&apos;ll notify you when the push is complete.
             </p>

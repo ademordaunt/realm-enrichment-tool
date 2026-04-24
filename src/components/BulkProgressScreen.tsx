@@ -6,6 +6,10 @@ import type { BulkJobState } from "@/lib/utils/types";
 interface BulkProgressScreenProps {
   jobState: BulkJobState | null;
   onCancel: () => void;
+  /** When the job finished and rows are not loaded yet, user continues to review. */
+  onContinueToReview?: () => void | Promise<void>;
+  /** True while fetching completed rows after the user clicks continue. */
+  continueLoading?: boolean;
 }
 
 function formatStartedAt(ts: string): string {
@@ -21,6 +25,17 @@ function formatRunningFor(startedAt: string, nowMs: number): string {
   return `${mins} min`;
 }
 
+function formatTotalDurationMs(startedAt: string, endMs: number): string {
+  const s = new Date(startedAt).getTime();
+  if (!Number.isFinite(s) || !Number.isFinite(endMs)) return "—";
+  const ms = Math.max(0, endMs - s);
+  const totalMin = Math.floor(ms / 60000);
+  const hr = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+  if (hr <= 0) return `${min} min`;
+  return `${hr} hr ${min} min`;
+}
+
 type PhaseState = "done" | "active" | "waiting";
 
 function phaseIcon(state: PhaseState): string {
@@ -29,7 +44,12 @@ function phaseIcon(state: PhaseState): string {
   return "⬜";
 }
 
-export function BulkProgressScreen({ jobState, onCancel }: BulkProgressScreenProps) {
+export function BulkProgressScreen({
+  jobState,
+  onCancel,
+  onContinueToReview,
+  continueLoading = false,
+}: BulkProgressScreenProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [resumeBusy, setResumeBusy] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
@@ -137,13 +157,61 @@ export function BulkProgressScreen({ jobState, onCancel }: BulkProgressScreenPro
     );
   }
 
+  if (jobState.status === "complete" && onContinueToReview) {
+    const endMs = jobState.completedAt
+      ? new Date(jobState.completedAt).getTime()
+      : Date.now();
+    const totalTime = formatTotalDurationMs(jobState.startedAt, endMs);
+    const name = jobState.eventContext.eventName || "Bulk import";
+    return (
+      <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
+        <p className="text-base font-semibold text-(--realm-navy)">✅ Enrichment Complete</p>
+        <p className="mt-2 text-sm font-medium text-(--text-primary)">{name}</p>
+        <dl className="mt-4 space-y-2 text-sm text-(--text-primary)">
+          <div className="flex justify-between gap-4">
+            <dt className="text-(--text-muted)">Records processed</dt>
+            <dd className="tabular-nums">{jobState.totalRows}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-(--text-muted)">ZoomInfo enriched</dt>
+            <dd className="tabular-nums">{jobState.enrichedCount}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-(--text-muted)">From cache</dt>
+            <dd className="tabular-nums">{jobState.cachedCount}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-(--text-muted)">HubSpot skipped</dt>
+            <dd className="tabular-nums">{jobState.hubspotSkippedCount}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-(--text-muted)">Credits used</dt>
+            <dd className="tabular-nums">{jobState.creditsUsed}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
+            <dt className="text-(--text-muted)">Total time</dt>
+            <dd className="tabular-nums">{totalTime}</dd>
+          </div>
+        </dl>
+        <button
+          type="button"
+          disabled={continueLoading}
+          onClick={() => void onContinueToReview()}
+          className="mt-6 rounded-lg bg-[#7B35C1] px-4 py-2 text-sm font-medium text-white hover:bg-[#6A2AAD] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {continueLoading ? "Loading…" : "Continue to Review & Edit →"}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
       <p className="text-base font-semibold text-(--realm-navy)">
         {jobState.eventContext.eventName || "Bulk import"}
       </p>
       <p className="mt-1 text-sm text-(--text-muted)">
-        Running in background — you can close this tab.
+        Running in background — feel free to leave this tab.
       </p>
 
       <div className="mt-4">

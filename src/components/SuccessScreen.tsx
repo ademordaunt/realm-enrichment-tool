@@ -23,6 +23,11 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed }: SuccessScr
     portalId && result.listId
       ? `https://app.hubspot.com/contacts/${portalId}/objectLists/${result.listId}/filters`
       : null;
+  const folderId = result.folderId?.trim() ?? "";
+  const folderUrl =
+    portalId && folderId
+      ? `https://app.hubspot.com/contacts/${portalId}/lists/folders/${encodeURIComponent(folderId)}`
+      : null;
 
   const failed = result.errors.length;
 
@@ -93,26 +98,41 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed }: SuccessScr
         </div>
       ) : null}
 
-      <p className="text-sm text-zinc-800 dark:text-zinc-200">
-        HubSpot Segment Created:{" "}
-        {listUrl ? (
-          <a
-            href={listUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium text-blue-600 underline hover:text-blue-800 dark:text-blue-400"
-          >
-            {result.listName}
-          </a>
-        ) : (
-          <span className="font-medium">{result.listName}</span>
-        )}
+      <div className="flex flex-col gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+        <p>
+          HubSpot Segment Created:{" "}
+          {listUrl ? (
+            <a
+              href={listUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-blue-600 underline hover:text-blue-800 dark:text-blue-400"
+            >
+              {result.listName}
+            </a>
+          ) : (
+            <span className="font-medium">{result.listName}</span>
+          )}
+        </p>
+        {folderUrl ? (
+          <p>
+            HubSpot Folder:{" "}
+            <a
+              href={folderUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-blue-600 underline hover:text-blue-800 dark:text-blue-400"
+            >
+              View Folder ↗
+            </a>
+          </p>
+        ) : null}
         {!portalId ? (
-          <span className="mt-1 block text-xs text-zinc-500">
+          <span className="text-xs text-zinc-500">
             Set NEXT_PUBLIC_HUBSPOT_PORTAL_ID to enable the list link.
           </span>
         ) : null}
-      </p>
+      </div>
 
       <div>
         <button type="button" onClick={onStartNew} className={PRIMARY_ACTION}>
