@@ -1,14 +1,14 @@
 import type { HubSpotCompanyPushExtras } from "@/lib/hubspot/companies";
 import {
-  createCompany,
-  findExistingCompany,
+  batchCreateCompanies,
+  batchFindCompaniesByDomain,
+  batchUpdateCompanies,
   normalizeDomain,
-  updateCompany,
 } from "@/lib/hubspot/companies";
 import {
-  createContact,
-  findExistingContact,
-  updateContact,
+  batchCreateContacts,
+  batchFindContactsByEmail,
+  batchUpdateContacts,
 } from "@/lib/hubspot/contacts";
 import { getHubSpotAccessToken, hubspotFetch, readHubSpotError } from "@/lib/hubspot/http";
 import { addRecordsToList } from "@/lib/hubspot/lists";
@@ -59,6 +59,30 @@ type NdjsonListCreated = {
 };
 type NdjsonDone = { type: "done" } & HubSpotPushDonePayload;
 type NdjsonError = { type: "error"; message: string };
+
+function contactPushExtras(
+  c: EnrichedContact,
+  leadSource: string,
+  leadSourceDescription: string,
+  notes: string,
+  useExistingLeadSource: boolean,
+  useExistingLeadSourceDescription: boolean,
+): HubSpotCompanyPushExtras | undefined {
+  const rowLeadSource = useExistingLeadSource ? (c.leadSource?.trim() ?? "") : leadSource;
+  const rowLeadSourceDescriptionFromCsv = c.leadSourceDescription?.trim() ?? "";
+  const rowLeadSourceDescription = useExistingLeadSourceDescription
+    ? rowLeadSourceDescriptionFromCsv || leadSourceDescription
+    : leadSourceDescription;
+  const rowNotes = notes;
+  if (!rowLeadSource && !rowLeadSourceDescription && !rowNotes) {
+    return undefined;
+  }
+  return {
+    leadSource: rowLeadSource || undefined,
+    leadSourceDescription: rowLeadSourceDescription || undefined,
+    notes: rowNotes || undefined,
+  };
+}
 
 async function createStaticListForPush(
   name: string,
@@ -203,14 +227,28 @@ export async function handleHubSpotPushRequest(
         controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
       };
 
+      let created = 0;
+      let updated = 0;
+      const errors: { rowId: string; error: string }[] = [];
+      const recordIds: string[] = [];
+
+      const total = approved.length;
+      let currentProgress = 0;
+      const emitProgress = (current: number) => {
+        write({ type: "progress", current: Math.min(current, total), total });
+      };
+      const onAfterChunk = (n: number) => {
+        currentProgress = Math.min(currentProgress + n, total);
+        emitProgress(currentProgress);
+      };
+
+      const mergeRowErrors = (batchErrors: Array<{ rowId: string; error: string }>) => {
+        for (const e of batchErrors) {
+          errors.push(e);
+        }
+      };
+
       try {
-        let created = 0;
-        let updated = 0;
-        const errors: { rowId: string; error: string }[] = [];
-        const recordIds: string[] = [];
-
-        const total = approved.length;
-
         const objectTypeId = listType === "companies" ? "0-2" : "0-1";
         const listId = await createStaticListForPush(listName, objectTypeId, folderId);
         write({
@@ -219,71 +257,113 @@ export async function handleHubSpotPushRequest(
           listName,
           ...(folderId ? { folderId } : {}),
         });
+        write({ type: "progress", current: 0, total });
 
-        for (let i = 0; i < approved.length; i++) {
-          const row = approved[i]!;
-          try {
-            if (listType === "companies") {
-              const c = row as EnrichedCompany;
-              const existing =
-                typeof c.hubspotId === "string" && c.hubspotId.trim() !== ""
-                  ? c.hubspotId.trim()
-                  : await findExistingCompany(c.domain);
-              let id: string;
-              if (existing) {
-                id = await updateCompany(existing, c, pushExtras);
-                updated++;
-              } else {
-                id = await createCompany(c, pushExtras);
-                created++;
-              }
-              recordIds.push(id);
+        if (listType === "companies") {
+          const rowsC = approved as EnrichedCompany[];
+          const known: EnrichedCompany[] = [];
+          const unknown: EnrichedCompany[] = [];
+          for (const c of rowsC) {
+            if (typeof c.hubspotId === "string" && c.hubspotId.trim() !== "") {
+              known.push(c);
             } else {
-              const c = row as EnrichedContact;
-              const existing =
-                typeof c.hubspotId === "string" && c.hubspotId.trim() !== ""
-                  ? c.hubspotId.trim()
-                  : await findExistingContact(c.resolvedEmail);
-              const contactPushExtras: HubSpotCompanyPushExtras | undefined =
-                (() => {
-                  const rowLeadSource = useExistingLeadSource
-                    ? c.leadSource?.trim() ?? ""
-                    : leadSource;
-                  const rowLeadSourceDescriptionFromCsv = c.leadSourceDescription?.trim() ?? "";
-                  const rowLeadSourceDescription = useExistingLeadSourceDescription
-                    ? rowLeadSourceDescriptionFromCsv || leadSourceDescription
-                    : leadSourceDescription;
-                  const rowNotes = notes;
-                  if (!rowLeadSource && !rowLeadSourceDescription && !rowNotes) {
-                    return undefined;
-                  }
-                  return {
-                    leadSource: rowLeadSource || undefined,
-                    leadSourceDescription: rowLeadSourceDescription || undefined,
-                    notes: rowNotes || undefined,
-                  };
-                })();
-              let id: string;
-              if (existing) {
-                id = await updateContact(existing, c, contactPushExtras);
-                updated++;
-              } else {
-                id = await createContact(c, contactPushExtras);
-                created++;
-              }
-              recordIds.push(id);
+              unknown.push(c);
             }
-          } catch (e) {
-            const message = e instanceof Error ? e.message : "Unknown error";
-            console.error("[hubspot/push] row failed", row.id, message);
-            errors.push({ rowId: row.id, error: message });
           }
 
-          if (i > 0 && i % 50 === 0) {
-            await new Promise((r) => setTimeout(r, 500));
+          const idMap = await batchFindCompaniesByDomain(unknown.map((r) => r.domain));
+
+          const toUpdate: Array<{ id: string; company: EnrichedCompany }> = [];
+          for (const c of known) {
+            toUpdate.push({ id: c.hubspotId!.trim(), company: c });
+          }
+          for (const c of unknown) {
+            const d = normalizeDomain(c.domain);
+            const hid = d ? idMap.get(d) : undefined;
+            if (hid) {
+              toUpdate.push({ id: hid, company: c });
+            }
+          }
+          const toUpdateIds = new Set(toUpdate.map((x) => x.company.id));
+          const toCreate = unknown.filter((c) => !toUpdateIds.has(c.id));
+
+          const { success: uOk, rowErrors: uErr } = await batchUpdateCompanies(
+            toUpdate,
+            pushExtras,
+            onAfterChunk,
+          );
+          updated += uOk.length;
+          mergeRowErrors(uErr);
+          uOk.forEach((r) => recordIds.push(r.id));
+
+          const { success: cOk, rowErrors: cErr } = await batchCreateCompanies(
+            toCreate,
+            pushExtras,
+            onAfterChunk,
+          );
+          created += cOk.length;
+          mergeRowErrors(cErr);
+          cOk.forEach((r) => recordIds.push(r.id));
+        } else {
+          const rowsT = approved as EnrichedContact[];
+          const known: EnrichedContact[] = [];
+          const unknown: EnrichedContact[] = [];
+          for (const t of rowsT) {
+            if (typeof t.hubspotId === "string" && t.hubspotId.trim() !== "") {
+              known.push(t);
+            } else {
+              unknown.push(t);
+            }
           }
 
-          write({ type: "progress", current: i + 1, total });
+          const idMap = await batchFindContactsByEmail(unknown.map((r) => r.resolvedEmail));
+
+          const resolveContactExtras = (c: EnrichedContact) =>
+            contactPushExtras(
+              c,
+              leadSource,
+              leadSourceDescription,
+              notes,
+              useExistingLeadSource,
+              useExistingLeadSourceDescription,
+            );
+
+          const toUpdate: Array<{ id: string; contact: EnrichedContact }> = [];
+          for (const t of known) {
+            toUpdate.push({ id: t.hubspotId!.trim(), contact: t });
+          }
+          for (const t of unknown) {
+            const em = t.resolvedEmail?.trim().toLowerCase() ?? "";
+            const hid = em ? idMap.get(em) : undefined;
+            if (hid) {
+              toUpdate.push({ id: hid, contact: t });
+            }
+          }
+          const toUpdateIds = new Set(toUpdate.map((x) => x.contact.id));
+          const toCreate = unknown.filter((t) => !toUpdateIds.has(t.id));
+
+          const { success: uOk, rowErrors: uErr } = await batchUpdateContacts(
+            toUpdate,
+            resolveContactExtras,
+            onAfterChunk,
+          );
+          updated += uOk.length;
+          mergeRowErrors(uErr);
+          uOk.forEach((r) => recordIds.push(r.id));
+
+          const { success: cOk, rowErrors: cErr } = await batchCreateContacts(
+            toCreate,
+            resolveContactExtras,
+            onAfterChunk,
+          );
+          created += cOk.length;
+          mergeRowErrors(cErr);
+          cOk.forEach((r) => recordIds.push(r.id));
+        }
+
+        if (currentProgress < total) {
+          currentProgress = total;
+          emitProgress(total);
         }
 
         const totalPushed = created + updated;

@@ -181,6 +181,168 @@ export async function batchCheckContactsInHubSpot(
   return results;
 }
 
+const HUBSPOT_BATCH_SIZE = 100;
+const HUBSPOT_BATCH_COOLDOWN_MS = 200;
+
+function delayBatchCooldown(cOffset: number): Promise<void> {
+  if (cOffset <= 0) return Promise.resolve();
+  return new Promise((r) => setTimeout(r, HUBSPOT_BATCH_COOLDOWN_MS));
+}
+
+type HubspotBatchCrmItemError = {
+  message?: string;
+  in?: { id?: string };
+  context?: { id?: string[]; index?: number } | null;
+  category?: string;
+};
+
+type HubspotBatchCrmResponse = {
+  status?: string;
+  results?: Array<{ id?: string } | null | undefined>;
+  errors?: HubspotBatchCrmItemError[];
+  numErrors?: number;
+};
+
+function errorMessageForBatchIndex(
+  body: HubspotBatchCrmResponse,
+  j: number,
+  fallback: string,
+): string {
+  for (const e of body.errors ?? []) {
+    const idx =
+      (e as { index?: number }).index ??
+      (e.context as { index?: number } | undefined)?.index;
+    if (idx === j) return e.message || fallback;
+  }
+  if (body.errors?.[j]) return body.errors[j]!.message || fallback;
+  return fallback;
+}
+
+/**
+ * Emails (normalized) → HubSpot id; same search pattern as precheck, 100 / chunk, 200ms between chunks.
+ */
+export async function batchFindContactsByEmail(emails: string[]): Promise<Map<string, string>> {
+  const normalized = Array.from(
+    new Set(emails.map((e) => normalizeEmail(e)).filter((e) => Boolean(e))),
+  );
+  const out = new Map<string, string>();
+  for (let i = 0; i < normalized.length; i += HUBSPOT_BATCH_SIZE) {
+    await delayBatchCooldown(i);
+    const part = await batchCheckContactsInHubSpot(normalized.slice(i, i + HUBSPOT_BATCH_SIZE));
+    for (const [e, v] of part) {
+      out.set(e, v.hubspotId);
+    }
+  }
+  return out;
+}
+
+export type BatchContactRowOk = { id: string; resolvedEmail: string; rowId: string };
+export type BatchContactRowError = { rowId: string; error: string };
+
+export async function batchCreateContacts(
+  contacts: EnrichedContact[],
+  resolveExtras: (c: EnrichedContact) => HubSpotCompanyPushExtras | undefined,
+  onAfterChunk?: (size: number) => void,
+): Promise<{ success: BatchContactRowOk[]; rowErrors: BatchContactRowError[] }> {
+  const success: BatchContactRowOk[] = [];
+  const rowErrors: BatchContactRowError[] = [];
+  if (contacts.length === 0) return { success, rowErrors };
+
+  for (let c = 0; c < contacts.length; c += HUBSPOT_BATCH_SIZE) {
+    await delayBatchCooldown(c);
+    const chunk = contacts.slice(c, c + HUBSPOT_BATCH_SIZE);
+    const res = await hubspotFetch("/crm/v3/objects/contacts/batch/create", {
+      method: "POST",
+      body: JSON.stringify({
+        inputs: chunk.map((row) => ({
+          properties: contactProperties(row, resolveExtras(row)),
+        })),
+      }),
+    });
+    if (!res.ok) {
+      const errText = await readHubSpotError(res);
+      for (const row of chunk) {
+        rowErrors.push({ rowId: row.id, error: errText });
+      }
+      onAfterChunk?.(chunk.length);
+      continue;
+    }
+    const body = (await res.json()) as HubspotBatchCrmResponse;
+    for (let j = 0; j < chunk.length; j++) {
+      const r = body.results?.[j];
+      const id = r?.id != null ? String(r.id) : null;
+      if (id) {
+        const row = chunk[j]!;
+        success.push({ id, resolvedEmail: row.resolvedEmail, rowId: row.id });
+      } else {
+        const row = chunk[j]!;
+        rowErrors.push({
+          rowId: row.id,
+          error: errorMessageForBatchIndex(
+            body,
+            j,
+            "HubSpot batch create returned no id for this row.",
+          ),
+        });
+      }
+    }
+    onAfterChunk?.(chunk.length);
+  }
+  return { success, rowErrors };
+}
+
+export async function batchUpdateContacts(
+  rows: Array<{ id: string; contact: EnrichedContact }>,
+  resolveExtras: (c: EnrichedContact) => HubSpotCompanyPushExtras | undefined,
+  onAfterChunk?: (size: number) => void,
+): Promise<{ success: BatchContactRowOk[]; rowErrors: BatchContactRowError[] }> {
+  const success: BatchContactRowOk[] = [];
+  const rowErrors: BatchContactRowError[] = [];
+  if (rows.length === 0) return { success, rowErrors };
+
+  for (let c = 0; c < rows.length; c += HUBSPOT_BATCH_SIZE) {
+    await delayBatchCooldown(c);
+    const chunk = rows.slice(c, c + HUBSPOT_BATCH_SIZE);
+    const res = await hubspotFetch("/crm/v3/objects/contacts/batch/update", {
+      method: "POST",
+      body: JSON.stringify({
+        inputs: chunk.map((row) => ({
+          id: row.id,
+          properties: contactProperties(row.contact, resolveExtras(row.contact)),
+        })),
+      }),
+    });
+    if (!res.ok) {
+      const errText = await readHubSpotError(res);
+      for (const row of chunk) {
+        rowErrors.push({ rowId: row.contact.id, error: errText });
+      }
+      onAfterChunk?.(chunk.length);
+      continue;
+    }
+    const body = (await res.json()) as HubspotBatchCrmResponse;
+    for (let j = 0; j < chunk.length; j++) {
+      const r = body.results?.[j];
+      const outId = r?.id != null ? String(r.id) : null;
+      const comp = chunk[j]!.contact;
+      if (outId) {
+        success.push({ id: outId, resolvedEmail: comp.resolvedEmail, rowId: comp.id });
+      } else {
+        rowErrors.push({
+          rowId: comp.id,
+          error: errorMessageForBatchIndex(
+            body,
+            j,
+            "HubSpot batch update returned no id for this row.",
+          ),
+        });
+      }
+    }
+    onAfterChunk?.(chunk.length);
+  }
+  return { success, rowErrors };
+}
+
 export async function createContact(
   contact: EnrichedContact,
   extras?: HubSpotCompanyPushExtras,

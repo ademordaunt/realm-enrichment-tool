@@ -140,6 +140,14 @@ function mergeLeadExtras(props: Record<string, string>, extras?: HubSpotCompanyP
   if (extras.notes?.trim()) props.notes = extras.notes.trim();
 }
 
+const HUBSPOT_BATCH_SIZE = 100;
+const HUBSPOT_BATCH_COOLDOWN_MS = 200;
+
+function delayBatchCooldown(chunkIndex: number): Promise<void> {
+  if (chunkIndex <= 0) return Promise.resolve();
+  return new Promise((r) => setTimeout(r, HUBSPOT_BATCH_COOLDOWN_MS));
+}
+
 function companyProperties(
   company: EnrichedCompany,
   extras?: HubSpotCompanyPushExtras,
@@ -303,4 +311,167 @@ export async function updateCompany(
 
   const out = (await patchRes.json()) as { id: string };
   return String(out.id);
+}
+
+type HubspotBatchCrmItemError = {
+  message?: string;
+  in?: { id?: string };
+  context?: { id?: string[]; index?: number } | null;
+  category?: string;
+};
+
+type HubspotBatchCrmResponse = {
+  status?: string;
+  results?: Array<{ id?: string } | null | undefined>;
+  errors?: HubspotBatchCrmItemError[];
+  numErrors?: number;
+};
+
+function errorMessageForBatchIndex(
+  body: HubspotBatchCrmResponse,
+  j: number,
+  fallback: string,
+): string {
+  for (const e of body.errors ?? []) {
+    const idx =
+      (e as { index?: number }).index ??
+      (e.context as { index?: number } | undefined)?.index;
+    if (idx === j) return e.message || fallback;
+  }
+  if (body.errors?.[j]) return body.errors[j]!.message || fallback;
+  return fallback;
+}
+
+/**
+ * All domains in HubSpot (normalized) → record id, queried in 100-domain chunks with 200ms gaps.
+ * Reuses the same /search IN pattern as precheck; safe for 1k+ domains.
+ */
+export async function batchFindCompaniesByDomain(domains: string[]): Promise<Map<string, string>> {
+  const normalized = Array.from(
+    new Set(
+      domains
+        .map((d) => normalizeDomain(d))
+        .filter((d) => Boolean(d)),
+    ),
+  );
+  const out = new Map<string, string>();
+  for (let i = 0; i < normalized.length; i += HUBSPOT_BATCH_SIZE) {
+    await delayBatchCooldown(i > 0 ? 1 : 0);
+    const part = await batchCheckCompaniesInHubSpot(normalized.slice(i, i + HUBSPOT_BATCH_SIZE));
+    for (const [d, v] of part) {
+      out.set(d, v.hubspotId);
+    }
+  }
+  return out;
+}
+
+export type BatchCompanyRowOk = { id: string; rawInput: string; rowId: string };
+export type BatchCompanyRowError = { rowId: string; error: string };
+
+/**
+ * Up to 100 companies per call; 200ms between each chunk. Full `companyProperties` per row (overwrites on update).
+ */
+export async function batchCreateCompanies(
+  companies: EnrichedCompany[],
+  extras?: HubSpotCompanyPushExtras,
+  onAfterChunk?: (size: number) => void,
+): Promise<{ success: BatchCompanyRowOk[]; rowErrors: BatchCompanyRowError[] }> {
+  const success: BatchCompanyRowOk[] = [];
+  const rowErrors: BatchCompanyRowError[] = [];
+  if (companies.length === 0) return { success, rowErrors };
+
+  for (let c = 0; c < companies.length; c += HUBSPOT_BATCH_SIZE) {
+    await delayBatchCooldown(c);
+    const chunk = companies.slice(c, c + HUBSPOT_BATCH_SIZE);
+    const res = await hubspotFetch("/crm/v3/objects/companies/batch/create", {
+      method: "POST",
+      body: JSON.stringify({
+        inputs: chunk.map((row) => ({ properties: companyProperties(row, extras) })),
+      }),
+    });
+    if (!res.ok) {
+      const errText = await readHubSpotError(res);
+      for (const row of chunk) {
+        rowErrors.push({ rowId: row.id, error: errText });
+      }
+      onAfterChunk?.(chunk.length);
+      continue;
+    }
+    const body = (await res.json()) as HubspotBatchCrmResponse;
+    for (let j = 0; j < chunk.length; j++) {
+      const r = body.results?.[j];
+      const id = r?.id != null ? String(r.id) : null;
+      if (id) {
+        const row = chunk[j]!;
+        success.push({ id, rawInput: row.rawInput, rowId: row.id });
+      } else {
+        const row = chunk[j]!;
+        rowErrors.push({
+          rowId: row.id,
+          error: errorMessageForBatchIndex(
+            body,
+            j,
+            "HubSpot batch create returned no id for this row.",
+          ),
+        });
+      }
+    }
+    onAfterChunk?.(chunk.length);
+  }
+  return { success, rowErrors };
+}
+
+/**
+ * Up to 100 per call; 200ms between chunks. Full `companyProperties` for each (no GET before PATCH).
+ */
+export async function batchUpdateCompanies(
+  rows: Array<{ id: string; company: EnrichedCompany }>,
+  extras?: HubSpotCompanyPushExtras,
+  onAfterChunk?: (size: number) => void,
+): Promise<{ success: BatchCompanyRowOk[]; rowErrors: BatchCompanyRowError[] }> {
+  const success: BatchCompanyRowOk[] = [];
+  const rowErrors: BatchCompanyRowError[] = [];
+  if (rows.length === 0) return { success, rowErrors };
+
+  for (let c = 0; c < rows.length; c += HUBSPOT_BATCH_SIZE) {
+    await delayBatchCooldown(c);
+    const chunk = rows.slice(c, c + HUBSPOT_BATCH_SIZE);
+    const res = await hubspotFetch("/crm/v3/objects/companies/batch/update", {
+      method: "POST",
+      body: JSON.stringify({
+        inputs: chunk.map((row) => ({
+          id: row.id,
+          properties: companyProperties(row.company, extras),
+        })),
+      }),
+    });
+    if (!res.ok) {
+      const errText = await readHubSpotError(res);
+      for (const row of chunk) {
+        rowErrors.push({ rowId: row.company.id, error: errText });
+      }
+      onAfterChunk?.(chunk.length);
+      continue;
+    }
+    const body = (await res.json()) as HubspotBatchCrmResponse;
+    for (let j = 0; j < chunk.length; j++) {
+      const r = body.results?.[j];
+      const outId = r?.id != null ? String(r.id) : null;
+      const comp = chunk[j]!.company;
+      if (outId) {
+        success.push({ id: outId, rawInput: comp.rawInput, rowId: comp.id });
+      } else {
+        rowErrors.push({
+          rowId: comp.id,
+          error: errorMessageForBatchIndex(
+            body,
+            j,
+            "HubSpot batch update returned no id for this row.",
+          ),
+        });
+      }
+    }
+    onAfterChunk?.(chunk.length);
+  }
+  return { success, rowErrors };
 }
