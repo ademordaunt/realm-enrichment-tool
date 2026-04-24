@@ -62,6 +62,8 @@ const ROOT_PICK_REGION = "__pick_region__";
 /** Root dropdown: explicit "no location" — stored `region` is "". */
 const ROOT_NO_STATE_REGION = "__no_state_region__";
 const CHANGE_SELECTION = "__change_selection__";
+/** Sub-pickers: return to the main State/Region root dropdown (replaces a duplicate ← Back in the form). */
+const SUB_PICKER_RETURN = "__return_to_state_region_root__";
 
 const CITY_TO_STATE: Record<string, string> = {
   // Major metros / city keywords
@@ -302,49 +304,53 @@ function StateSubPicker({
   disabled,
   onBack,
   onPick,
+  importMode,
 }: {
   disabled: boolean;
   onBack: () => void;
   onPick: (name: string) => void;
+  importMode: "event" | "bulk";
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <button
-        type="button"
-        className="self-start text-sm text-(--realm-purple) transition-colors hover:text-(--realm-purple-hover) hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-        onClick={onBack}
+    <div className="relative">
+      <select
+        key="state-sub"
+        className={selectClass}
+        defaultValue=""
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === SUB_PICKER_RETURN) {
+            onBack();
+            return;
+          }
+          if (!v) {
+            if (importMode === "bulk") onPick("");
+            return;
+          }
+          onPick(v);
+        }}
         disabled={disabled}
       >
-        ← Back
-      </button>
-      <div className="relative">
-        <select
-          key="state-sub"
-          className={selectClass}
-          defaultValue=""
-          onChange={(e) => {
-            const v = e.target.value;
-            if (!v) return;
-            onPick(v);
-          }}
-          disabled={disabled}
-        >
+        {importMode === "bulk" ? (
+          <option value="">No specific state</option>
+        ) : (
           <option value="" disabled hidden>
             Select state
           </option>
-          {US_STATE_OPTIONS.map((s) => (
+        )}
+        <option value={SUB_PICKER_RETURN}>Main State / Region menu</option>
+        {US_STATE_OPTIONS.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
           ))}
-        </select>
-        <span
-          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
-          aria-hidden
-        >
-          ▾
-        </span>
-      </div>
+      </select>
+      <span
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
+        aria-hidden
+      >
+        ▾
+      </span>
     </div>
   );
 }
@@ -359,43 +365,38 @@ function RegionSubPicker({
   onPick: (name: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <button
-        type="button"
-        className="self-start text-sm text-(--realm-purple) transition-colors hover:text-(--realm-purple-hover) hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-        onClick={onBack}
+    <div className="relative">
+      <select
+        key="region-sub"
+        className={selectClass}
+        defaultValue=""
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === SUB_PICKER_RETURN) {
+            onBack();
+            return;
+          }
+          if (!v) return;
+          onPick(v);
+        }}
         disabled={disabled}
       >
-        ← Back
-      </button>
-      <div className="relative">
-        <select
-          key="region-sub"
-          className={selectClass}
-          defaultValue=""
-          onChange={(e) => {
-            const v = e.target.value;
-            if (!v) return;
-            onPick(v);
-          }}
-          disabled={disabled}
-        >
-          <option value="" disabled hidden>
-            Select region
+        <option value="" disabled hidden>
+          Select region
+        </option>
+        <option value={SUB_PICKER_RETURN}>Main State / Region menu</option>
+        {MACRO_REGION_OPTIONS.map((s) => (
+          <option key={s} value={s}>
+            {s}
           </option>
-          {MACRO_REGION_OPTIONS.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </select>
-        <span
-          className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
-          aria-hidden
-        >
-          ▾
-        </span>
-      </div>
+        ))}
+      </select>
+      <span
+        className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
+        aria-hidden
+      >
+        ▾
+      </span>
     </div>
   );
 }
@@ -685,13 +686,23 @@ export function EventContextForm({
               <div className="relative">
                 <select
                   className={selectClass}
-                  value={noStateRegionSelected ? ROOT_NO_STATE_REGION : ""}
+                  value={
+                    importMode === "bulk" && !region
+                      ? ""
+                      : noStateRegionSelected
+                        ? ROOT_NO_STATE_REGION
+                        : ""
+                  }
                   onChange={(e) => {
                     regionManuallySelected.current = true;
                     const v = e.target.value;
                     if (v === "") {
                       setRegion("");
-                      setNoStateRegionSelected(false);
+                      if (importMode === "bulk") {
+                        setNoStateRegionSelected(true);
+                      } else {
+                        setNoStateRegionSelected(false);
+                      }
                       setAutoDetectedRegion(false);
                       return;
                     }
@@ -708,8 +719,14 @@ export function EventContextForm({
                   }}
                   disabled={disabled}
                 >
-                  <option value="">Select State / Region</option>
-                  <option value={ROOT_NO_STATE_REGION}>No State / Region</option>
+                  {importMode === "bulk" ? (
+                    <option value="">No specific state</option>
+                  ) : (
+                    <option value="">Select State / Region</option>
+                  )}
+                  {importMode === "event" ? (
+                    <option value={ROOT_NO_STATE_REGION}>No State / Region</option>
+                  ) : null}
                   <option value={ROOT_PICK_STATE}>Select a State →</option>
                   <option value={ROOT_PICK_REGION}>Select a Region →</option>
                 </select>
@@ -724,10 +741,18 @@ export function EventContextForm({
 
             {!region && locationView === "state" ? (
               <StateSubPicker
+                importMode={importMode}
                 disabled={disabled}
                 onBack={() => setLocationView("root")}
                 onPick={(name) => {
                   regionManuallySelected.current = true;
+                  if (name === "") {
+                    setRegion("");
+                    setLocationView("root");
+                    setNoStateRegionSelected(true);
+                    setAutoDetectedRegion(false);
+                    return;
+                  }
                   setRegion(name);
                   setLocationView("root");
                   setNoStateRegionSelected(false);
