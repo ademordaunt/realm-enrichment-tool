@@ -21,7 +21,7 @@ import type {
   RawCompanyRow,
   RawContactRow,
 } from "@/lib/utils/types";
-import { finalizeRowsForReview, shouldOpenPreReviewGate } from "@/lib/utils/prereview";
+import { finalizeRowsForReview } from "@/lib/utils/prereview";
 import {
   ENRICHMENT_BATCH_SIZE,
   needsCompanyLinkedInLookup,
@@ -871,6 +871,18 @@ export default function Home() {
     () => reviewRows.filter((r) => r.status === "approved"),
     [reviewRows],
   );
+  const approvedRowsById = useMemo(() => {
+    const byId = new Map<string, { displayName: string }>();
+    for (const row of approvedRowsForPush) {
+      if ("rawInput" in row) {
+        byId.set(row.id, { displayName: row.resolvedName });
+      } else {
+        const fullName = `${row.firstName ?? ""} ${row.lastName ?? ""}`.trim();
+        byId.set(row.id, { displayName: fullName });
+      }
+    }
+    return byId;
+  }, [approvedRowsForPush]);
   useLayoutEffect(() => {
     if (!enriched?.length || !enrichedListType) {
       setReviewRows([]);
@@ -971,7 +983,6 @@ export default function Home() {
     (
       rows: EnrichedCompany[] | EnrichedContact[],
       listType: "companies" | "contacts",
-      options?: { forcePreReview?: boolean },
     ) => {
       const finalized =
         listType === "companies"
@@ -979,11 +990,7 @@ export default function Home() {
           : finalizeRowsForReview(rows as EnrichedContact[], "contacts");
       setEnriched(finalized);
       setEnrichedListType(listType);
-      if (options?.forcePreReview || shouldOpenPreReviewGate(listType, finalized)) {
-        setStep("prereview");
-      } else {
-        setStep("enriched");
-      }
+      setStep("prereview");
     },
     [],
   );
@@ -1007,6 +1014,22 @@ export default function Home() {
       const payload = (await res.json()) as {
         rows: EnrichedCompany[] | EnrichedContact[];
       };
+      const totalRows = payload.rows.length;
+      const hubspotFound = payload.rows.filter((r) => r.hubspotId != null).length;
+      const linkedInFound = payload.rows.filter((r) => r.linkedinSource === "ai_search").length;
+      const startedAtMs = bulkJobState?.startedAt ? Date.parse(bulkJobState.startedAt) : Number.NaN;
+      const completedAtMs = bulkJobState?.completedAt ? Date.parse(bulkJobState.completedAt) : Number.NaN;
+      const elapsedMinutes =
+        Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)
+          ? Math.max(0, Math.round((completedAtMs - startedAtMs) / 60000))
+          : 0;
+      setEventEnrichmentSummary({
+        totalRows,
+        hubspotFound,
+        creditsUsed: bulkJobState?.creditsUsed ?? 0,
+        linkedInFound,
+        elapsedMinutes,
+      });
       advanceToReview(payload.rows, listType);
       setShowEnrichmentInterruptedBanner(false);
       setProgress(null);
@@ -1016,7 +1039,7 @@ export default function Home() {
       setBulkJobId(null);
       setBulkJobState(null);
     },
-    [advanceToReview],
+    [advanceToReview, bulkJobState?.completedAt, bulkJobState?.creditsUsed, bulkJobState?.startedAt],
   );
 
   const handleContinueToReview = useCallback(async () => {
@@ -1470,7 +1493,7 @@ export default function Home() {
       elapsedMinutes,
     });
 
-    advanceToReview(withLinkedInSourceFallback, listType, { forcePreReview: true });
+    advanceToReview(withLinkedInSourceFallback, listType);
     fireEnrichmentCompleteNotification();
     if (
       typeof window !== "undefined" &&
@@ -2562,7 +2585,7 @@ export default function Home() {
           <PreReviewGate
             rows={enriched}
             listType={enrichedListType}
-            enrichmentSummary={wizardImportMode === "event" ? eventEnrichmentSummary : null}
+            enrichmentSummary={eventEnrichmentSummary}
             onContinue={(updatedRows) => {
               const lt = enrichedListType!;
               const finalized =
@@ -2637,6 +2660,7 @@ export default function Home() {
         {step === "complete" && pushResult && (
           <SuccessScreen
             result={pushResult}
+            rowsById={approvedRowsById}
             leadSourceUsed={lastPushLeadSource ?? undefined}
             onStartNew={startNewImport}
           />

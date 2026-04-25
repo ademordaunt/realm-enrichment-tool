@@ -31,6 +31,28 @@ const INTL_STATE_SUBSTRINGS = [
   "uk",
   "england",
   "switzerland",
+  "italy",
+  "spain",
+  "sweden",
+  "norway",
+  "denmark",
+  "finland",
+  "poland",
+  "belgium",
+  "austria",
+  "ireland",
+  "new zealand",
+  "united arab emirates",
+  "saudi arabia",
+  "south africa",
+  "argentina",
+  "colombia",
+  "chile",
+  "philippines",
+  "indonesia",
+  "malaysia",
+  "thailand",
+  "vietnam",
 ] as const;
 
 const INTL_TLDS = [
@@ -49,19 +71,47 @@ const INTL_TLDS = [
   ".br",
   ".mx",
   ".za",
+  ".in",
+  ".cn",
+  ".eu",
+  ".it",
+  ".es",
+  ".se",
+  ".no",
+  ".dk",
+  ".fi",
+  ".pl",
+  ".be",
+  ".at",
+  ".ie",
+  ".nz",
+  ".ae",
+  ".sa",
+  ".ar",
+  ".ph",
+  ".my",
+  ".th",
+  ".vn",
+  ".co",
+  ".io",
 ] as const;
 
 const GOV_NAME_PATTERNS = [
-  "u.s. army",
-  "u.s. navy",
-  "u.s. air force",
-  "united states army",
-  "united states navy",
-  "united states air force",
-  "department of",
-  "dept of",
-  "federal bureau",
-  "united states courts",
+  // Military
+  "u.s. army", "u.s. navy", "u.s. air force", "u.s. marine", "u.s. coast guard",
+  "united states army", "united states navy", "united states air force",
+  "national guard",
+  // Federal agencies/entities
+  "federal bureau", "federal reserve", "federal home loan",
+  "department of ", "dept. of ", "dept of ",
+  "office of ", "bureau of ", "agency of ",
+  // State/local government
+  "state of ", "city of ", "county of ", "town of ", "village of ",
+  "municipality of ", "commonwealth of ",
+  // Other public entities
+  "school district", "unified school", "public school",
+  "port authority", "transit authority", "housing authority",
+  "united states courts", "judicial circuit",
 ] as const;
 
 function normalizeHost(domain: string): string {
@@ -89,10 +139,25 @@ export function isInternationalCompany(row: EnrichedCompany): boolean {
   const st = (row.state ?? "").toLowerCase();
   if (st.includes("foreign")) return true;
   for (const s of INTL_STATE_SUBSTRINGS) {
-    if (st.includes(s)) return true;
+    if (s.length <= 3) {
+      if (st === s || st.startsWith(`${s} `) || st.endsWith(` ${s}`) || st.includes(` ${s} `)) {
+        return true;
+      }
+    } else if (st.includes(s)) {
+      return true;
+    }
   }
   const host = normalizeHost(row.domain);
   if (host && hasInternationalTld(host)) return true;
+  const INTL_NAME_SUFFIXES = [
+    " gmbh", " ag ", " ag", " b.v.", " bv ", " s.a.", " s.a.s",
+    " pty ltd", " pty. ltd", " plc", " ltd.", " s.p.a", " s.r.l",
+    " ab ", " oy ", " as ", " a/s",
+  ] as const;
+  const nameLower = (row.resolvedName ?? "").toLowerCase();
+  for (const suffix of INTL_NAME_SUFFIXES) {
+    if (nameLower.endsWith(suffix.trim()) || nameLower.includes(suffix)) return true;
+  }
   return false;
 }
 

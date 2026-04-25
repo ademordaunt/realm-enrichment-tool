@@ -299,7 +299,17 @@ export async function batchCreateContacts(
       }
     }
     if (toUpdate.length > 0) {
-      const upd = await batchUpdateContacts(toUpdate, resolveExtras);
+      const seenHubSpotIds = new Set<string>();
+      const dedupedToUpdate: Array<{ id: string; contact: EnrichedContact }> = [];
+      for (const row of toUpdate) {
+        if (seenHubSpotIds.has(row.id)) {
+          success.push({ id: row.id, resolvedEmail: row.contact.resolvedEmail, rowId: row.contact.id });
+          continue;
+        }
+        seenHubSpotIds.add(row.id);
+        dedupedToUpdate.push(row);
+      }
+      const upd = await batchUpdateContacts(dedupedToUpdate, resolveExtras);
       success.push(...upd.success);
       rowErrors.push(...upd.rowErrors);
     }

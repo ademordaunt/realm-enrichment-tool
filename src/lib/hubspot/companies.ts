@@ -428,7 +428,17 @@ export async function batchCreateCompanies(
       }
     }
     if (toUpdate.length > 0) {
-      const upd = await batchUpdateCompanies(toUpdate, extras);
+      const seenHubSpotIds = new Set<string>();
+      const dedupedToUpdate: Array<{ id: string; company: EnrichedCompany }> = [];
+      for (const row of toUpdate) {
+        if (seenHubSpotIds.has(row.id)) {
+          success.push({ id: row.id, rawInput: row.company.rawInput, rowId: row.company.id });
+          continue;
+        }
+        seenHubSpotIds.add(row.id);
+        dedupedToUpdate.push(row);
+      }
+      const upd = await batchUpdateCompanies(dedupedToUpdate, extras);
       success.push(...upd.success);
       rowErrors.push(...upd.rowErrors);
     }

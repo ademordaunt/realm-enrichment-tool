@@ -863,21 +863,46 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     return out.length > 0 ? out : sortedRows;
   }, [stableRowOrder, rowsById, sortedRows]);
 
+  const filteredByShowFilter = useMemo(() => {
+    if (filter === "all") return displayRows;
+    return displayRows.filter((r) => (r.reviewBucket ?? "needs_review") === filter);
+  }, [displayRows, filter]);
+  const filteredRowIds = useMemo(
+    () => new Set(filteredByShowFilter.map((r) => r.id)),
+    [filteredByShowFilter],
+  );
+
   const selectAll = useCallback(() => {
     if (listType === "companies") {
-      setRows((rows as EnrichedCompany[]).map((r) => ({ ...r, status: "approved" as const })));
+      setRows(
+        (rows as EnrichedCompany[]).map((r) =>
+          filteredRowIds.has(r.id) ? { ...r, status: "approved" as const } : r,
+        ),
+      );
     } else {
-      setRows((rows as EnrichedContact[]).map((r) => ({ ...r, status: "approved" as const })));
+      setRows(
+        (rows as EnrichedContact[]).map((r) =>
+          filteredRowIds.has(r.id) ? { ...r, status: "approved" as const } : r,
+        ),
+      );
     }
-  }, [listType, rows, setRows]);
+  }, [filteredRowIds, listType, rows, setRows]);
 
   const deselectAll = useCallback(() => {
     if (listType === "companies") {
-      setRows((rows as EnrichedCompany[]).map((r) => ({ ...r, status: "skipped" as const })));
+      setRows(
+        (rows as EnrichedCompany[]).map((r) =>
+          filteredRowIds.has(r.id) ? { ...r, status: "skipped" as const } : r,
+        ),
+      );
     } else {
-      setRows((rows as EnrichedContact[]).map((r) => ({ ...r, status: "skipped" as const })));
+      setRows(
+        (rows as EnrichedContact[]).map((r) =>
+          filteredRowIds.has(r.id) ? { ...r, status: "skipped" as const } : r,
+        ),
+      );
     }
-  }, [listType, rows, setRows]);
+  }, [filteredRowIds, listType, rows, setRows]);
 
   const toggleApprove = useCallback(
     (id: string, checked: boolean) => {
@@ -902,11 +927,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     [listType, rows, setRows],
   );
 
-  const filteredByShowFilter = useMemo(() => {
-    if (filter === "all") return displayRows;
-    return displayRows.filter((r) => (r.reviewBucket ?? "needs_review") === filter);
-  }, [displayRows, filter]);
-
   const needsRows = useMemo(
     () => filteredByShowFilter.filter((r) => (r.reviewBucket ?? "needs_review") === "needs_review"),
     [filteredByShowFilter],
@@ -926,19 +946,15 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   );
 
   const { trustedCount, needsReviewCount, excludedCount } = useMemo(() => {
-    let approved = 0;
-    let pending = 0;
-    let skipped = 0;
+    let trusted = 0;
+    let needsReview = 0;
+    let excluded = 0;
     for (const r of rows) {
-      if (r.status === "approved") approved += 1;
-      else if (r.status === "pending") pending += 1;
-      else if (r.status === "skipped") skipped += 1;
+      if (r.reviewBucket === "trusted") trusted += 1;
+      else if (r.reviewBucket === "needs_review") needsReview += 1;
+      else excluded += 1;
     }
-    return {
-      trustedCount: approved,
-      needsReviewCount: pending,
-      excludedCount: skipped,
-    };
+    return { trustedCount: trusted, needsReviewCount: needsReview, excludedCount: excluded };
   }, [rows]);
 
   const approvedCount = useMemo(

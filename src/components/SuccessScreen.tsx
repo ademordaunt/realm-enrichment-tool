@@ -14,9 +14,10 @@ export interface SuccessScreenProps {
   onStartNew: () => void;
   /** Lead source selected on the pre-push screen. */
   leadSourceUsed?: string;
+  rowsById?: Map<string, { displayName: string }>;
 }
 
-export function SuccessScreen({ result, onStartNew, leadSourceUsed }: SuccessScreenProps) {
+export function SuccessScreen({ result, onStartNew, leadSourceUsed, rowsById }: SuccessScreenProps) {
   const [showErrors, setShowErrors] = useState(false);
   const portalId = process.env.NEXT_PUBLIC_HUBSPOT_PORTAL_ID?.trim() ?? "";
   const listUrl =
@@ -91,7 +92,7 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed }: SuccessScr
             <ul className="max-h-48 list-inside list-disc overflow-y-auto rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
               {result.errors.map((e) => (
                 <li key={e.rowId} className="wrap-break-word py-0.5">
-                  <span className="font-mono">{e.rowId}</span>: {e.error}
+                  <span className="font-mono">{rowsById?.get(e.rowId)?.displayName || e.rowId}</span>: {e.error}
                 </li>
               ))}
             </ul>
