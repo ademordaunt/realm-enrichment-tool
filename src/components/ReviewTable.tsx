@@ -188,7 +188,6 @@ function buildReasoningTooltipContent(
           <p key={idx}>{line}</p>
         ))}
         {sourceBlock}
-        <p>Check row checkbox to override &amp; include</p>
       </div>
     );
   }
@@ -1084,7 +1083,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                     LinkedIn Profile
                     <ReasoningTooltip
                       content={
-                        <div className="space-y-1.5 text-xs">
+                        <div className="space-y-1.5 text-xs font-normal">
                           <p>
                             <span className="inline-block h-2 w-2 rounded-full bg-violet-600" /> HubSpot — verified, your
                             source of truth
@@ -1133,7 +1132,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                     LinkedIn Profile
                     <ReasoningTooltip
                       content={
-                        <div className="space-y-1.5 text-xs">
+                        <div className="space-y-1.5 text-xs font-normal">
                           <p>
                             <span className="inline-block h-2 w-2 rounded-full bg-violet-600" /> HubSpot — verified, your
                             source of truth

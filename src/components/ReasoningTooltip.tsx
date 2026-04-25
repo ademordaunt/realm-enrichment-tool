@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 type ReasoningTooltipProps = {
   /** Plain-text fallback when `content` is not provided. */
@@ -24,6 +24,7 @@ export function ReasoningTooltip(props: ReasoningTooltipProps) {
     right: number;
   } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
   const visible = hover || pinned;
 
   const updatePosition = useCallback(() => {
@@ -68,6 +69,22 @@ export function ReasoningTooltip(props: ReasoningTooltipProps) {
     };
   }, [visible, updatePosition, text, content]);
 
+  useEffect(() => {
+    if (!pinned) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      const insideButton = buttonRef.current?.contains(target ?? null) ?? false;
+      const insideTooltip = tooltipRef.current?.contains(target ?? null) ?? false;
+      if (!insideButton && !insideTooltip) {
+        setPinned(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [pinned]);
+
   return (
     <span
       className="relative inline-flex align-middle"
@@ -91,7 +108,8 @@ export function ReasoningTooltip(props: ReasoningTooltipProps) {
       </button>
       {visible && coords ? (
         <div
-          className="z-60 w-72 max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal wrap-break-word rounded-lg border border-zinc-200 bg-white opacity-100 p-3 text-left text-sm leading-relaxed text-zinc-900 shadow-xl"
+          ref={tooltipRef}
+          className="z-9999 w-72 max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal wrap-break-word rounded-lg border border-zinc-200 bg-white opacity-100 p-3 text-left text-sm leading-relaxed text-zinc-900 shadow-xl"
           style={{
             position: "fixed",
             top: coords.top,

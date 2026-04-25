@@ -76,7 +76,7 @@ src/
 
 **Breadcrumb labels** (`NAV_STEPS` in `src/app/page.tsx`): Upload → Event Context → Enrichment → Review & Edit → Import Settings → Complete.
 
-**Internal `Step` union** (finer-grained): `"starter"` | `"upload"` | `"context"` | `"enriching"` | `"verifying"` | `"costestimate"` | `"enriched"` | `"prepush"` | `"pushing"` | `"complete"`.
+**Internal `Step` union** (finer-grained): `"starter"` | `"upload"` | `"context"` | `"enriching"` | `"verifying"` | `"costestimate"` | `"prereview"` | `"enriched"` | `"prepush"` | `"pushing"` | `"complete"`.
 
 Mapping:
 
@@ -86,6 +86,7 @@ Mapping:
 | Upload | `upload` |
 | Event Context | `context` |
 | Enrichment | `enriching` (AI/bulk job start), optional `costestimate` (bulk), then `verifying` (event verify path) |
+| Review gate / hygiene checks | `prereview` |
 | Review & Edit | `enriched` |
 | Import Settings | `prepush` |
 | Complete | `pushing` (HubSpot NDJSON) then `complete` |
@@ -102,6 +103,7 @@ Mapping:
 - **Start:** `startBulkJob()` calls `POST /api/jobs/start` from `context` step.
 - **Progress:** UI enters `enriching` and polls `GET /api/jobs/[jobId]/status` every 5 seconds.
 - **Completion:** on `status === "complete"`, client loads rows from `GET /api/jobs/[jobId]/rows` and advances to `enriched`.
+- **Completion summary metadata:** bulk job state now includes `linkedInFromAiCount` (rows where `linkedinSource === "ai_search"`), shown in `BulkProgressScreen`.
 - **Failure/cancel:** client returns to `context` and surfaces `state.error` (or cancellation copy).
 - **Diagnostics:** failed job-start responses log status + body in `console.error("[startBulkJob] failed:", res.status, errBody)`.
 
@@ -130,7 +132,17 @@ Mapping:
 - **Server:** Processes only the slice; progress `start`/`end`/`total` use **global** row indices so the UI does not “reset” per chunk.
 - **Why 15:** With **`delayBetweenZoomInfoCalls(200)`** (200 ms between rows inside a chunk in `zoominfo/route.ts`) and external HTTP calls, keeping each invocation under **~9s** is feasible; monolithic “all rows in one request” timed out on large lists.
 
----
+### Pre-Review behavior (current)
+
+- `advanceToReview` in `src/app/page.tsx` finalizes rows via `finalizeRowsForReview`.
+- In **event mode**, the enrichment path forces the user through `prereview` before `enriched` (with an enrichment summary card).
+- `PreReviewGate` accepts optional `enrichmentSummary` and renders:
+  - records processed
+  - found in HubSpot
+  - ZoomInfo credits used
+  - LinkedIn URLs found from AI (`linkedinSource === "ai_search"`)
+  - elapsed minutes
+- `shouldOpenPreReviewGate` still exists for threshold-driven entry in non-forced paths.
 
 ## 3. Enrichment pipeline — companies
 
@@ -291,7 +303,14 @@ Order on the client (event mode):
 
 Priority order for display fields: **Common Room / Prospector** first for `linkedinUrl`, `resolvedCompany`, `title`, `location`; then AI; then ZoomInfo. `resolvedEmail` is **always** the CSV `rawEmail`. ZI-only HubSpot fields merged as in types above.
 
----
+### LinkedIn source tagging and fallback
+
+- Event-mode LinkedIn pass (`runLinkedInLookupPass` in `page.tsx`) sets:
+  - `linkedinUrl`
+  - `linkedinSource: "ai_search"`
+  - `enrichedByAI: true`
+- Bulk linkedIn phase (`runLinkedInBatch` in `api/jobs/process/route.ts`) sets the same fields.
+- Finalization fallback now normalizes any row with a non-empty `linkedinUrl` and empty `linkedinSource` to `"ai_search"` before persisting/review handoff.
 
 ## 5. External API integrations
 
@@ -334,7 +353,7 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 |--------|--------|
 | **Auth** | `HUBSPOT_ACCESS_TOKEN` — **Private App** token (server-only). `hubspotFetch` in `http.ts` uses `https://api.hubapi.com` + `Authorization: Bearer …`. |
 | **Companies — properties written** | `name`, `domain`, `website`, `state`, `linkedin_company_page`, `numberofemployees`, `annualrevenue`, `industry`, `description`, `city`, optional `lead_source`, `lead_source_description`, `notes` (see `companies.ts`). |
-| **Contacts — properties written** | `firstname`, `lastname`, `email`, `jobtitle`, `company`, `hs_linkedin_url`, `state`, `phone`, `lead_source__deal_source`, `lead_source_description`, `hs_content_membership_notes`, `job_level`, `job_function`, `numemployees`, `industry`, `website` (see `contacts.ts`). |
+| **Contacts — properties written** | `firstname`, `lastname`, `email`, `jobtitle`, `company`, `ds_liprofile`, `state`, `phone`, `lead_source__deal_source`, `lead_source_description`, `hs_content_membership_notes`, `job_level`, `job_function`, `numemployees`, `industry`, `website` (see `contacts.ts`). |
 | **Lists** | Create: `POST /crm/v3/lists` with `name`, `objectTypeId` (`0-2` companies, `0-1` contacts), `processingType: "MANUAL"`, optional `folderId`. Membership: `PUT /crm/v3/lists/{listId}/memberships/add` with JSON array of record IDs. |
 | **Folders** | `GET /crm/v3/lists/folders` — parsed by `list-folders.ts`; UI uses folder id on list create in `push-handler` (`createStaticListForPush`). |
 | **Import Settings folder UX** | `PrePushScreen` uses a placeholder `Select a folder` (disabled), then explicit `No Folder`, then live folders. If placeholder or `No Folder` is chosen, `folderId` is omitted in push payload. |
@@ -347,6 +366,7 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 ### ZoomInfo
 
 - **App accounting:** `enrichedCount` / `creditsUsed` in NDJSON `done` count successful **`enrichedByZoomInfo`** enrichments in the verify route (companies: per `enrichCompanyWithZoomInfo`; contacts: per `enrichContactWithZoomInfo` when the ZI path runs and returns enrichment).
+- **Event mode UI:** ZoomInfo summary text is no longer rendered in `Review & Edit`; summary appears in pre-review enrichment summary context.
 - **Operational notes (not hard-coded):** Business expectation is **~1 credit per successful contact/company enrich** on the ZoomInfo side; **search** steps are not counted in `creditsUsed`. Allocation and totals (e.g. **2,000 credits**, **6–70 credits per typical run**, sustainability ~**50 runs**) are **operational** — confirm in your ZoomInfo contract.
 - **Planning benchmark (1,550-row run):** **~930–1,240 credits** (60–80% match-rate assumption).
 
@@ -372,7 +392,18 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 - **Scale:** Very large lists still spend linear time in **client-driven loops** (many HTTP round-trips). Architecture may need queues or background jobs if lists grow into the **hundreds+** per operator expectation.
 - **Planning benchmark runtime (1,550-row run):** **~1–1.5 hours**, based on bulk estimate model (`~0.5 min / 25 ZoomInfo rows`, `~0.4 min / 3 AI rows`, plus LinkedIn fallback and fixed overhead).
 
----
+### Tooltip and review-state rules (current)
+
+- `computeReviewBucket` now prevents trusted promotion when:
+  - `linkedinSource === "ai_search"` (forced `needs_review`)
+  - contacts have visually missing company (`sanitizeCompanyName(resolvedCompany)` empty)
+  - companies have missing domain
+- Review tooltip in `ReviewTable` uses a simplified four-state template:
+  - Trusted
+  - Trusted but missing data
+  - Needs Review
+  - Excluded
+- LinkedIn column legend is shown via header hover tooltip (`?` trigger) instead of a persistent legend row.
 
 ## 7. Known limitations & active blockers
 
