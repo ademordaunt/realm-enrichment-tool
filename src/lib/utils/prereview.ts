@@ -60,6 +60,7 @@ const INTL_TLDS = [
   ".uk",
   ".de",
   ".ca",
+  ".quebec",
   ".fr",
   ".au",
   ".jp",
@@ -157,6 +158,29 @@ export function isInternationalCompany(row: EnrichedCompany): boolean {
   const nameLower = (row.resolvedName ?? "").toLowerCase();
   for (const suffix of INTL_NAME_SUFFIXES) {
     if (nameLower.endsWith(suffix.trim()) || nameLower.includes(suffix)) return true;
+  }
+  const rawInputLower = (row.rawInput ?? "").toLowerCase();
+  const rawWordIndicators = [
+    " canada",
+    " uk",
+    " india",
+    " germany",
+    " france",
+    " australia",
+  ] as const;
+  for (const indicator of rawWordIndicators) {
+    if (` ${rawInputLower}`.includes(indicator)) return true;
+  }
+  const rawDashIndicators = [
+    "- canada",
+    "- uk",
+    "- india",
+    "- germany",
+    "- france",
+    "- australia",
+  ] as const;
+  for (const indicator of rawDashIndicators) {
+    if (rawInputLower.includes(indicator)) return true;
   }
   return false;
 }

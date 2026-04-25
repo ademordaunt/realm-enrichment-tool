@@ -26,7 +26,16 @@ function normalizeContactKey(email: string): string {
 export async function getCachedCompany(name: string): Promise<EnrichedCompany | null> {
   try {
     const result = await kv.get<EnrichedCompany>(normalizeCompanyKey(name));
-    return result ?? null;
+    if (!result) return null;
+    const hasLinkedInUrl = typeof result.linkedinUrl === "string" && result.linkedinUrl.trim() !== "";
+    const hasLinkedInSource = typeof result.linkedinSource === "string" && result.linkedinSource.trim() !== "";
+    if (hasLinkedInUrl && !hasLinkedInSource) {
+      return {
+        ...result,
+        linkedinSource: result.enrichedByZoomInfo === true ? "zoominfo" : "hubspot",
+      };
+    }
+    return result;
   } catch {
     return null; // Never let cache errors block enrichment
   }
