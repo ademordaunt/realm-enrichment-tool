@@ -15,7 +15,7 @@ The app is a **Next.js** single-page workflow for enrichment of CSV/Excel upload
 
 ### Who uses it & deployment
 
-The product is built as an **internal-style tool** (no authentication on API routes — see §8). It is **intended for deployment on Vercel** (uses `@vercel/kv`, `maxDuration` on serverless routes, and standard Next.js App Router patterns). The repository does not pin a single customer-facing URL; configure the deployment target in Vercel (or run locally).
+The product is built as an **internal-style tool** (no authentication on API routes — see §8). It is **intended for deployment on Vercel** (uses Upstash services for queue/cache, `maxDuration` on serverless routes, and standard Next.js App Router patterns). The repository does not pin a single customer-facing URL; configure the deployment target in Vercel (or run locally).
 
 ### Tech stack (exact versions from `package.json`)
 
@@ -26,7 +26,7 @@ The product is built as an **internal-style tool** (no authentication on API rou
 | **TypeScript** | `^5` (5.x) |
 | **Tailwind CSS** | `^4` (`@tailwindcss/postcss` ^4) |
 | **Anthropic SDK** | `@anthropic-ai/sdk` `^0.90.0` |
-| **Vercel KV** | `@vercel/kv` `^3.0.0` |
+| **Upstash Redis** | `@upstash/redis` `^1.34.0` |
 | **ESLint** | `eslint` `^9` + `eslint-config-next` `16.2.4` |
 
 ### Repository structure (key directories)
@@ -62,7 +62,7 @@ src/
     enrichment/           # ai-enricher, zoominfo-enricher, merger, commonroom-enricher
     hubspot/              # CRM API helpers (companies, contacts, lists, push-handler)
     parsers/              # CSV, Excel, column mapping
-    cache/enrichment-cache.ts   # Vercel KV keys for AI/ZoomInfo cache
+    cache/enrichment-cache.ts   # Upstash Redis keys for AI/ZoomInfo cache
     zoominfo/auth.ts      # OAuth token for ZoomInfo Data API
     utils/types.ts        # Shared TypeScript types
     utils/sanitize.ts     # Review ingest sanitization
@@ -102,7 +102,7 @@ Mapping:
 
 - **Start:** `startBulkJob()` calls `POST /api/jobs/start` from `context` step.
 - **Progress:** UI enters `enriching` and polls `GET /api/jobs/[jobId]/status` every 5 seconds.
-- **Completion:** on `status === "complete"`, client loads rows from `GET /api/jobs/[jobId]/rows` and advances to `enriched`.
+- **Completion:** on `status === "complete"`, client loads rows from `GET /api/jobs/[jobId]/rows`, then `advanceToReview` routes to either `prereview` or `enriched` based on `shouldOpenPreReviewGate`.
 - **Completion summary metadata:** bulk job state now includes `linkedInFromAiCount` (rows where `linkedinSource === "ai_search"`), shown in `BulkProgressScreen`.
 - **Failure/cancel:** client returns to `context` and surfaces `state.error` (or cancellation copy).
 - **Diagnostics:** failed job-start responses log status + body in `console.error("[startBulkJob] failed:", res.status, errBody)`.
@@ -378,17 +378,17 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 - **Cost estimate model used in bulk cost screen:** low `((needEnrichment / 3) * 0.015)`, high `((needEnrichment / 3) * 0.015 + (needEnrichment * 0.30 * 0.02))`.
 - **Planning benchmark (1,550-row run):** **~$10–20**.
 
-### Vercel KV (`@vercel/kv`)
+### Upstash Redis cache (`@upstash/redis`)
 
 - **TTL:** `60 * 60 * 24 * 30` seconds (**30 days**) for both company and contact cache keys in `enrichment-cache.ts`.
 - **Keys:** `company:<normalized_name>`, `contact:<normalized_email>`.
 - **Connectivity probe:** `checkKvConnectivity()` writes/reads `__health_check__` and logs explicit misconfiguration/health errors (called once at module load in `enrich/zoominfo/route.ts`).
-- **Free tier:** Subject to Vercel KV limits; heavy duplicate imports benefit from cache; sustained high QPS may require a paid tier (monitor Vercel dashboard).
+- **Operational note:** Heavy duplicate imports benefit from cache; sustained high QPS may require a paid Upstash plan (monitor Upstash dashboard and Redis usage limits).
 
 ### Vercel Functions
 
 - **`maxDuration = 9`** on `ai/route.ts` and `enrich/zoominfo/route.ts` (and `linkedin-search/route.ts`).
-- **Mitigation:** AI **batching** (3 rows), ZoomInfo **chunking** (15 rows per request), **NDJSON** for long streams.
+- **Mitigation:** AI **batching** (3 rows), ZoomInfo **chunking** (event: 15 rows/request; bulk worker: 25 rows/chunk), **NDJSON** for long streams.
 - **Scale:** Very large lists still spend linear time in **client-driven loops** (many HTTP round-trips). Architecture may need queues or background jobs if lists grow into the **hundreds+** per operator expectation.
 - **Planning benchmark runtime (1,550-row run):** **~1–1.5 hours**, based on bulk estimate model (`~0.5 min / 25 ZoomInfo rows`, `~0.4 min / 3 AI rows`, plus LinkedIn fallback and fixed overhead).
 
@@ -432,7 +432,12 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 | `QSTASH_CURRENT_SIGNING_KEY` / `QSTASH_NEXT_SIGNING_KEY` | Upstash signature verification keys for `/api/jobs/process`. **Server only.** |
 | `NEXT_PUBLIC_APP_URL` | Base URL used when publishing QStash callback URL (`/api/jobs/process`). Public env. |
 
-KV uses Vercel’s env wiring for `@vercel/kv` (see Vercel project settings).
+Cache client initialization uses Upstash Redis with:
+
+- `KV_REST_API_URL`
+- `KV_REST_API_TOKEN`
+
+Both are required for cache read/write paths (`enrichment-cache.ts`, `linkedin-search/route.ts`).
 
 ### `zoominfo-lookup` diagnostic
 
@@ -461,7 +466,7 @@ Open the Next.js dev server (default `http://localhost:3000`).
 
 ### Required env for full enrichment
 
-At minimum for a full path: `ANTHROPIC_API_KEY`, ZoomInfo pair, `HUBSPOT_ACCESS_TOKEN` for push, `COMMON_ROOM_API_KEY` if testing CR, and Vercel KV env vars (`KV_REST_API_URL`, `KV_REST_API_TOKEN`) if testing cache.
+At minimum for a full path: `ANTHROPIC_API_KEY`, ZoomInfo pair, `HUBSPOT_ACCESS_TOKEN` for push, `COMMON_ROOM_API_KEY` if testing CR, and Upstash Redis env vars (`KV_REST_API_URL`, `KV_REST_API_TOKEN`) if testing cache.
 
 ### Testing without burning ZoomInfo credits
 
