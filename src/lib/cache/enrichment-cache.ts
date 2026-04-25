@@ -1,9 +1,14 @@
-import { kv } from "@vercel/kv";
+import { Redis } from "@upstash/redis";
 import type {
   BulkJobState,
   EnrichedCompany,
   EnrichedContact,
 } from "@/lib/utils/types";
+
+const kv = new Redis({
+  url: process.env.KV_REST_API_URL,
+  token: process.env.KV_REST_API_TOKEN,
+});
 
 const COMPANY_TTL = 60 * 60 * 24 * 30; // 30 days in seconds
 const CONTACT_TTL = 60 * 60 * 24 * 30;
