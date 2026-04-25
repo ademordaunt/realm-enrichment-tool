@@ -910,7 +910,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         setRows(
           (rows as EnrichedCompany[]).map((r) =>
             r.id === id
-              ? { ...r, status: checked ? ("approved" as const) : ("skipped" as const) }
+              ? {
+                  ...r,
+                  status: checked
+                    ? ("approved" as const)
+                    : (r.reviewBucket === "needs_review" ? "pending" : "skipped"),
+                }
               : r,
           ),
         );
@@ -918,7 +923,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         setRows(
           (rows as EnrichedContact[]).map((r) =>
             r.id === id
-              ? { ...r, status: checked ? ("approved" as const) : ("skipped" as const) }
+              ? {
+                  ...r,
+                  status: checked
+                    ? ("approved" as const)
+                    : (r.reviewBucket === "needs_review" ? "pending" : "skipped"),
+                }
               : r,
           ),
         );
@@ -946,15 +956,19 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   );
 
   const { trustedCount, needsReviewCount, excludedCount } = useMemo(() => {
-    let trusted = 0;
-    let needsReview = 0;
-    let excluded = 0;
+    let approved = 0;
+    let pending = 0;
+    let skipped = 0;
     for (const r of rows) {
-      if (r.reviewBucket === "trusted") trusted += 1;
-      else if (r.reviewBucket === "needs_review") needsReview += 1;
-      else excluded += 1;
+      if (r.status === "approved") approved += 1;
+      else if (r.status === "pending") pending += 1;
+      else if (r.status === "skipped") skipped += 1;
     }
-    return { trustedCount: trusted, needsReviewCount: needsReview, excludedCount: excluded };
+    return {
+      trustedCount: approved,
+      needsReviewCount: pending,
+      excludedCount: skipped,
+    };
   }, [rows]);
 
   const approvedCount = useMemo(
