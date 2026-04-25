@@ -269,6 +269,55 @@ export async function batchCreateContacts(
     });
     if (!res.ok) {
       const errText = await readHubSpotError(res);
+      if (/already exists/i.test(errText)) {
+        const toUpdateFromHttp: Array<{ id: string; contact: EnrichedContact }> = [];
+        for (const row of chunk) {
+          const singleRes = await hubspotFetch("/crm/v3/objects/contacts", {
+            method: "POST",
+            body: JSON.stringify({
+              properties: contactProperties(row, resolveExtras(row)),
+            }),
+          });
+          if (singleRes.ok) {
+            const json = (await singleRes.json()) as { id?: string };
+            const newId = json.id != null ? String(json.id) : null;
+            if (newId) {
+              success.push({ id: newId, resolvedEmail: row.resolvedEmail, rowId: row.id });
+            } else {
+              rowErrors.push({ rowId: row.id, error: "HubSpot create returned no id." });
+            }
+          } else {
+            const rowErr = await readHubSpotError(singleRes);
+            const existingId = parseHubSpotDuplicateExistingId(rowErr);
+            if (existingId) {
+              toUpdateFromHttp.push({ id: existingId, contact: row });
+            } else {
+              rowErrors.push({ rowId: row.id, error: rowErr });
+            }
+          }
+        }
+        if (toUpdateFromHttp.length > 0) {
+          const seenHubSpotIds = new Set<string>();
+          const dedupedToUpdate: Array<{ id: string; contact: EnrichedContact }> = [];
+          for (const row of toUpdateFromHttp) {
+            if (seenHubSpotIds.has(row.id)) {
+              success.push({
+                id: row.id,
+                resolvedEmail: row.contact.resolvedEmail,
+                rowId: row.contact.id,
+              });
+              continue;
+            }
+            seenHubSpotIds.add(row.id);
+            dedupedToUpdate.push(row);
+          }
+          const upd = await batchUpdateContacts(dedupedToUpdate, resolveExtras);
+          success.push(...upd.success);
+          rowErrors.push(...upd.rowErrors);
+        }
+        onAfterChunk?.(chunk.length);
+        continue;
+      }
       for (const row of chunk) {
         rowErrors.push({ rowId: row.id, error: errText });
       }
