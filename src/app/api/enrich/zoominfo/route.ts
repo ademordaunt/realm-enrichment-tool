@@ -68,13 +68,7 @@ export async function POST(request: Request): Promise<Response> {
             : null;
         const nonHighTotal =
           nonHighTotalFromBody ??
-          (listType === "companies"
-            ? allRows.filter((r) => r.confidenceScore !== "high").length
-            : allRows.filter((r) => {
-                if (r.confidenceScore !== "high") return true;
-                const c = r as EnrichedContact;
-                return !c.linkedinUrl?.trim();
-              }).length);
+          allRows.filter((r) => r.hubspotComplete !== true).length;
         const nonHighPrefixCount =
           typeof body.nonHighPrefixCount === "number" &&
           body.nonHighPrefixCount >= 0
@@ -116,12 +110,6 @@ export async function POST(request: Request): Promise<Response> {
             continue;
           }
 
-          if (listType === "companies" && row.confidenceScore === "high") {
-            mergedRows.push(row);
-            emitProgress(globalI);
-            continue;
-          }
-
           if (listType === "contacts") {
             const c = row as EnrichedContact;
             const cacheEmail = c.rawEmail?.trim() ?? "";
@@ -136,11 +124,6 @@ export async function POST(request: Request): Promise<Response> {
                 emitProgress(globalI);
                 continue;
               }
-            }
-            if (c.confidenceScore === "high" && c.linkedinUrl?.trim()) {
-              mergedRows.push(row);
-              emitProgress(globalI);
-              continue;
             }
           }
 
@@ -163,8 +146,6 @@ export async function POST(request: Request): Promise<Response> {
             );
           } else {
             const contact = row as EnrichedContact;
-            const linkedinOnlyHigh =
-              contact.confidenceScore === "high" && !contact.linkedinUrl?.trim();
 
             emitProgress(
               globalI,
@@ -247,22 +228,7 @@ export async function POST(request: Request): Promise<Response> {
               prospectorPartial,
             );
 
-            if (linkedinOnlyHigh) {
-              mergedRows.push({
-                ...contact,
-                linkedinUrl: merged.linkedinUrl,
-                enrichedByCommonRoom:
-                  contact.enrichedByCommonRoom ||
-                  Boolean(crResult.linkedinUrl?.trim()),
-                enrichedByZoomInfo:
-                  contact.enrichedByZoomInfo ||
-                  Boolean(ziResult.linkedinUrl?.trim()),
-                confidenceScore: "high",
-                needsReview: false,
-              });
-            } else {
-              mergedRows.push(merged);
-            }
+            mergedRows.push(merged);
           }
 
           if (localI < allRows.length - 1) {

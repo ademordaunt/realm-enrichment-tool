@@ -10,7 +10,14 @@ import {
   sanitizeUnknown,
 } from "@/lib/utils/sanitize";
 import { expandStateAbbreviation, STATE_REGION_OPTIONS } from "@/lib/utils/states";
-import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
+import type {
+  DomainSource,
+  EnrichedCompany,
+  EnrichedContact,
+  ExclusionReason,
+  LinkedInSource,
+} from "@/lib/utils/types";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 export interface ReviewTableProps {
@@ -19,6 +26,106 @@ export interface ReviewTableProps {
   onRowsChange: (rows: EnrichedCompany[] | EnrichedContact[]) => void;
   /** Called when the user clicks the sticky “Approve” action (does not call HubSpot). */
   onApprove?: () => void;
+}
+
+function identityLabel(ic: string): string {
+  const u = ic.charAt(0).toUpperCase() + ic.slice(1);
+  return u === "Unresolved" ? "Unresolved" : u;
+}
+
+function domainSourceLabel(s: DomainSource | undefined): string {
+  switch (s) {
+    case "zoominfo_verified":
+      return "ZoomInfo verified";
+    case "hubspot_verified":
+      return "HubSpot verified";
+    case "ai_guess":
+      return "AI guess";
+    case "csv":
+      return "CSV import";
+    default:
+      return "Not set";
+  }
+}
+
+function linkedinSourceLabel(s: LinkedInSource | undefined): string {
+  switch (s) {
+    case "hubspot":
+      return "HubSpot";
+    case "zoominfo":
+      return "ZoomInfo";
+    case "commonroom":
+      return "Common Room";
+    case "ai_search":
+      return "Web search — verify";
+    default:
+      return "Not set";
+  }
+}
+
+function exclusionReasonBadgeLabel(reason: ExclusionReason | undefined): string {
+  switch (reason) {
+    case "international":
+      return "International";
+    case "government":
+      return "Government";
+    case "low_confidence":
+      return "Low confidence";
+    case "unresolved":
+      return "Unresolved";
+    case "personal_email":
+      return "Personal email";
+    case "missing_required_fields":
+      return "Incomplete";
+    case "duplicate":
+      return "Duplicate";
+    case "incomplete":
+      return "Incomplete";
+    default:
+      return "";
+  }
+}
+
+function dataSourceLine(row: EnrichedCompany | EnrichedContact): string {
+  const parts: string[] = [];
+  if (row.hubspotId) parts.push("HubSpot");
+  if (row.enrichedByZoomInfo) parts.push("ZoomInfo");
+  if (row.enrichedByAI) parts.push("AI only");
+  if (parts.length === 0) return "AI only";
+  return parts.join(" / ");
+}
+
+function buildReasoningTooltipContent(
+  row: EnrichedCompany | EnrichedContact,
+  listType: "companies" | "contacts",
+): ReactNode {
+  const identity = row.identityConfidence ?? row.confidenceScore;
+  const liRaw = row.linkedinUrl?.trim() ?? "";
+  const liSrc = row.linkedinSource;
+  const liShow = liRaw
+    ? `${liRaw.length > 56 ? `${liRaw.slice(0, 56)}…` : liRaw} (${linkedinSourceLabel(liSrc)})`
+    : "Not found";
+  const domainLine =
+    listType === "companies"
+      ? `${(row as EnrichedCompany).domain || "—"} (${domainSourceLabel((row as EnrichedCompany).domainSource)})`
+      : "— (contacts use work email)";
+  return (
+    <div className="space-y-2">
+      <p>
+        <span className="font-semibold">Identity:</span> {identityLabel(identity)} —{" "}
+        {row.aiReasoning}
+      </p>
+      <p>
+        <span className="font-semibold">Domain:</span> {domainLine}
+      </p>
+      <p>
+        <span className="font-semibold">LinkedIn:</span> {liShow}
+      </p>
+      <p>
+        <span className="font-semibold">Data source:</span> {dataSourceLine(row)}
+      </p>
+    </div>
+  );
 }
 
 function websiteFromDomain(domain: string): string {
@@ -31,7 +138,7 @@ function websiteFromDomain(domain: string): string {
   return d ? `https://www.${d}` : "";
 }
 
-type FilterKey = "all" | "needs_review" | "approved";
+type FilterKey = "all" | "needs_review" | "trusted" | "excluded";
 
 const CONFIDENCE_ORDER: Record<EnrichedCompany["confidenceScore"], number> = {
   unresolved: 0,
@@ -57,44 +164,29 @@ function getDisplayConfidence(
     const missingCritical =
       !c.resolvedName?.trim() ||
       !c.domain?.trim() ||
-      !c.linkedinUrl?.trim() ||
       c.numberOfEmployees == null ||
       !stateOk;
     if (missingCritical) return "unresolved";
-    return c.confidenceScore;
+    return c.identityConfidence ?? c.confidenceScore;
   }
   const c = row as EnrichedContact;
   const emailOk = sanitizeUnknown(c.rawEmail);
   const companyOk = sanitizeCompanyName(c.resolvedCompany);
-  const titleOk = sanitizeUnknown(c.title);
-  const linkedinOk = sanitizeUnknown(c.linkedinUrl);
-  const missingCritical =
-    !emailOk || !companyOk || !titleOk || !linkedinOk;
+  const missingCritical = !emailOk || !companyOk;
   if (missingCritical) return "unresolved";
-  return c.confidenceScore;
+  return c.identityConfidence ?? c.confidenceScore;
 }
 
 function initialCompanyReviewStatus(company: EnrichedCompany): EnrichedCompany["status"] {
-  if (
-    company.hubspotComplete &&
-    getDisplayConfidence(company, "companies") !== "unresolved"
-  ) {
-    return "approved";
-  }
-  if (getDisplayConfidence(company, "companies") === "unresolved") {
-    return "skipped";
-  }
-  return "approved";
+  if (company.reviewBucket === "trusted") return "approved";
+  if (company.reviewBucket === "needs_review") return "pending";
+  return "skipped";
 }
 
 function initialContactReviewStatus(contact: EnrichedContact): EnrichedContact["status"] {
-  if (
-    contact.hubspotComplete &&
-    getDisplayConfidence(contact, "contacts") !== "unresolved"
-  ) {
-    return "approved";
-  }
-  return getDisplayConfidence(contact, "contacts") !== "unresolved" ? "approved" : "pending";
+  if (contact.reviewBucket === "trusted") return "approved";
+  if (contact.reviewBucket === "needs_review") return "pending";
+  return "skipped";
 }
 
 function rowKey(id: string, field: string): string {
@@ -426,15 +518,36 @@ function EmployeesCell(props: {
   );
 }
 
+function LinkedInSourceDot(props: { source: LinkedInSource }) {
+  const { source } = props;
+  if (!source) return null;
+  const map: Record<string, { className: string; title: string }> = {
+    hubspot: { className: "bg-violet-600", title: "From HubSpot" },
+    zoominfo: { className: "bg-blue-600", title: "From ZoomInfo" },
+    commonroom: { className: "bg-teal-600", title: "From Common Room" },
+    ai_search: { className: "bg-amber-500", title: "From web search — verify" },
+  };
+  const cfg = map[source];
+  if (!cfg) return null;
+  return (
+    <span
+      className={`inline-block h-2 w-2 shrink-0 rounded-full ${cfg.className}`}
+      title={cfg.title}
+      aria-label={cfg.title}
+    />
+  );
+}
+
 function LinkedInProfileCell(props: {
   value: string;
   edited: boolean;
   muted?: boolean;
   breakAll?: boolean;
   missingSearchUrl?: string;
+  linkedinSource?: LinkedInSource;
   onSave: (next: string) => void;
 }) {
-  const { value, edited, muted, breakAll, missingSearchUrl, onSave } = props;
+  const { value, edited, muted, breakAll, missingSearchUrl, linkedinSource, onSave } = props;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => (value == null ? "" : String(value)));
 
@@ -487,7 +600,7 @@ function LinkedInProfileCell(props: {
         <span className={`min-w-0 flex-1 text-xs sm:text-sm ${muted ? "text-zinc-500" : "text-zinc-400"}`}>
           —
         </span>
-        {missingSearchUrl ? (
+        {!linkedinSource?.trim() && missingSearchUrl ? (
           <a
             href={missingSearchUrl}
             target="_blank"
@@ -524,6 +637,7 @@ function LinkedInProfileCell(props: {
 
   return (
     <div className={`relative flex min-w-0 max-w-full items-center gap-1 ${wrap}`}>
+      {linkedinSource ? <LinkedInSourceDot source={linkedinSource} /> : null}
       <a
         href={href}
         target="_blank"
@@ -702,24 +816,46 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     [listType, rows, setRows],
   );
 
-  const visibleRows = useMemo(() => {
-    const f = filter;
-    if (f === "all") return displayRows;
-    return displayRows.filter((r) => {
-      if (f === "approved") return r.status === "approved";
-      return r.status !== "approved";
-    });
+  const filteredByShowFilter = useMemo(() => {
+    if (filter === "all") return displayRows;
+    return displayRows.filter((r) => (r.reviewBucket ?? "needs_review") === filter);
   }, [displayRows, filter]);
 
-  const { approvedCount, needsReviewCount } = useMemo(() => {
-    let a = 0;
+  const needsRows = useMemo(
+    () => filteredByShowFilter.filter((r) => (r.reviewBucket ?? "needs_review") === "needs_review"),
+    [filteredByShowFilter],
+  );
+  const trustedRows = useMemo(
+    () => filteredByShowFilter.filter((r) => r.reviewBucket === "trusted"),
+    [filteredByShowFilter],
+  );
+  const excludedRows = useMemo(
+    () => filteredByShowFilter.filter((r) => r.reviewBucket === "excluded"),
+    [filteredByShowFilter],
+  );
+
+  const orderedReviewRows = useMemo(
+    () => [...needsRows, ...trustedRows, ...excludedRows],
+    [needsRows, trustedRows, excludedRows],
+  );
+
+  const { trustedCount, needsReviewCount, excludedCount } = useMemo(() => {
+    let t = 0;
     let n = 0;
+    let x = 0;
     for (const r of rows) {
-      if (r.status === "approved") a++;
-      else n++;
+      const b = r.reviewBucket ?? "needs_review";
+      if (b === "trusted") t++;
+      else if (b === "needs_review") n++;
+      else if (b === "excluded") x++;
     }
-    return { approvedCount: a, needsReviewCount: n };
+    return { trustedCount: t, needsReviewCount: n, excludedCount: x };
   }, [rows]);
+
+  const approvedCount = useMemo(
+    () => rows.filter((r) => r.status === "approved").length,
+    [rows],
+  );
 
   const unresolvedApprovedCount = useMemo(
     () =>
@@ -730,6 +866,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   );
 
   const rowShellClass = (r: EnrichedCompany | EnrichedContact, rowIndex: number) => {
+    const bucket = r.reviewBucket ?? "needs_review";
     if (r.status === "approved") {
       return "border-b border-(--border-default) bg-(--conf-high-bg)";
     }
@@ -743,6 +880,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     }
 
     const base = `border-b border-(--border-default) border-l-4 ${borderClass}`;
+    if (bucket === "excluded" && r.status === "skipped") {
+      return `${base} bg-zinc-100/80 text-zinc-600 opacity-90 dark:bg-zinc-900/50 dark:text-zinc-300`;
+    }
     if (r.status === "skipped") {
       return `${base} bg-(--bg-muted) opacity-70`;
     }
@@ -751,7 +891,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   };
 
   const rowStickyBgClass = (r: EnrichedCompany | EnrichedContact, rowIndex: number) => {
+    const bucket = r.reviewBucket ?? "needs_review";
     if (r.status === "approved") return "bg-(--conf-high-bg)";
+    if (bucket === "excluded" && r.status === "skipped") {
+      return "bg-zinc-100/90 dark:bg-zinc-900/55";
+    }
     if (r.status === "skipped") return "bg-(--bg-muted) opacity-70";
     return rowIndex % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)";
   };
@@ -761,9 +905,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
       <h2 className="text-lg font-semibold text-(--realm-navy)">Review &amp; Edit</h2>
 
       <p className="text-sm font-medium text-(--text-secondary)">
-        <span>{approvedCount} Approved</span>
+        <span>{trustedCount} Trusted</span>
         {" · "}
         <span>{needsReviewCount} Need Review</span>
+        {" · "}
+        <span>{excludedCount} Excluded</span>
       </p>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
@@ -795,8 +941,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
               onChange={(e) => setFilter(e.target.value as FilterKey)}
             >
               <option value="all">All</option>
-              <option value="approved">Approved</option>
               <option value="needs_review">Needs Review</option>
+              <option value="trusted">Trusted</option>
+              <option value="excluded">Excluded</option>
             </select>
             <span
               className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
@@ -805,6 +952,29 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
               ▾
             </span>
           </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-lg border border-(--border-default) bg-(--bg-card) p-4 shadow-(--shadow-card)">
+        <div>
+          <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+            ⚠️ Needs Review — {needsRows.length} records
+          </p>
+          <p className="text-xs text-(--text-muted)">These records need a quick check before pushing</p>
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+            ✓ Trusted — {trustedRows.length} records
+          </p>
+          <p className="text-xs text-(--text-muted)">Verified by HubSpot or ZoomInfo</p>
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-400">
+            ✗ Excluded — {excludedRows.length} records
+          </p>
+          <p className="text-xs text-(--text-muted)">
+            Not being pushed to HubSpot — check a row to override and include it
+          </p>
         </div>
       </div>
 
@@ -858,7 +1028,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
           </thead>
           <tbody>
             {listType === "companies"
-              ? (visibleRows as EnrichedCompany[]).map((row, ri) => {
+              ? (orderedReviewRows as EnrichedCompany[]).map((row, ri) => {
                   const muted = row.status === "skipped";
                   const checked = row.status === "approved";
                   return (
@@ -953,6 +1123,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
                           muted={muted}
                           breakAll
+                          linkedinSource={row.linkedinSource}
                           onSave={(v) => {
                             markEdited(row.id, "linkedinUrl");
                             setRows(
@@ -964,22 +1135,29 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         />
                       </td>
                       <td className="min-w-[120px] px-2 py-1.5 align-middle">
-                        <div className="flex flex-nowrap items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <ConfidenceBadge score={getDisplayConfidence(row, "companies")} />
                           {row.hubspotId ? (
                             <HubSpotPrecheckBadge complete={row.hubspotComplete === true} />
+                          ) : null}
+                          {row.reviewBucket === "excluded" && row.exclusionReason ? (
+                            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[0.65rem] font-medium text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
+                              {exclusionReasonBadgeLabel(row.exclusionReason)}
+                            </span>
                           ) : null}
                         </div>
                       </td>
                       <td className="max-w-56 px-2 py-1.5 align-middle wrap-break-word">
                         <div className="flex items-center justify-center">
-                          <ReasoningTooltip text={row.aiReasoning} />
+                          <ReasoningTooltip
+                            content={buildReasoningTooltipContent(row, "companies")}
+                          />
                         </div>
                       </td>
                     </tr>
                   );
                 })
-              : (visibleRows as EnrichedContact[]).map((row, ri) => {
+              : (orderedReviewRows as EnrichedContact[]).map((row, ri) => {
                   const muted = row.status === "skipped";
                   const checked = row.status === "approved";
                   const fullName = formatContactFullName(row);
@@ -1084,6 +1262,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
                           muted={muted}
                           breakAll
+                          linkedinSource={row.linkedinSource}
                           missingSearchUrl={searchLinkedInUrl}
                           onSave={(v) => {
                             markEdited(row.id, "linkedinUrl");
@@ -1097,20 +1276,33 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         />
                       </td>
                       <td className="min-w-[120px] px-2 py-1.5 align-middle">
-                        <div className="flex flex-nowrap items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1.5">
                           <ConfidenceBadge score={getDisplayConfidence(row, "contacts")} />
                           {row.hubspotId ? (
                             <HubSpotPrecheckBadge complete={row.hubspotComplete === true} />
+                          ) : null}
+                          {row.reviewBucket === "excluded" && row.exclusionReason ? (
+                            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[0.65rem] font-medium text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
+                              {exclusionReasonBadgeLabel(row.exclusionReason)}
+                            </span>
                           ) : null}
                         </div>
                       </td>
                       <td className="max-w-56 px-2 py-1.5 align-middle wrap-break-word">
                         <div className="flex items-center justify-center">
                           <ReasoningTooltip
-                            text={
-                              getDisplayConfidence(row, "contacts") === "unresolved"
-                                ? missingContactFieldsReason(row) ?? row.aiReasoning
-                                : row.aiReasoning
+                            content={
+                              getDisplayConfidence(row, "contacts") === "unresolved" &&
+                              missingContactFieldsReason(row) ? (
+                                <div className="space-y-2">
+                                  <p className="text-amber-800 dark:text-amber-200">
+                                    {missingContactFieldsReason(row)}
+                                  </p>
+                                  {buildReasoningTooltipContent(row, "contacts")}
+                                </div>
+                              ) : (
+                                buildReasoningTooltipContent(row, "contacts")
+                              )
                             }
                           />
                         </div>

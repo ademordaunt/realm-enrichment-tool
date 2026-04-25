@@ -21,7 +21,7 @@ import type {
   RawCompanyRow,
   RawContactRow,
 } from "@/lib/utils/types";
-import { shouldOpenPreReviewGate } from "@/lib/utils/prereview";
+import { finalizeRowsForReview, shouldOpenPreReviewGate } from "@/lib/utils/prereview";
 import {
   ENRICHMENT_BATCH_SIZE,
   needsCompanyLinkedInLookup,
@@ -366,6 +366,14 @@ function mergeHubSpotExistingIntoCompany(
       .split("/")[0]!;
     if (d) merged.website = `https://www.${d}`;
   }
+  const hsLi = String(existing.linkedin_company_page ?? "").trim();
+  if (hsLi && merged.linkedinUrl.trim() === hsLi) {
+    merged.linkedinSource = "hubspot";
+  }
+  const hsDom = String(existing.domain ?? "").trim();
+  if (hsDom && merged.domain.trim().toLowerCase() === hsDom.toLowerCase()) {
+    merged.domainSource = "hubspot_verified";
+  }
 }
 
 function contactPrecheckFieldEmpty(merged: EnrichedContact, rowKey: string): boolean {
@@ -385,38 +393,30 @@ function mergeHubSpotExistingIntoContact(
     if (!contactPrecheckFieldEmpty(merged, rowKey)) continue;
     (merged as unknown as Record<string, unknown>)[rowKey] = String(raw).trim();
   }
+  const hsLi = String(existing.ds_liprofile ?? "").trim();
+  if (hsLi && merged.linkedinUrl.trim() === hsLi) {
+    merged.linkedinSource = "hubspot";
+  }
 }
 
 function computeZoomVerifyNonHighTotal(
   allRows: (EnrichedCompany | EnrichedContact)[],
-  listType: "companies" | "contacts",
+  _listType: "companies" | "contacts",
 ): number {
-  if (listType === "companies") {
-    return allRows.filter((r) => r.confidenceScore !== "high").length;
-  }
-  return allRows.filter((r) => {
-    const c = r as EnrichedContact;
-    if (c.confidenceScore !== "high") return true;
-    return !c.linkedinUrl?.trim();
-  }).length;
+  return allRows.filter((r) => r.hubspotComplete !== true).length;
 }
 
 /** Count of rows before `beforeIndex` that take the ZoomInfo enrich path (same as server `nonHighIndex` steps). */
 function countZoomVerifyNonHighPrefix(
   allRows: (EnrichedCompany | EnrichedContact)[],
-  listType: "companies" | "contacts",
+  _listType: "companies" | "contacts",
   beforeIndex: number,
 ): number {
   let n = 0;
   const end = Math.min(beforeIndex, allRows.length);
   for (let j = 0; j < end; j++) {
     const row = allRows[j]!;
-    if (listType === "companies") {
-      if (row.confidenceScore !== "high") n++;
-    } else {
-      const c = row as EnrichedContact;
-      if (c.confidenceScore !== "high" || !c.linkedinUrl?.trim()) n++;
-    }
+    if (row.hubspotComplete !== true) n++;
   }
   return n;
 }
@@ -512,6 +512,13 @@ async function consumeEnrichmentNdjson(
   return { rows: result, rawNdjson, enrichedCount, cachedCount, creditsUsed };
 }
 
+function linkedInLookupIdentityOk(
+  row: EnrichedCompany | EnrichedContact,
+): boolean {
+  const ic = row.identityConfidence ?? row.confidenceScore;
+  return ic === "high" || ic === "medium";
+}
+
 async function runLinkedInLookupPass(
   contacts: EnrichedContact[],
   signal: AbortSignal,
@@ -519,7 +526,8 @@ async function runLinkedInLookupPass(
 ): Promise<EnrichedContact[]> {
   const missingIndices: number[] = [];
   for (let i = 0; i < contacts.length; i++) {
-    if (needsLinkedInLookup(contacts[i]!)) {
+    const c = contacts[i]!;
+    if (linkedInLookupIdentityOk(c) && needsLinkedInLookup(c)) {
       missingIndices.push(i);
     }
   }
@@ -547,12 +555,16 @@ async function runLinkedInLookupPass(
       onProgress(done, total);
       continue;
     }
-    const payload = (await res.json()) as { linkedInUrl?: string | null };
+    const payload = (await res.json()) as {
+      linkedInUrl?: string | null;
+      linkedinSource?: string;
+    };
     const linkedInUrl = String(payload.linkedInUrl ?? "").trim();
     if (linkedInUrl) {
       out[idx] = {
         ...row,
         linkedinUrl: linkedInUrl,
+        linkedinSource: "ai_search",
         enrichedByAI: true,
       };
     }
@@ -569,7 +581,8 @@ async function runCompanyLinkedInLookupPass(
 ): Promise<EnrichedCompany[]> {
   const missingIndices: number[] = [];
   for (let i = 0; i < companies.length; i++) {
-    if (needsCompanyLinkedInLookup(companies[i]!)) {
+    const c = companies[i]!;
+    if (linkedInLookupIdentityOk(c) && needsCompanyLinkedInLookup(c)) {
       missingIndices.push(i);
     }
   }
@@ -597,12 +610,16 @@ async function runCompanyLinkedInLookupPass(
       onProgress(done, total);
       continue;
     }
-    const payload = (await res.json()) as { linkedInUrl?: string | null };
+    const payload = (await res.json()) as {
+      linkedInUrl?: string | null;
+      linkedinSource?: string;
+    };
     const linkedInUrl = String(payload.linkedInUrl ?? "").trim();
     if (linkedInUrl) {
       out[idx] = {
         ...row,
         linkedinUrl: linkedInUrl,
+        linkedinSource: "ai_search",
         enrichedByAI: true,
       };
     }
@@ -618,13 +635,17 @@ function fallbackAiCompanyRows(rows: RawCompanyRow[], errMsg: string): EnrichedC
     rawInput: row.rawName,
     resolvedName: row.rawName,
     confidenceScore: "unresolved" as const,
+    identityConfidence: "unresolved" as const,
     aiReasoning: errMsg,
     needsReview: true,
     domain: "",
+    domainSource: "" as const,
     website: "",
     state: "",
     numberOfEmployees: null,
     linkedinUrl: "",
+    linkedinSource: "" as const,
+    reviewBucket: "needs_review" as const,
     enrichedByZoomInfo: false,
     enrichedByCommonRoom: false,
     enrichedByAI: false,
@@ -645,10 +666,13 @@ function fallbackAiContactRows(rows: RawContactRow[], errMsg: string): EnrichedC
       isPersonalEmail: false,
       resolvedCompany: row.company?.trim() ?? "",
       confidenceScore: "unresolved" as const,
+      identityConfidence: "unresolved" as const,
       aiReasoning: errMsg,
       needsReview: true,
       title: row.title?.trim() ?? "",
       linkedinUrl: "",
+      linkedinSource: "" as const,
+      reviewBucket: "needs_review" as const,
       companyDomain: "",
       location: row.location?.trim() ?? "",
       leadSource: row.leadSource?.trim() ?? "",
@@ -934,9 +958,13 @@ export default function Home() {
 
   const advanceToReview = useCallback(
     (rows: EnrichedCompany[] | EnrichedContact[], listType: "companies" | "contacts") => {
-      setEnriched(rows);
+      const finalized =
+        listType === "companies"
+          ? finalizeRowsForReview(rows as EnrichedCompany[], "companies")
+          : finalizeRowsForReview(rows as EnrichedContact[], "contacts");
+      setEnriched(finalized);
       setEnrichedListType(listType);
-      if (shouldOpenPreReviewGate(listType, rows)) {
+      if (shouldOpenPreReviewGate(listType, finalized)) {
         setStep("prereview");
       } else {
         setStep("enriched");
@@ -2011,7 +2039,16 @@ export default function Home() {
           </div>
         ) : null}
 
-        {step === "enriched" || step === "prereview" ? (
+        {step === "enriched" ? (
+          <button
+            type="button"
+            onClick={() => setStep("prereview")}
+            className="self-start text-sm text-(--text-muted) hover:text-(--text-primary)"
+          >
+            ← Back to Pre-Review
+          </button>
+        ) : null}
+        {step === "prereview" ? (
           <button
             type="button"
             onClick={() => resetToUpload(true)}
@@ -2475,7 +2512,12 @@ export default function Home() {
             rows={enriched}
             listType={enrichedListType}
             onContinue={(updatedRows) => {
-              setEnriched(updatedRows);
+              const lt = enrichedListType!;
+              const finalized =
+                lt === "companies"
+                  ? finalizeRowsForReview(updatedRows as EnrichedCompany[], "companies")
+                  : finalizeRowsForReview(updatedRows as EnrichedContact[], "contacts");
+              setEnriched(finalized);
               setStep("enriched");
             }}
           />

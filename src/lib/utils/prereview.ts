@@ -1,4 +1,10 @@
-import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
+import { isFullContact, isPersonalEmail } from "@/lib/utils/contacts";
+import type {
+  EnrichedCompany,
+  EnrichedContact,
+  ExclusionReason,
+  ReviewBucket,
+} from "@/lib/utils/types";
 
 export const PREREVIEW_INTL_GOV_THRESHOLD = 3;
 export const PREREVIEW_DUPLICATE_THRESHOLD = 2;
@@ -78,7 +84,7 @@ function hasInternationalTld(host: string): boolean {
   return false;
 }
 
-function isInternationalCompany(row: EnrichedCompany): boolean {
+export function isInternationalCompany(row: EnrichedCompany): boolean {
   const st = (row.state ?? "").toLowerCase();
   if (st.includes("foreign")) return true;
   for (const s of INTL_STATE_SUBSTRINGS) {
@@ -89,7 +95,7 @@ function isInternationalCompany(row: EnrichedCompany): boolean {
   return false;
 }
 
-function isGovernmentCompany(row: EnrichedCompany): boolean {
+export function isGovernmentCompany(row: EnrichedCompany): boolean {
   const host = normalizeHost(row.domain);
   if (host.endsWith(".gov") || host.endsWith(".mil")) return true;
   const name = (row.resolvedName ?? "").toLowerCase();
@@ -169,14 +175,102 @@ export function detectDuplicateContactGroups(rows: EnrichedContact[]): Map<strin
 }
 
 /** True if the pre-review screen should be shown (vs. skipping straight to Review & Edit). */
+export function applyConfidenceFilter<T extends EnrichedCompany | EnrichedContact>(
+  rows: T[],
+): T[] {
+  return rows.map((row) => {
+    if (row.identityConfidence === "low" || row.identityConfidence === "unresolved") {
+      return { ...row, linkedinUrl: "", linkedinSource: "" as const };
+    }
+    return row;
+  });
+}
+
+export function computeReviewBucket(
+  row: EnrichedCompany | EnrichedContact,
+  listType: "companies" | "contacts",
+): { bucket: ReviewBucket; exclusionReason?: ExclusionReason } {
+  if (listType === "companies") {
+    const company = row as EnrichedCompany;
+    if (isInternationalCompany(company)) {
+      return { bucket: "excluded", exclusionReason: "international" };
+    }
+    if (isGovernmentCompany(company)) {
+      return { bucket: "excluded", exclusionReason: "government" };
+    }
+  }
+
+  if (listType === "contacts") {
+    const contact = row as EnrichedContact;
+    if (!isFullContact(contact)) {
+      const reason = isPersonalEmail(contact.resolvedEmail ?? "")
+        ? ("personal_email" as const)
+        : ("missing_required_fields" as const);
+      return { bucket: "excluded", exclusionReason: reason };
+    }
+  }
+
+  if (row.identityConfidence === "low" || row.identityConfidence === "unresolved") {
+    return {
+      bucket: "excluded",
+      exclusionReason:
+        row.identityConfidence === "low" ? "low_confidence" : "unresolved",
+    };
+  }
+
+  const company = row as EnrichedCompany;
+  const verifiedByHubSpotOrZoomInfo =
+    row.hubspotId != null ||
+    row.enrichedByZoomInfo === true ||
+    (listType === "companies" &&
+      (company.domainSource === "zoominfo_verified" ||
+        company.domainSource === "hubspot_verified"));
+
+  if (
+    (row.identityConfidence === "high" || row.identityConfidence === "medium") &&
+    verifiedByHubSpotOrZoomInfo
+  ) {
+    return { bucket: "trusted" };
+  }
+
+  if (
+    listType === "companies" &&
+    row.identityConfidence === "high" &&
+    company.domainSource === "ai_guess" &&
+    company.domain?.trim()
+  ) {
+    return { bucket: "trusted" };
+  }
+
+  return { bucket: "needs_review" };
+}
+
+export function finalizeRowsForReview<T extends EnrichedCompany | EnrichedContact>(
+  rows: T[],
+  listType: "companies" | "contacts",
+): T[] {
+  const filtered = applyConfidenceFilter(rows);
+  return filtered.map((row) => {
+    const { bucket, exclusionReason } = computeReviewBucket(row, listType);
+    return {
+      ...row,
+      reviewBucket: bucket,
+      exclusionReason,
+    };
+  }) as T[];
+}
+
 export function shouldOpenPreReviewGate(
   listType: "companies" | "contacts",
   rows: EnrichedCompany[] | EnrichedContact[],
 ): boolean {
   if (listType === "companies") {
     const companies = rows as EnrichedCompany[];
-    const { international, government } = detectFlaggedCompanies(companies);
-    const intlGov = countUniqueFlaggedCompanies(international, government);
+    const intlGov = companies.filter(
+      (r) =>
+        r.reviewBucket === "excluded" &&
+        (r.exclusionReason === "international" || r.exclusionReason === "government"),
+    ).length;
     const groups = detectDuplicateGroups(companies).size;
     return intlGov >= PREREVIEW_INTL_GOV_THRESHOLD || groups >= PREREVIEW_DUPLICATE_THRESHOLD;
   }

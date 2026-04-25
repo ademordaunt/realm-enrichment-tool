@@ -6,10 +6,12 @@ import {
   setCachedCompany,
   setCachedContact,
 } from "@/lib/cache/enrichment-cache";
+import { isPersonalEmail } from "@/lib/utils/contacts";
 import type {
   EnrichedCompany,
   EnrichedContact,
   EventContext,
+  IdentityConfidence,
   RawCompanyRow,
   RawContactRow,
 } from "@/lib/utils/types";
@@ -121,18 +123,9 @@ export function parseJsonArray<T = unknown>(text: string): T[] {
   return [];
 }
 
-function parseJsonObject<T = Record<string, unknown>>(text: string): T {
-  const cleaned = stripMarkdownFences(text);
-  const parsed: unknown = JSON.parse(cleaned);
-  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-    throw new Error("Expected a JSON object from the model.");
-  }
-  return parsed as T;
-}
-
-function normalizeConfidence(
+export function normalizeConfidence(
   v: unknown,
-): "high" | "medium" | "low" | "unresolved" {
+): IdentityConfidence {
   const s = String(v ?? "").toLowerCase();
   if (s === "high" || s === "medium" || s === "low" || s === "unresolved") {
     return s;
@@ -194,19 +187,20 @@ function contactRegionContextLine(context: EventContext): string {
 }
 
 export function buildCompanySystemPrompt(context: EventContext): string {
-  return `You are a B2B data researcher specializing in identifying companies from partial or abbreviated names. You are working with a list from ${context.eventName}, a ${context.audienceLevel} event focused on cybersecurity, ${companyEventLocationClause(context)}.
+  return `You resolve company identities from partial or abbreviated names for ${context.eventName}, a ${context.audienceLevel} cybersecurity event, ${companyEventLocationClause(context)}.
 
-For each company name provided, identify the most likely real company, return its official name, website domain, HQ state, approximate employee count, and LinkedIn company page URL.
+For each company name, do ONLY the following:
+- Resolve the raw input to the official company name the row most likely refers to.
+- Find the most likely corporate website domain (no protocol, e.g. example.com).
+- Assign confidence: HIGH if you are certain, MEDIUM if it is the most likely match but could be wrong, LOW if it is only a best guess, UNRESOLVED if you cannot determine a defensible match.
+- Give one plain-English sentence in aiReasoning explaining WHY you chose that confidence level.
 
-IMPORTANT REASONING RULES:
-- Use event context heavily. A "RUSH" on a Midwest CISO event is almost certainly Rush University Medical Center, not Rush Communications.
-- For acronyms like "HCSC", reason from context: this is Health Care Service Corporation, a major Chicago-based health insurer.
-- Return confidence: HIGH (you are certain), MEDIUM (most likely but could be wrong), LOW (best guess), UNRESOLVED (genuinely cannot determine).
-- Always explain your reasoning in 1-2 sentences.
-- Use web search to verify domain names and LinkedIn URLs.
+Do NOT return or guess: LinkedIn URLs, employee counts, industry, revenue, description, city, state, or full website URLs. Those are filled from other systems.
+
+Use event context when disambiguating (e.g. acronyms, regional names).
 
 Return a JSON array only. No markdown, no preamble. Each element must be an object with keys:
-rawInput (string), resolvedName (string), domain (string), website (string), state (string), numberOfEmployees (number or null), linkedinUrl (string), confidenceScore ("high"|"medium"|"low"|"unresolved"), aiReasoning (string), enrichedByAI (boolean, always true).`;
+rawInput (string), resolvedName (string), domain (string), confidenceScore ("high"|"medium"|"low"|"unresolved"), aiReasoning (string), enrichedByAI (boolean, always true).`;
 }
 
 export function buildCompanyUserPrompt(batch: RawCompanyRow[]): string {
@@ -215,33 +209,25 @@ export function buildCompanyUserPrompt(batch: RawCompanyRow[]): string {
 }
 
 export function buildContactSystemPrompt(context: EventContext): string {
-  return `You are a B2B contact researcher. Given a person's name, title, and company (and the email from the source list), enrich company name, company domain, and LinkedIn profile. Do not suggest or output a different email than the one provided — the CSV email is always kept as-is downstream.
-
-Context — these contacts attended ${context.eventName}, a ${context.audienceLevel} cybersecurity event.
+  return `You resolve B2B contact identity from list data. Contacts attended ${context.eventName}, a ${context.audienceLevel} cybersecurity event.
 ${contactRegionContextLine(context)} Event date: ${context.eventDate}.
 
-For each contact:
-- Find the LinkedIn profile URL using name + company + title.
-- Return confidence score and reasoning.
-- You may set isPersonalEmail to true if the provided email looks like a personal domain (gmail, yahoo, hotmail, icloud, etc.).
+For each contact, do ONLY the following:
+- Confirm or correct first name, last name, and company name as they apply to the same person implied by the input.
+- Set resolvedEmail to the email from the input when present; never invent a different work email.
+- Set title to the title from the input when present; if the input has no title, return an empty string — do not guess a title.
+- Assign confidence: HIGH if you are certain this is a real, correctly identified person; MEDIUM if likely but could be wrong; LOW for a weak guess; UNRESOLVED if identity cannot be determined.
+- Give one plain-English sentence in aiReasoning explaining WHY you chose that confidence level.
 
-Return a JSON array only. No markdown, no preamble. Each element must be an object with keys:
-isPersonalEmail (boolean), resolvedCompany (string), companyDomain (string), linkedinUrl (string), confidenceScore ("high"|"medium"|"low"|"unresolved"), aiReasoning (string), enrichedByAI (boolean, always true).`;
+Do NOT return LinkedIn URLs. Do not guess titles when absent.
+
+Return a JSON array only. No markdown, no preamble. Same order and count as the input list. Each element must be an object with keys:
+rawInput (string), firstName (string), lastName (string), resolvedCompany (string), resolvedEmail (string), title (string), confidenceScore ("high"|"medium"|"low"|"unresolved"), aiReasoning (string), enrichedByAI (boolean, always true).`;
 }
 
 export function buildContactUserPrompt(batch: RawContactRow[]): string {
-  const lines = batch.map((r, i) => {
-    const bits = [
-      `${i + 1}.`,
-      [r.firstName, r.lastName].filter(Boolean).join(" "),
-      r.email ? `email: ${r.email}` : "",
-      r.title ? `title: ${r.title}` : "",
-      r.company ? `company: ${r.company}` : "",
-      r.location ? `location: ${r.location}` : "",
-    ].filter(Boolean);
-    return bits.join(" ");
-  });
-  return `Resolve these contacts:\n${lines.join("\n")}`;
+  const lines = batch.map((r, i) => formatContactPromptLine(r, i));
+  return `Resolve these contacts in order (output array must have one object per line, same order). Each object rawInput must exactly match the corresponding line below:\n${lines.join("\n")}`;
 }
 
 function mapCompanyAiToEnriched(
@@ -249,21 +235,23 @@ function mapCompanyAiToEnriched(
   row: RawCompanyRow,
 ): EnrichedCompany {
   const confidenceScore = normalizeConfidence(raw.confidenceScore);
+  const domain = String(raw.domain ?? "").trim();
   return {
     id: uuidv4(),
     rawInput: String(raw.rawInput ?? row.rawName),
     resolvedName: String(raw.resolvedName ?? row.rawName),
     confidenceScore,
+    identityConfidence: confidenceScore,
     aiReasoning: String(raw.aiReasoning ?? ""),
     needsReview: confidenceScore !== "high",
-    domain: String(raw.domain ?? ""),
-    website: String(raw.website ?? ""),
-    state: String(raw.state ?? ""),
-    numberOfEmployees:
-      raw.numberOfEmployees === null || raw.numberOfEmployees === undefined
-        ? null
-        : Number(raw.numberOfEmployees),
-    linkedinUrl: String(raw.linkedinUrl ?? ""),
+    domain,
+    domainSource: domain ? "ai_guess" : "",
+    website: "",
+    state: "",
+    numberOfEmployees: null,
+    linkedinUrl: "",
+    linkedinSource: "",
+    reviewBucket: "needs_review",
     enrichedByZoomInfo: false,
     enrichedByCommonRoom: false,
     enrichedByAI: true,
@@ -277,27 +265,36 @@ function mapContactAiToEnriched(
 ): EnrichedContact {
   const confidenceScore = normalizeConfidence(raw.confidenceScore);
   const rawEmail = row.email?.trim() ?? "";
-  const aiEmail = String(raw.email ?? "").trim();
-  const resolvedEmail = rawEmail || aiEmail;
+  const aiResolved = String(raw.resolvedEmail ?? "").trim();
+  const resolvedEmail = rawEmail || aiResolved;
+  const firstName = String(raw.firstName ?? row.firstName ?? "").trim() || row.firstName;
+  const lastName = String(raw.lastName ?? row.lastName ?? "").trim() || row.lastName;
   const existingCompany = row.resolvedCompany?.trim() || row.company?.trim() || "";
-  const resolvedCompany = existingCompany || String(raw.resolvedCompany ?? "").trim();
-  const title = row.title?.trim() || String(raw.title ?? "").trim();
+  const resolvedCompany =
+    String(raw.resolvedCompany ?? "").trim() || existingCompany;
+  const titleFromRow = row.title?.trim() ?? "";
+  const titleFromAi = String(raw.title ?? "").trim();
+  const title = titleFromRow || titleFromAi;
   const phone = row.phone?.trim() ?? "";
+  const emailForPersonal = resolvedEmail || rawEmail;
   return {
     id: uuidv4(),
-    firstName: row.firstName,
-    lastName: row.lastName,
+    firstName,
+    lastName,
     rawEmail,
     rawCompany: row.company?.trim() ?? "",
     resolvedEmail,
-    isPersonalEmail: Boolean(raw.isPersonalEmail),
+    isPersonalEmail: isPersonalEmail(emailForPersonal),
     resolvedCompany,
     confidenceScore,
+    identityConfidence: confidenceScore,
     aiReasoning: String(raw.aiReasoning ?? ""),
     needsReview: confidenceScore !== "high",
     title,
-    linkedinUrl: String(raw.linkedinUrl ?? ""),
-    companyDomain: String(raw.companyDomain ?? ""),
+    linkedinUrl: "",
+    linkedinSource: "",
+    reviewBucket: "needs_review",
+    companyDomain: "",
     location: row.location?.trim() ?? "",
     leadSource: row.leadSource?.trim() ?? "",
     leadSourceDescription: row.leadSourceDescription?.trim() ?? "",
@@ -309,10 +306,6 @@ function mapContactAiToEnriched(
     enrichedByAI: true,
     status: "pending",
   };
-}
-
-function hasValue(v: unknown): boolean {
-  return String(v ?? "").trim() !== "";
 }
 
 function isCompleteCompanyRow(row: RawCompanyRow): boolean {
@@ -342,13 +335,17 @@ function mapPresetCompanyRow(row: RawCompanyRow): EnrichedCompany {
     rawInput: row.rawName,
     resolvedName,
     confidenceScore: "high",
+    identityConfidence: "high",
     aiReasoning: "All required company fields were pre-populated.",
     needsReview: false,
     domain,
+    domainSource: domain ? "csv" : "",
     website,
     state,
     numberOfEmployees,
     linkedinUrl,
+    linkedinSource: linkedinUrl ? "" : "",
+    reviewBucket: "needs_review",
     enrichedByZoomInfo: false,
     enrichedByCommonRoom: false,
     enrichedByAI: false,
@@ -371,13 +368,16 @@ function mapPresetContactRow(
     rawEmail: email,
     rawCompany: row.company?.trim() ?? "",
     resolvedEmail: email,
-    isPersonalEmail: false,
+    isPersonalEmail: isPersonalEmail(email),
     resolvedCompany: company,
     confidenceScore: "high",
+    identityConfidence: "high",
     aiReasoning: "All required contact fields were pre-populated.",
     needsReview: false,
     title: row.title?.trim() ?? "",
     linkedinUrl: linkedInUrl,
+    linkedinSource: "",
+    reviewBucket: "needs_review",
     companyDomain: "",
     location: row.location?.trim() ?? "",
     leadSource: row.leadSource?.trim() ?? "",
@@ -392,28 +392,6 @@ function mapPresetContactRow(
   };
 }
 
-async function findLinkedInOnlyForContact(
-  client: Anthropic,
-  row: RawContactRow,
-): Promise<string> {
-  const firstName = row.firstName?.trim() ?? "";
-  const lastName = row.lastName?.trim() ?? "";
-  const title = row.title?.trim() ?? "";
-  const company = row.resolvedCompany?.trim() || row.company?.trim() || "";
-  const userText = `Find the LinkedIn profile URL for ${firstName} ${lastName}, ${title} at ${company}.
-Return ONLY valid JSON: {"linkedInUrl": "https://www.linkedin.com/in/..." or null}
-No other text.`;
-  const text = await runClaudeWithWebSearch(
-    client,
-    "Return only valid JSON with key linkedInUrl.",
-    userText,
-  );
-  const parsed = parseJsonObject<Record<string, unknown>>(text);
-  const rawUrl = parsed.linkedInUrl ?? parsed.linkedinUrl;
-  const linkedInUrl = rawUrl == null ? "" : String(rawUrl).trim();
-  return linkedInUrl;
-}
-
 function isFullyPopulatedContactRow(row: RawContactRow): boolean {
   const firstName = row.firstName?.trim() ?? "";
   const lastName = row.lastName?.trim() ?? "";
@@ -423,88 +401,17 @@ function isFullyPopulatedContactRow(row: RawContactRow): boolean {
   return Boolean(firstName && lastName && email && company && title);
 }
 
-async function ensureLinkedInForEnrichedContact(
-  client: Anthropic,
-  row: RawContactRow,
-  enriched: EnrichedContact,
-): Promise<EnrichedContact> {
-  if (enriched.linkedinUrl?.trim()) {
-    return enriched;
-  }
-  const linkedInUrl = await findLinkedInOnlyForContact(client, row);
-  if (!linkedInUrl) {
-    return enriched;
-  }
-  return {
-    ...enriched,
-    linkedinUrl: linkedInUrl,
-    enrichedByAI: true,
-  };
-}
-
-function contactMissingFieldList(row: RawContactRow): string[] {
-  const missing: string[] = [];
-  if (!hasValue(row.title)) missing.push("title");
-  if (!hasValue(row.email)) missing.push("email");
-  if (!hasValue(row.resolvedCompany) && !hasValue(row.company)) missing.push("resolvedCompany");
-  if (!hasValue(row.linkedinUrl) && !hasValue(row.linkedInUrl)) missing.push("linkedinUrl");
-  return missing;
-}
-
-async function enrichSingleContact(
-  client: Anthropic,
-  row: RawContactRow,
-  context: EventContext,
-): Promise<EnrichedContact> {
-  const firstName = row.firstName?.trim() ?? "";
-  const lastName = row.lastName?.trim() ?? "";
-  const title = row.title?.trim() ?? "";
-  const email = row.email?.trim() ?? "";
-  const company = row.resolvedCompany?.trim() || row.company?.trim() || "";
-  const existingLinkedIn = row.linkedinUrl?.trim() || row.linkedInUrl?.trim() || "";
-
-  if (isFullyPopulatedContactRow(row)) {
-    console.log("[AI Enricher] Skipping fully populated contact row (AI prompt not needed)");
-    if (existingLinkedIn) {
-      return mapPresetContactRow(row, existingLinkedIn, false);
-    }
-    const linkedInUrl = await findLinkedInOnlyForContact(client, row);
-    return mapPresetContactRow(row, linkedInUrl, Boolean(linkedInUrl));
-  }
-
-  const missing = contactMissingFieldList(row);
-  const system = buildContactSystemPrompt(context);
-  const userText = [
-    "Resolve one contact and return only a single JSON object with keys:",
-    "isPersonalEmail, resolvedCompany, companyDomain, linkedinUrl, confidenceScore, aiReasoning, enrichedByAI, title, email.",
-    "Do not modify any field that is already populated in input.lockedFields.",
-    "Only fill values for fields listed in input.missingFields.",
-    "",
-    JSON.stringify(
-      {
-        input: {
-          firstName,
-          lastName,
-          title,
-          email,
-          company,
-          location: row.location?.trim() ?? "",
-          lockedFields: {
-            title: Boolean(title),
-            email: Boolean(email),
-            resolvedCompany: Boolean(company),
-            linkedinUrl: Boolean(existingLinkedIn),
-          },
-          missingFields: missing,
-        },
-      },
-      null,
-      2,
-    ),
-  ].join("\n");
-  const text = await runClaudeWithWebSearch(client, system, userText);
-  const rec = parseJsonObject<Record<string, unknown>>(text);
-  return mapContactAiToEnriched(rec, row);
+/** One numbered line for prompts and matching `rawInput` from the model. */
+function formatContactPromptLine(row: RawContactRow, index: number): string {
+  const bits = [
+    `${index + 1}.`,
+    [row.firstName, row.lastName].filter(Boolean).join(" "),
+    row.email ? `email: ${row.email}` : "",
+    row.title ? `title: ${row.title}` : "",
+    row.company ? `company: ${row.company}` : "",
+    row.location ? `location: ${row.location}` : "",
+  ].filter(Boolean);
+  return bits.join(" ");
 }
 
 export async function enrichCompanyBatch(
@@ -553,11 +460,42 @@ export async function enrichContactBatch(
   batch: RawContactRow[],
   context: EventContext,
 ): Promise<EnrichedContact[]> {
-  const out: EnrichedContact[] = [];
-  for (const row of batch) {
-    out.push(await enrichSingleContact(client, row, context));
+  const partial: (EnrichedContact | undefined)[] = new Array(batch.length);
+  const toEnrich: RawContactRow[] = [];
+  const positions: number[] = [];
+  for (let i = 0; i < batch.length; i++) {
+    const row = batch[i]!;
+    if (isFullyPopulatedContactRow(row)) {
+      const existingLinkedIn =
+        row.linkedinUrl?.trim() || row.linkedInUrl?.trim() || "";
+      partial[i] = mapPresetContactRow(row, existingLinkedIn, false);
+    } else {
+      toEnrich.push(row);
+      positions.push(i);
+    }
   }
-  return out;
+  if (toEnrich.length === 0) {
+    return partial.map((r) => r!);
+  }
+
+  const system = buildContactSystemPrompt(context);
+  const user = buildContactUserPrompt(toEnrich);
+  const text = await runClaudeWithWebSearch(client, system, user);
+  const parsed = parseJsonArray<Record<string, unknown>>(text);
+  const byInput = new Map<string, Record<string, unknown>>();
+  for (const item of parsed) {
+    const k = String(item.rawInput ?? "").trim().toLowerCase();
+    if (k) byInput.set(k, item);
+  }
+  const aiRows = toEnrich.map((row, i) => {
+    const expected = formatContactPromptLine(row, i).trim().toLowerCase();
+    const rec = byInput.get(expected) ?? parsed[i] ?? {};
+    return mapContactAiToEnriched(rec, row);
+  });
+  for (let i = 0; i < positions.length; i++) {
+    partial[positions[i]!] = aiRows[i]!;
+  }
+  return partial.map((r) => r!);
 }
 
 async function resolveCompanyBatchFromKv(batch: RawCompanyRow[]): Promise<{
@@ -679,11 +617,7 @@ async function fillContactBatchFromAi(
   enrichPositions: number[],
 ): Promise<EnrichedContact[]> {
   if (toEnrich.length === 0) {
-    const complete = partial.map((r) => r!);
-    for (let i = 0; i < complete.length; i++) {
-      complete[i] = await ensureLinkedInForEnrichedContact(client, batch[i]!, complete[i]!);
-    }
-    return complete;
+    return partial.map((r) => r!);
   }
   const aiPart = await enrichContactBatch(client, toEnrich, context);
   for (let j = 0; j < toEnrich.length; j++) {
@@ -695,11 +629,7 @@ async function fillContactBatchFromAi(
     }
     partial[enrichPositions[j]!] = enrichedRow;
   }
-  const complete = partial.map((r) => r!);
-  for (let i = 0; i < complete.length; i++) {
-    complete[i] = await ensureLinkedInForEnrichedContact(client, batch[i]!, complete[i]!);
-  }
-  return complete;
+  return partial.map((r) => r!);
 }
 
 export async function enrichContactBatchWithCache(

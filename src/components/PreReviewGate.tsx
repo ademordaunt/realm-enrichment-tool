@@ -2,10 +2,8 @@
 
 import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
 import {
-  countUniqueFlaggedCompanies,
   detectDuplicateContactGroups,
   detectDuplicateGroups,
-  detectFlaggedCompanies,
   PREREVIEW_DUPLICATE_THRESHOLD,
   PREREVIEW_INTL_GOV_THRESHOLD,
 } from "@/lib/utils/prereview";
@@ -67,15 +65,15 @@ export function PreReviewGate({ rows, listType, onContinue }: PreReviewGateProps
   const summary = useMemo(() => {
     if (listType === "companies") {
       const w = working as EnrichedCompany[];
-      const { international, government } = detectFlaggedCompanies(w);
-      const intlGovCount = countUniqueFlaggedCompanies(international, government);
+      const intlGovCount = w.filter(
+        (r) =>
+          r.exclusionReason === "international" || r.exclusionReason === "government",
+      ).length;
       const dupGroupCount = detectDuplicateGroups(w).size;
       return {
         showIntlGov: intlGovCount >= PREREVIEW_INTL_GOV_THRESHOLD,
         showDup: dupGroupCount >= PREREVIEW_DUPLICATE_THRESHOLD,
         intlGovCount,
-        international,
-        government,
         dupGroupCount,
       };
     }
@@ -85,8 +83,6 @@ export function PreReviewGate({ rows, listType, onContinue }: PreReviewGateProps
       showIntlGov: false,
       showDup: dupGroupCount >= PREREVIEW_DUPLICATE_THRESHOLD,
       intlGovCount: 0,
-      international: [] as EnrichedCompany[],
-      government: [] as EnrichedCompany[],
       dupGroupCount,
     };
   }, [listType, working]);
@@ -100,9 +96,12 @@ export function PreReviewGate({ rows, listType, onContinue }: PreReviewGateProps
   const onRemoveAllFlagged = useCallback(() => {
     if (listType !== "companies") return;
     const w = working as EnrichedCompany[];
-    const { international, government } = detectFlaggedCompanies(w);
-    const drop = new Set([...international, ...government].map((r) => r.id));
-    setWorking(w.filter((r) => !drop.has(r.id)));
+    setWorking(
+      w.filter(
+        (r) =>
+          r.exclusionReason !== "international" && r.exclusionReason !== "government",
+      ),
+    );
   }, [listType, working]);
 
   const onKeepFirstDup = useCallback(() => {
@@ -126,24 +125,20 @@ export function PreReviewGate({ rows, listType, onContinue }: PreReviewGateProps
   const intlGovRowsUnique = (() => {
     if (listType !== "companies") return [] as { row: EnrichedCompany; tags: string }[];
     const w = working as EnrichedCompany[];
-    const { international, government } = detectFlaggedCompanies(w);
-    const byId = new Map<string, { row: EnrichedCompany; intl: boolean; gov: boolean }>();
-    for (const r of international) {
-      const e = byId.get(r.id);
-      if (e) e.intl = true;
-      else byId.set(r.id, { row: r, intl: true, gov: false });
-    }
-    for (const r of government) {
-      const e = byId.get(r.id);
-      if (e) e.gov = true;
-      else byId.set(r.id, { row: r, intl: false, gov: true });
-    }
-    return Array.from(byId.values()).map((e) => {
-      const tags: string[] = [];
-      if (e.intl) tags.push("International");
-      if (e.gov) tags.push("Government");
-      return { row: e.row, tags: tags.join(" · ") };
-    });
+    return w
+      .filter(
+        (r) =>
+          r.exclusionReason === "international" || r.exclusionReason === "government",
+      )
+      .map((row) => ({
+        row,
+        tags:
+          row.exclusionReason === "international"
+            ? "International"
+            : row.exclusionReason === "government"
+              ? "Government"
+              : "",
+      }));
   })();
 
   const companyDupMap =

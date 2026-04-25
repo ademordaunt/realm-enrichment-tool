@@ -15,6 +15,7 @@ import {
   enrichContactsWithZoomInfo,
 } from "@/lib/enrichment/zoominfo-enricher";
 import { mergeEnrichedCompany, mergeEnrichedContact } from "@/lib/enrichment/merger";
+import { finalizeRowsForReview } from "@/lib/utils/prereview";
 import { batchCheckCompaniesInHubSpot, normalizeDomain } from "@/lib/hubspot/companies";
 import { batchCheckContactsInHubSpot } from "@/lib/hubspot/contacts";
 import { queueJobChunk } from "@/lib/jobs/qstash";
@@ -42,13 +43,17 @@ function fallbackAiCompanyRows(rows: RawCompanyRow[], errMsg: string): EnrichedC
     rawInput: row.rawName,
     resolvedName: row.rawName,
     confidenceScore: "unresolved",
+    identityConfidence: "unresolved",
     aiReasoning: errMsg,
     needsReview: true,
     domain: "",
+    domainSource: "",
     website: "",
     state: "",
     numberOfEmployees: null,
     linkedinUrl: "",
+    linkedinSource: "",
+    reviewBucket: "needs_review",
     enrichedByZoomInfo: false,
     enrichedByCommonRoom: false,
     enrichedByAI: false,
@@ -69,10 +74,13 @@ function fallbackAiContactRows(rows: RawContactRow[], errMsg: string): EnrichedC
       isPersonalEmail: false,
       resolvedCompany: row.company?.trim() ?? "",
       confidenceScore: "unresolved",
+      identityConfidence: "unresolved",
       aiReasoning: errMsg,
       needsReview: true,
       title: row.title?.trim() ?? "",
       linkedinUrl: "",
+      linkedinSource: "",
+      reviewBucket: "needs_review",
       companyDomain: "",
       location: row.location?.trim() ?? "",
       leadSource: row.leadSource?.trim() ?? "",
@@ -111,7 +119,10 @@ function isNonEmpty(v: unknown): boolean {
 
 function mergePrecheckCompany(row: EnrichedCompany, existingData: Record<string, string>): EnrichedCompany {
   const merged = { ...row };
-  if (!merged.domain?.trim() && existingData.domain?.trim()) merged.domain = existingData.domain.trim();
+  if (!merged.domain?.trim() && existingData.domain?.trim()) {
+    merged.domain = existingData.domain.trim();
+    merged.domainSource = "hubspot_verified";
+  }
   if (!merged.state?.trim() && existingData.state?.trim()) merged.state = existingData.state.trim();
   if (merged.numberOfEmployees == null && existingData.numberofemployees?.trim()) {
     const parsed = Number.parseInt(existingData.numberofemployees, 10);
@@ -119,6 +130,7 @@ function mergePrecheckCompany(row: EnrichedCompany, existingData: Record<string,
   }
   if (!merged.linkedinUrl?.trim() && existingData.linkedin_company_page?.trim()) {
     merged.linkedinUrl = existingData.linkedin_company_page.trim();
+    merged.linkedinSource = "hubspot";
   }
   if (!merged.industry?.trim() && existingData.industry?.trim()) merged.industry = existingData.industry.trim();
   if (!merged.description?.trim() && existingData.description?.trim()) {
@@ -136,6 +148,7 @@ function mergePrecheckContact(row: EnrichedContact, existingData: Record<string,
   }
   if (!merged.linkedinUrl?.trim() && existingData.ds_liprofile?.trim()) {
     merged.linkedinUrl = existingData.ds_liprofile.trim();
+    merged.linkedinSource = "hubspot";
   }
   if (!merged.location?.trim() && existingData.state?.trim()) merged.location = existingData.state.trim();
   if (!merged.phone?.trim() && existingData.phone?.trim()) merged.phone = existingData.phone.trim();
@@ -197,6 +210,11 @@ async function runHubSpotPrecheck(
   return { rows: merged, skippedCount };
 }
 
+function linkedInBatchIdentityOk(row: EnrichedCompany | EnrichedContact): boolean {
+  const ic = row.identityConfidence ?? row.confidenceScore;
+  return ic === "high" || ic === "medium";
+}
+
 async function runLinkedInBatch(
   request: Request,
   listType: "companies" | "contacts",
@@ -207,7 +225,7 @@ async function runLinkedInBatch(
   for (let i = 0; i < out.length; i++) {
     const row = out[i]!;
     const missing = !(row as { linkedinUrl?: string }).linkedinUrl?.trim();
-    if (!missing) continue;
+    if (!missing || !linkedInBatchIdentityOk(row)) continue;
     const body =
       listType === "companies"
         ? { company: row as EnrichedCompany }
@@ -221,7 +239,12 @@ async function runLinkedInBatch(
     const json = (await res.json()) as { linkedInUrl?: string | null };
     const linkedInUrl = String(json.linkedInUrl ?? "").trim();
     if (!linkedInUrl) continue;
-    out[i] = { ...row, linkedinUrl: linkedInUrl, enrichedByAI: true };
+    out[i] = {
+      ...row,
+      linkedinUrl: linkedInUrl,
+      linkedinSource: "ai_search",
+      enrichedByAI: true,
+    };
   }
   return out;
 }
@@ -372,7 +395,9 @@ async function handler(req: Request): Promise<Response> {
     >;
     const missingIndices: number[] = [];
     for (let i = 0; i < allRows.length; i++) {
-      if (!(allRows[i] as { linkedinUrl?: string }).linkedinUrl?.trim()) {
+      const row = allRows[i]!;
+      const missing = !(row as { linkedinUrl?: string }).linkedinUrl?.trim();
+      if (missing && linkedInBatchIdentityOk(row)) {
         missingIndices.push(i);
       }
     }
@@ -396,6 +421,12 @@ async function handler(req: Request): Promise<Response> {
       await queueJobChunk({ jobId, chunkIndex: chunkIndex + 1, phase: "linkedin" });
       return Response.json({ ok: true });
     }
+
+    const finalized =
+      jobState.listType === "companies"
+        ? finalizeRowsForReview(allRows as EnrichedCompany[], "companies")
+        : finalizeRowsForReview(allRows as EnrichedContact[], "contacts");
+    await persistRowsByAiChunks(jobId, finalized);
 
     jobState.linkedInComplete = true;
     jobState.currentPhase = "complete";

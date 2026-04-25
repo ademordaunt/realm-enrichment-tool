@@ -80,7 +80,7 @@ async function handleCompanyLinkedInSearch(
 ): Promise<Response> {
   const existing = String(company.linkedinUrl ?? "").trim();
   if (existing) {
-    return Response.json({ linkedInUrl: existing });
+    return Response.json({ linkedInUrl: existing, linkedinSource: "ai_search" as const });
   }
 
   const cacheKey = getCompanyCacheKey(company);
@@ -88,7 +88,7 @@ async function handleCompanyLinkedInSearch(
     try {
       const cached = await kv.get<string>(cacheKey);
       if (cached?.trim()) {
-        return Response.json({ linkedInUrl: cached.trim() });
+        return Response.json({ linkedInUrl: cached.trim(), linkedinSource: "ai_search" as const });
       }
     } catch {
       // Best effort cache read.
@@ -169,7 +169,7 @@ async function handleCompanyLinkedInSearch(
     }
   }
 
-  return Response.json({ linkedInUrl });
+  return Response.json({ linkedInUrl, linkedinSource: "ai_search" as const });
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -195,7 +195,7 @@ export async function POST(request: Request): Promise<Response> {
   const contact = body.contact as LinkedInSearchContact;
   const existing = String(contact.linkedinUrl ?? "").trim();
   if (existing) {
-    return Response.json({ linkedInUrl: existing });
+    return Response.json({ linkedInUrl: existing, linkedinSource: "ai_search" as const });
   }
 
   const emailKey = normalizeEmailKey(contact);
@@ -203,7 +203,7 @@ export async function POST(request: Request): Promise<Response> {
     try {
       const cached = await kv.get<string>(getCachedKey(emailKey));
       if (cached?.trim()) {
-        return Response.json({ linkedInUrl: cached.trim() });
+        return Response.json({ linkedInUrl: cached.trim(), linkedinSource: "ai_search" as const });
       }
     } catch {
       // Best effort cache read.
@@ -287,7 +287,7 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  return Response.json({ linkedInUrl });
+  return Response.json({ linkedInUrl, linkedinSource: "ai_search" as const });
   } catch (err) {
     return Response.json(
       { error: "Internal server error", detail: String(err) },

@@ -1,6 +1,29 @@
 /** List classification after parsing uploaded files */
 export type ListType = "companies" | "contacts" | "unknown";
 
+export type IdentityConfidence = "high" | "medium" | "low" | "unresolved";
+
+export type DomainSource =
+  | "zoominfo_verified"
+  | "hubspot_verified"
+  | "ai_guess"
+  | "csv"
+  | "";
+
+export type LinkedInSource = "hubspot" | "zoominfo" | "commonroom" | "ai_search" | "";
+
+export type ReviewBucket = "trusted" | "needs_review" | "excluded";
+
+export type ExclusionReason =
+  | "international"
+  | "government"
+  | "low_confidence"
+  | "unresolved"
+  | "duplicate"
+  | "incomplete"
+  | "personal_email"
+  | "missing_required_fields";
+
 /** Company list input */
 export interface RawCompanyRow {
   rawName: string;
@@ -30,13 +53,18 @@ export interface EnrichedCompany {
   rawInput: string;
   resolvedName: string;
   confidenceScore: "high" | "medium" | "low" | "unresolved";
+  identityConfidence: IdentityConfidence;
   aiReasoning: string;
   needsReview: boolean;
   domain: string;
+  domainSource: DomainSource;
   website: string;
   state: string;
   numberOfEmployees: number | null;
   linkedinUrl: string;
+  linkedinSource: LinkedInSource;
+  reviewBucket: ReviewBucket;
+  exclusionReason?: ExclusionReason;
   enrichedByZoomInfo: boolean;
   enrichedByCommonRoom: boolean;
   enrichedByAI: boolean;
@@ -61,10 +89,14 @@ export interface EnrichedContact {
   isPersonalEmail: boolean;
   resolvedCompany: string;
   confidenceScore: "high" | "medium" | "low" | "unresolved";
+  identityConfidence: IdentityConfidence;
   aiReasoning: string;
   needsReview: boolean;
   title: string;
   linkedinUrl: string;
+  linkedinSource: LinkedInSource;
+  reviewBucket: ReviewBucket;
+  exclusionReason?: ExclusionReason;
   companyDomain: string;
   location: string;
   leadSource: string;

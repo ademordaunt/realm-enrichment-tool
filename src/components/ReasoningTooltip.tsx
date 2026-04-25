@@ -1,8 +1,17 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
-export function ReasoningTooltip({ text }: { text: string }) {
+type ReasoningTooltipProps = {
+  /** Plain-text fallback when `content` is not provided. */
+  text?: string;
+  /** Rich tooltip body (preferred for structured review copy). */
+  content?: ReactNode;
+};
+
+export function ReasoningTooltip(props: ReasoningTooltipProps) {
+  const { text, content } = props;
   const [hover, setHover] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [coords, setCoords] = useState<{
@@ -53,7 +62,7 @@ export function ReasoningTooltip({ text }: { text: string }) {
       window.removeEventListener("scroll", handler, true);
       window.removeEventListener("resize", handler);
     };
-  }, [visible, updatePosition, text]);
+  }, [visible, updatePosition, text, content]);
 
   return (
     <span
@@ -65,7 +74,7 @@ export function ReasoningTooltip({ text }: { text: string }) {
         ref={buttonRef}
         type="button"
         className="inline-flex cursor-help items-center justify-center rounded p-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-        aria-label="Show AI reasoning"
+        aria-label="Show enrichment details"
         onClick={(e) => {
           e.stopPropagation();
           setPinned((p) => !p);
@@ -75,7 +84,7 @@ export function ReasoningTooltip({ text }: { text: string }) {
       </button>
       {visible && coords ? (
         <div
-          className="z-50 w-64 whitespace-normal wrap-break-word rounded-lg border border-(--border-default) bg-white p-3 text-left text-sm leading-relaxed text-(--text-primary) shadow-lg"
+          className="z-50 w-72 max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal wrap-break-word rounded-lg border border-zinc-200 bg-white p-3 text-left text-sm leading-relaxed text-zinc-900 shadow-xl dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
           style={{
             position: "fixed",
             top: coords.top,
@@ -85,7 +94,7 @@ export function ReasoningTooltip({ text }: { text: string }) {
           }}
           role="tooltip"
         >
-          {text}
+          {content ?? text ?? ""}
         </div>
       ) : null}
     </span>
