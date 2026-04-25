@@ -100,6 +100,7 @@ export async function enrichContactWithCommonRoom(
     result.linkedinUrl = li.startsWith("http")
       ? li
       : `https://www.linkedin.com/${li.replace(/^\//, "")}`;
+    result.linkedinSource = "commonroom";
   }
 
   const emailEntry =

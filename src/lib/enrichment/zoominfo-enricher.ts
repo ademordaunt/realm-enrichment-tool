@@ -3,7 +3,7 @@ import {
   setCachedCompany,
   setCachedContact,
 } from "@/lib/cache/enrichment-cache";
-import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
+import type { EnrichedCompany, EnrichedContact, LinkedInSource } from "@/lib/utils/types";
 import { getZoomInfoToken, invalidateZoomInfoToken } from "@/lib/zoominfo/auth";
 
 /** ZoomInfo partial plus pre-merge confidence (never persisted on EnrichedCompany). */
@@ -186,6 +186,8 @@ export async function enrichCompanyWithZoomInfo(
     const out: Partial<EnrichedCompany> = {};
     if (!company.linkedinUrl?.trim() && cached.linkedinUrl?.trim()) {
       out.linkedinUrl = cached.linkedinUrl.trim();
+      out.linkedinSource = (cached.linkedinSource?.trim() ||
+        "zoominfo") as LinkedInSource;
     }
     if (
       company.numberOfEmployees == null &&
@@ -377,6 +379,7 @@ export async function enrichCompanyWithZoomInfo(
   const out: Partial<EnrichedCompany> = {};
   if (linkedInUrl) {
     out.linkedinUrl = linkedInUrl;
+    out.linkedinSource = "zoominfo" as LinkedInSource;
   }
   if (employeeCount != null) {
     out.numberOfEmployees = employeeCount;
@@ -442,6 +445,8 @@ export async function enrichCompaniesWithZoomInfo(
       const partial: Partial<EnrichedCompany> = {};
       if (!company.linkedinUrl?.trim() && cached.linkedinUrl?.trim()) {
         partial.linkedinUrl = cached.linkedinUrl.trim();
+        partial.linkedinSource = (cached.linkedinSource?.trim() ||
+          "zoominfo") as LinkedInSource;
       }
       if (
         company.numberOfEmployees == null &&
@@ -588,7 +593,10 @@ export async function enrichCompaniesWithZoomInfo(
     const city = typeof attrs.city === "string" ? attrs.city.trim() || null : null;
 
     const partial: Partial<EnrichedCompany> = {};
-    if (linkedInUrl) partial.linkedinUrl = linkedInUrl;
+    if (linkedInUrl) {
+      partial.linkedinUrl = linkedInUrl;
+      partial.linkedinSource = "zoominfo" as LinkedInSource;
+    }
     if (employeeCount != null) partial.numberOfEmployees = employeeCount;
     if (state) partial.state = state;
     if (typeof attrs.website === "string" && attrs.website.trim()) {
@@ -824,7 +832,10 @@ export async function enrichContactWithZoomInfo(
   const t = pickStr(ziTitle, contact.title);
   if (t) out.title = t;
   const li = pickStr(ziLinkedin, contact.linkedinUrl);
-  if (li) out.linkedinUrl = li;
+  if (li) {
+    out.linkedinUrl = li;
+    out.linkedinSource = "zoominfo" as LinkedInSource;
+  }
   const co = pickStr(ziCompany, contact.resolvedCompany);
   if (co) out.resolvedCompany = co;
   const loc = pickStr(locationZi, contact.location);
@@ -1031,7 +1042,10 @@ export async function enrichContactsWithZoomInfo(
     };
     const result: Partial<EnrichedContact> = {};
     if (typeof attrs.jobTitle === "string" && attrs.jobTitle.trim()) result.title = attrs.jobTitle.trim();
-    if (typeof linkedinUrl === "string" && linkedinUrl.trim()) result.linkedinUrl = linkedinUrl.trim();
+    if (typeof linkedinUrl === "string" && linkedinUrl.trim()) {
+      result.linkedinUrl = linkedinUrl.trim();
+      result.linkedinSource = "zoominfo" as LinkedInSource;
+    }
     if (typeof attrs.companyName === "string" && attrs.companyName.trim()) {
       result.resolvedCompany = attrs.companyName.trim();
     }

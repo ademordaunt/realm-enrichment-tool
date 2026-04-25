@@ -2,6 +2,7 @@
 
 import { ConfidenceBadge } from "@/components/ConfidenceBadge";
 import { ReasoningTooltip } from "@/components/ReasoningTooltip";
+import { classifyContactEmailDomain } from "@/lib/utils/contacts";
 import {
   sanitizeCompany,
   sanitizeCompanyName,
@@ -105,19 +106,69 @@ function buildReasoningTooltipContent(
   const liShow = liRaw
     ? `${liRaw.length > 56 ? `${liRaw.slice(0, 56)}…` : liRaw} (${linkedinSourceLabel(liSrc)})`
     : "Not found";
-  const domainLine =
+
+  const presetContactMsg = "All required contact fields were pre-populated.";
+  const identityReasoning =
+    listType === "contacts"
+      ? (() => {
+          const c = row as EnrichedContact;
+          if (c.aiReasoning !== presetContactMsg) return c.aiReasoning;
+          if (!c.enrichedByAI) return presetContactMsg;
+          return "Enrichment used AI; see data sources and fields below.";
+        })()
+      : row.aiReasoning;
+
+  const domainOrEmailLine =
     listType === "companies"
       ? `${(row as EnrichedCompany).domain || "—"} (${domainSourceLabel((row as EnrichedCompany).domainSource)})`
-      : "— (contacts use work email)";
+      : (() => {
+          const c = row as EnrichedContact;
+          const email = c.resolvedEmail?.trim() ?? "";
+          const at = email.indexOf("@");
+          const domain = at >= 0 ? email.slice(at + 1).toLowerCase() : "";
+          const kind = classifyContactEmailDomain(email);
+          const kindLabel =
+            kind === "Invalid" ? "Invalid" : kind === "Work" ? "Work" : kind === "ISP" ? "ISP" : "Personal";
+          return `${domain || "—"} — ${kindLabel}`;
+        })();
+
+  const whyLines: string[] = [];
+  if (row.reviewBucket === "needs_review") {
+    if (listType === "contacts") {
+      const c = row as EnrichedContact;
+      if (!c.hubspotId && !c.enrichedByZoomInfo) {
+        whyLines.push("Not verified: ZoomInfo could not find this contact");
+      }
+    } else {
+      const c = row as EnrichedCompany;
+      if (!c.hubspotId && !c.enrichedByZoomInfo) {
+        whyLines.push("Not verified: ZoomInfo could not find this company");
+      }
+    }
+    if (row.identityConfidence === "medium") {
+      whyLines.push("Medium identity confidence — AI was not certain of this match");
+    }
+  }
+
   return (
     <div className="space-y-2">
       <p>
-        <span className="font-semibold">Identity:</span> {identityLabel(identity)} —{" "}
-        {row.aiReasoning}
+        <span className="font-semibold">Identity:</span> {identityLabel(identity)} — {identityReasoning}
       </p>
       <p>
-        <span className="font-semibold">Domain:</span> {domainLine}
+        <span className="font-semibold">{listType === "contacts" ? "Email domain:" : "Domain:"}</span>{" "}
+        {domainOrEmailLine}
       </p>
+      {whyLines.length > 0 ? (
+        <div>
+          <p className="font-semibold">Why needs review</p>
+          <ul className="list-inside list-disc space-y-0.5">
+            {whyLines.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <p>
         <span className="font-semibold">LinkedIn:</span> {liShow}
       </p>
@@ -679,7 +730,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
 
   useEffect(() => {
     setEditedKeys(new Set());
-    setFilter("all");
   }, [rows, listType]);
 
   const rowsById = useMemo(() => {
@@ -840,16 +890,19 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   );
 
   const { trustedCount, needsReviewCount, excludedCount } = useMemo(() => {
-    let t = 0;
-    let n = 0;
-    let x = 0;
+    let approved = 0;
+    let pending = 0;
+    let skipped = 0;
     for (const r of rows) {
-      const b = r.reviewBucket ?? "needs_review";
-      if (b === "trusted") t++;
-      else if (b === "needs_review") n++;
-      else if (b === "excluded") x++;
+      if (r.status === "approved") approved += 1;
+      else if (r.status === "pending") pending += 1;
+      else if (r.status === "skipped") skipped += 1;
     }
-    return { trustedCount: t, needsReviewCount: n, excludedCount: x };
+    return {
+      trustedCount: approved,
+      needsReviewCount: pending,
+      excludedCount: skipped,
+    };
   }, [rows]);
 
   const approvedCount = useMemo(
@@ -979,6 +1032,24 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
       </div>
 
       <div className="min-w-0 overflow-x-auto rounded-lg border border-(--border-default)">
+        <p className="mb-1.5 flex flex-wrap items-center gap-x-4 gap-y-0.5 px-2 pt-2 text-xs text-(--text-muted)">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-violet-600" aria-hidden />
+            HubSpot
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-blue-600" aria-hidden />
+            ZoomInfo
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-teal-600" aria-hidden />
+            Common Room
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
+            Web search
+          </span>
+        </p>
         <table className="min-w-full border-separate border-spacing-0 text-left text-xs sm:text-sm">
           <thead className="bg-(--bg-muted) text-(--text-secondary) text-sm font-semibold">
             {listType === "companies" ? (
@@ -1128,7 +1199,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             markEdited(row.id, "linkedinUrl");
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
-                                r.id === row.id ? { ...r, linkedinUrl: v } : r,
+                                r.id === row.id ? { ...r, linkedinUrl: v, linkedinSource: "" } : r,
                               ),
                             );
                           }}
@@ -1269,7 +1340,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             const next = sanitizeUnknown(v);
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
-                                r.id === row.id ? { ...r, linkedinUrl: next } : r,
+                                r.id === row.id
+                                  ? { ...r, linkedinUrl: next, linkedinSource: "" }
+                                  : r,
                               ),
                             );
                           }}

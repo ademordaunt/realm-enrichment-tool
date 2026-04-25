@@ -27,12 +27,26 @@ function linkedinSourceForCompanyUrl(
   ai: EnrichedCompany,
   zi: Partial<EnrichedCompany>,
   commonroom: Partial<EnrichedCompany>,
+  isHighConfidence: boolean,
 ): EnrichedCompany["linkedinSource"] {
   const u = mergedUrl.trim();
   if (!u) return "";
+  const inferAi = (): EnrichedCompany["linkedinSource"] =>
+    ai.linkedinSource?.trim()
+      ? ai.linkedinSource
+      : ai.enrichedByAI
+        ? "ai_search"
+        : "";
+
+  if (isHighConfidence) {
+    if (ai.linkedinUrl?.trim() === u) return inferAi();
+    if (zi.linkedinUrl?.trim() === u) return "zoominfo";
+    if (commonroom.linkedinUrl?.trim() === u) return "commonroom";
+    return "";
+  }
   if (zi.linkedinUrl?.trim() === u) return "zoominfo";
+  if (ai.linkedinUrl?.trim() === u) return inferAi();
   if (commonroom.linkedinUrl?.trim() === u) return "commonroom";
-  if (ai.linkedinUrl?.trim() === u) return ai.linkedinSource || "";
   return "";
 }
 
@@ -107,6 +121,7 @@ export function mergeEnrichedCompany(
     ai,
     zi,
     commonroom,
+    isHighConfidence,
   );
 
   merged.identityConfidence = merged.confidenceScore;
@@ -138,10 +153,17 @@ function linkedinSourceForContactUrl(
 ): EnrichedContact["linkedinSource"] {
   const u = mergedUrl.trim();
   if (!u) return "";
+  const inferAi = (): EnrichedContact["linkedinSource"] =>
+    ai.linkedinSource?.trim()
+      ? ai.linkedinSource
+      : ai.enrichedByAI
+        ? "ai_search"
+        : "";
+
   if (commonroom.linkedinUrl?.trim() === u) return "commonroom";
   if (prospector?.linkedinUrl?.trim() === u) return "zoominfo";
+  if (ai.linkedinUrl?.trim() === u) return inferAi();
   if (zoominfo.linkedinUrl?.trim() === u) return "zoominfo";
-  if (ai.linkedinUrl?.trim() === u) return ai.linkedinSource || "";
   return "";
 }
 

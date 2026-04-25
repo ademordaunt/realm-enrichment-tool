@@ -488,7 +488,7 @@ export function PrePushScreen({
                           <PrePushEditableCell
                             value={row.linkedinUrl}
                             breakAll
-                            onSave={(v) => patchContact(row.id, { linkedinUrl: v })}
+                            onSave={(v) => patchContact(row.id, { linkedinUrl: v, linkedinSource: "" })}
                           />
                         </td>
                         <td className="align-middle px-3 py-2 text-zinc-800 dark:text-zinc-200">

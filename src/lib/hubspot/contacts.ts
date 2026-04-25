@@ -218,6 +218,14 @@ function errorMessageForBatchIndex(
   return fallback;
 }
 
+/** HubSpot batch create sometimes returns per-index errors like "Contact already exists. Existing ID: 123". */
+function parseHubSpotDuplicateExistingId(message: string): string | null {
+  const m = message.match(
+    /\b(?:Contact|Company) already exists\.?\s*Existing ID:\s*(\d+)\b/i,
+  );
+  return m?.[1]?.trim() ?? null;
+}
+
 /**
  * Emails (normalized) → HubSpot id; same search pattern as precheck, 100 / chunk, 200ms between chunks.
  */
@@ -268,6 +276,7 @@ export async function batchCreateContacts(
       continue;
     }
     const body = (await res.json()) as HubspotBatchCrmResponse;
+    const toUpdate: Array<{ id: string; contact: EnrichedContact }> = [];
     for (let j = 0; j < chunk.length; j++) {
       const r = body.results?.[j];
       const id = r?.id != null ? String(r.id) : null;
@@ -276,15 +285,23 @@ export async function batchCreateContacts(
         success.push({ id, resolvedEmail: row.resolvedEmail, rowId: row.id });
       } else {
         const row = chunk[j]!;
-        rowErrors.push({
-          rowId: row.id,
-          error: errorMessageForBatchIndex(
-            body,
-            j,
-            "HubSpot batch create returned no id for this row.",
-          ),
-        });
+        const msg = errorMessageForBatchIndex(
+          body,
+          j,
+          "HubSpot batch create returned no id for this row.",
+        );
+        const existingId = parseHubSpotDuplicateExistingId(msg);
+        if (existingId) {
+          toUpdate.push({ id: existingId, contact: row });
+        } else {
+          rowErrors.push({ rowId: row.id, error: msg });
+        }
       }
+    }
+    if (toUpdate.length > 0) {
+      const upd = await batchUpdateContacts(toUpdate, resolveExtras);
+      success.push(...upd.success);
+      rowErrors.push(...upd.rowErrors);
     }
     onAfterChunk?.(chunk.length);
   }

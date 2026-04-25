@@ -22,6 +22,17 @@ const BATCH_SIZE = ENRICHMENT_BATCH_SIZE;
 
 export const COMPANY_MODEL = "claude-sonnet-4-6" as const;
 
+/** Old cache rows may have `linkedinUrl` without `linkedinSource`; infer from enrichment flags. */
+function withInferredLinkedinSource<T extends EnrichedCompany | EnrichedContact>(cached: T): T {
+  const url = cached.linkedinUrl?.trim();
+  const src = cached.linkedinSource?.trim();
+  if (!url || src) return cached;
+  if (cached.enrichedByZoomInfo) return { ...cached, linkedinSource: "zoominfo" };
+  if (cached.enrichedByCommonRoom) return { ...cached, linkedinSource: "commonroom" };
+  if (cached.enrichedByAI) return { ...cached, linkedinSource: "ai_search" };
+  return cached;
+}
+
 export function needsLinkedInLookup(contact: EnrichedContact): boolean {
   return !String(contact.linkedinUrl ?? "").trim();
 }
@@ -372,11 +383,13 @@ function mapPresetContactRow(
     resolvedCompany: company,
     confidenceScore: "high",
     identityConfidence: "high",
-    aiReasoning: "All required contact fields were pre-populated.",
+    aiReasoning: linkedInFromAi
+      ? "LinkedIn profile URL was resolved using AI web search."
+      : "All required contact fields were pre-populated.",
     needsReview: false,
     title: row.title?.trim() ?? "",
     linkedinUrl: linkedInUrl,
-    linkedinSource: "",
+    linkedinSource: linkedInUrl && linkedInFromAi ? "ai_search" : "",
     reviewBucket: "needs_review",
     companyDomain: "",
     location: row.location?.trim() ?? "",
@@ -514,10 +527,10 @@ async function resolveCompanyBatchFromKv(batch: RawCompanyRow[]): Promise<{
     if (cached) {
       console.log("[Cache] HIT for company at batch index", i);
       const rowId = (row as { id?: string }).id;
-      partial[i] = {
+      partial[i] = withInferredLinkedinSource({
         ...cached,
         id: typeof rowId === "string" && rowId ? rowId : cached.id,
-      };
+      });
     } else {
       toEnrich.push(row);
       enrichPositions.push(i);
@@ -595,10 +608,10 @@ async function resolveContactBatchFromKv(batch: RawContactRow[]): Promise<{
     if (cached) {
       console.log("[Cache] HIT for contact at batch index", i);
       const rowId = (row as { id?: string }).id;
-      partial[i] = {
+      partial[i] = withInferredLinkedinSource({
         ...cached,
         id: typeof rowId === "string" && rowId ? rowId : cached.id,
-      };
+      });
     } else {
       toEnrich.push(row);
       enrichPositions.push(i);

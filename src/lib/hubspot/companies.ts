@@ -342,6 +342,13 @@ function errorMessageForBatchIndex(
   return fallback;
 }
 
+function parseHubSpotDuplicateExistingId(message: string): string | null {
+  const m = message.match(
+    /\b(?:Contact|Company) already exists\.?\s*Existing ID:\s*(\d+)\b/i,
+  );
+  return m?.[1]?.trim() ?? null;
+}
+
 /**
  * All domains in HubSpot (normalized) → record id, queried in 100-domain chunks with 200ms gaps.
  * Reuses the same /search IN pattern as precheck; safe for 1k+ domains.
@@ -398,6 +405,7 @@ export async function batchCreateCompanies(
       continue;
     }
     const body = (await res.json()) as HubspotBatchCrmResponse;
+    const toUpdate: Array<{ id: string; company: EnrichedCompany }> = [];
     for (let j = 0; j < chunk.length; j++) {
       const r = body.results?.[j];
       const id = r?.id != null ? String(r.id) : null;
@@ -406,15 +414,23 @@ export async function batchCreateCompanies(
         success.push({ id, rawInput: row.rawInput, rowId: row.id });
       } else {
         const row = chunk[j]!;
-        rowErrors.push({
-          rowId: row.id,
-          error: errorMessageForBatchIndex(
-            body,
-            j,
-            "HubSpot batch create returned no id for this row.",
-          ),
-        });
+        const msg = errorMessageForBatchIndex(
+          body,
+          j,
+          "HubSpot batch create returned no id for this row.",
+        );
+        const existingId = parseHubSpotDuplicateExistingId(msg);
+        if (existingId) {
+          toUpdate.push({ id: existingId, company: row });
+        } else {
+          rowErrors.push({ rowId: row.id, error: msg });
+        }
       }
+    }
+    if (toUpdate.length > 0) {
+      const upd = await batchUpdateCompanies(toUpdate, extras);
+      success.push(...upd.success);
+      rowErrors.push(...upd.rowErrors);
     }
     onAfterChunk?.(chunk.length);
   }

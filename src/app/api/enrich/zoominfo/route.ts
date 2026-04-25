@@ -191,6 +191,7 @@ export async function POST(request: Request): Promise<Response> {
                   prospectorPartial = {
                     title: pr.title,
                     linkedinUrl: pr.linkedInUrl,
+                    linkedinSource: "zoominfo",
                     location: pr.location,
                   };
                 }
