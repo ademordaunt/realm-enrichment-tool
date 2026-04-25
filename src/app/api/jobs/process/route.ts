@@ -426,7 +426,16 @@ async function handler(req: Request): Promise<Response> {
       jobState.listType === "companies"
         ? finalizeRowsForReview(allRows as EnrichedCompany[], "companies")
         : finalizeRowsForReview(allRows as EnrichedContact[], "contacts");
-    await persistRowsByAiChunks(jobId, finalized);
+    const withLinkedInSourceFallback = finalized.map((row) => {
+      if (row.linkedinUrl?.trim() && !row.linkedinSource?.trim()) {
+        return { ...row, linkedinSource: "ai_search" as const };
+      }
+      return row;
+    });
+    await persistRowsByAiChunks(jobId, withLinkedInSourceFallback);
+    jobState.linkedInFromAiCount = withLinkedInSourceFallback.filter(
+      (r) => r.linkedinSource === "ai_search",
+    ).length;
 
     jobState.linkedInComplete = true;
     jobState.currentPhase = "complete";

@@ -123,8 +123,6 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
     }
   }, [listType, working]);
 
-  const recordLabel = listType === "companies" ? "companies" : "contacts";
-
   const handleContinue = () => {
     onContinue(working);
   };
@@ -157,9 +155,6 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
     <div className="mx-auto flex w-full max-w-xl flex-col gap-6 py-10">
       <div className={cardClass}>
         <h1 className="text-lg font-semibold text-(--realm-navy) sm:text-xl">Pre-Review</h1>
-        <p className="mt-2 text-sm text-(--text-muted)">
-          {working.length} {recordLabel} will be reviewed
-        </p>
         {enrichmentSummary ? (
           <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100">
             <p className="font-semibold">Enrichment Complete ✓</p>
@@ -167,7 +162,7 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
               <p>Records processed:      {enrichmentSummary.totalRows}</p>
               <p>Found in HubSpot:       {enrichmentSummary.hubspotFound}</p>
               <p>ZoomInfo credits used:   {enrichmentSummary.creditsUsed}</p>
-              <p>LinkedIn URLs found:    {enrichmentSummary.linkedInFound}</p>
+              <p>LinkedIn URLs found from AI: {enrichmentSummary.linkedInFound}</p>
               <p>Total time:             {enrichmentSummary.elapsedMinutes} min</p>
             </div>
             <hr className="my-3 border-emerald-300/60 dark:border-emerald-700/60" />

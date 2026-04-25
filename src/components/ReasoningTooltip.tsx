@@ -8,10 +8,14 @@ type ReasoningTooltipProps = {
   text?: string;
   /** Rich tooltip body (preferred for structured review copy). */
   content?: ReactNode;
+  /** Optional custom trigger content. */
+  trigger?: ReactNode;
+  triggerClassName?: string;
+  triggerAriaLabel?: string;
 };
 
 export function ReasoningTooltip(props: ReasoningTooltipProps) {
-  const { text, content } = props;
+  const { text, content, trigger, triggerClassName, triggerAriaLabel } = props;
   const [hover, setHover] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [coords, setCoords] = useState<{
@@ -73,18 +77,21 @@ export function ReasoningTooltip(props: ReasoningTooltipProps) {
       <button
         ref={buttonRef}
         type="button"
-        className="inline-flex cursor-help items-center justify-center rounded p-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-        aria-label="Show enrichment details"
+        className={
+          triggerClassName ??
+          "inline-flex cursor-help items-center justify-center rounded p-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+        }
+        aria-label={triggerAriaLabel ?? "Show enrichment details"}
         onClick={(e) => {
           e.stopPropagation();
           setPinned((p) => !p);
         }}
       >
-        <span aria-hidden>ℹ️</span>
+        {trigger ?? <span aria-hidden>ℹ️</span>}
       </button>
       {visible && coords ? (
         <div
-          className="z-50 w-72 max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal wrap-break-word rounded-lg border border-zinc-200 bg-white p-3 text-left text-sm leading-relaxed text-zinc-900 shadow-xl dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+          className="z-60 w-72 max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal wrap-break-word rounded-lg border border-zinc-200 bg-white opacity-100 p-3 text-left text-sm leading-relaxed text-zinc-900 shadow-xl"
           style={{
             position: "fixed",
             top: coords.top,

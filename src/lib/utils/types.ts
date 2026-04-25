@@ -149,6 +149,7 @@ export interface BulkJobState {
   cachedCount: number;
   hubspotSkippedCount: number;
   creditsUsed: number;
+  linkedInFromAiCount?: number;
   checkpointChunk: number;
   totalAiChunks: number;
   totalZoomChunks: number;

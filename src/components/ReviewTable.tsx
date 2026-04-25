@@ -12,7 +12,6 @@ import {
 } from "@/lib/utils/sanitize";
 import { expandStateAbbreviation, STATE_REGION_OPTIONS } from "@/lib/utils/states";
 import type {
-  DomainSource,
   EnrichedCompany,
   EnrichedContact,
   ExclusionReason,
@@ -32,36 +31,6 @@ export interface ReviewTableProps {
 function identityLabel(ic: string): string {
   const u = ic.charAt(0).toUpperCase() + ic.slice(1);
   return u === "Unresolved" ? "Unresolved" : u;
-}
-
-function domainSourceLabel(s: DomainSource | undefined): string {
-  switch (s) {
-    case "zoominfo_verified":
-      return "ZoomInfo verified";
-    case "hubspot_verified":
-      return "HubSpot verified";
-    case "ai_guess":
-      return "AI guess";
-    case "csv":
-      return "CSV import";
-    default:
-      return "Not set";
-  }
-}
-
-function linkedinSourceLabel(s: LinkedInSource | undefined): string {
-  switch (s) {
-    case "hubspot":
-      return "HubSpot";
-    case "zoominfo":
-      return "ZoomInfo";
-    case "commonroom":
-      return "Common Room";
-    case "ai_search":
-      return "Web search — verify";
-    default:
-      return "Not set";
-  }
 }
 
 function linkedinSourceLegendLabel(s: LinkedInSource | undefined): string {
@@ -118,142 +87,143 @@ function buildReasoningTooltipContent(
   const confidenceText = `${identityLabel(identity)} confidence`;
   const bucket = row.reviewBucket ?? "needs_review";
   const linkedInValue = row.linkedinUrl?.trim() ?? "";
-  const linkedInSourceText = linkedInValue
-    ? `${linkedinSourceLegendLabel(row.linkedinSource)}`
-    : "Not found";
-  const otherDataSource = dataSourceLine(row);
-  const fullName =
-    listType === "companies"
-      ? sanitizeUnknown((row as EnrichedCompany).resolvedName || (row as EnrichedCompany).rawInput) || "Record"
-      : formatContactFullName(row as EnrichedContact) || "Record";
-  const company =
-    listType === "companies"
-      ? sanitizeUnknown((row as EnrichedCompany).resolvedName || (row as EnrichedCompany).rawInput)
-      : sanitizeCompanyName((row as EnrichedContact).resolvedCompany);
-  const title = listType === "contacts" ? sanitizeUnknown((row as EnrichedContact).title) : "";
-  const verifiedLine = listType === "contacts"
-    ? `Verified as ${fullName}${title ? `, ${title}` : ""}${company ? ` at ${company}` : ""} — ${confidenceText}`
-    : `Verified as ${fullName}${title ? `, ${title}` : ""}${company ? ` at ${company}` : ""} — ${confidenceText}`;
+  const linkedInLabel = linkedInValue ? linkedinSourceLegendLabel(row.linkedinSource) : "Not found ⚠️";
+  const identitySource = row.hubspotId ? "HubSpot ✓" : row.enrichedByZoomInfo ? "ZoomInfo ✓" : "Unknown";
+  const otherData = dataSourceLine(row);
 
-  const contactMissingCompany =
-    listType === "contacts" && !sanitizeCompanyName((row as EnrichedContact).resolvedCompany);
-  const companyMissingDomain =
-    listType === "companies" && !(row as EnrichedCompany).domain?.trim();
+  const company = listType === "companies" ? (row as EnrichedCompany) : null;
+  const contact = listType === "contacts" ? (row as EnrichedContact) : null;
+  const companyMissingDomain = Boolean(company && !company.domain?.trim());
+  const contactMissingCompany = Boolean(contact && !sanitizeCompanyName(contact.resolvedCompany));
+
+  const displayName =
+    listType === "companies"
+      ? sanitizeUnknown(company?.resolvedName || company?.rawInput) || "Record"
+      : formatContactFullName(contact as EnrichedContact) || "Record";
+
+  const identityLine =
+    listType === "companies"
+      ? `Verified as ${displayName} (${company?.domain?.trim() || "—"}) — ${confidenceText}`
+      : (() => {
+          const fn = sanitizeUnknown(contact?.firstName);
+          const ln = sanitizeUnknown(contact?.lastName);
+          const title = sanitizeUnknown(contact?.title);
+          const co = sanitizeCompanyName(contact?.resolvedCompany);
+          const person = [fn, ln].filter(Boolean).join(" ").trim() || "Record";
+          if (title && co) return `Verified as ${person}, ${title} at ${co} — ${confidenceText}`;
+          if (!title && co) return `Verified as ${person} at ${co} — ${confidenceText}`;
+          if (title && !co) return `Verified as ${person}, ${title} — ${confidenceText}`;
+          return `Verified as ${person} — ${confidenceText}`;
+        })();
+
+  const sourceBlock = (
+    <div>
+      <p className="font-semibold">Sources:</p>
+      <p>Identity    {identitySource}</p>
+      <p>LinkedIn    {linkedInLabel}</p>
+      <p>Other data  {otherData}</p>
+    </div>
+  );
+
+  const missingLines: string[] = [];
+  if (contactMissingCompany) missingLines.push("⚠️ Company name — search LinkedIn or Google");
+  if (companyMissingDomain) missingLines.push("⚠️ Domain — needed for HubSpot matching");
+
+  const needsReviewLines: string[] = [];
+  if (row.linkedinSource === "ai_search") {
+    needsReviewLines.push("⚠️ LinkedIn — came from web search, verify before trusting");
+  }
+  if (!row.hubspotId && !row.enrichedByZoomInfo) {
+    needsReviewLines.push("⚠️ Not verified by HubSpot or ZoomInfo");
+  }
+  if (row.identityConfidence === "medium") {
+    needsReviewLines.push("⚠️ AI was not certain of this match");
+  }
+
+  const excludedLines: string[] = [];
+  if (row.exclusionReason === "personal_email" && contact) {
+    const email = (contact.resolvedEmail ?? "").trim();
+    const domain = email.includes("@") ? email.split("@")[1]?.toLowerCase() ?? "" : "";
+    const kind = classifyContactEmailDomain(email);
+    excludedLines.push(
+      kind === "ISP"
+        ? `⚠️ Personal email — flagged as ISP address, ${domain || "unknown domain"}`
+        : `⚠️ Personal email — flagged as personal address, ${domain || "unknown domain"}`,
+    );
+  }
+  if (row.exclusionReason === "international") {
+    excludedLines.push("⚠️ International company — outside ICP");
+  }
+  if (row.exclusionReason === "government") {
+    excludedLines.push("⚠️ Government entity — outside ICP");
+  }
+  if (row.exclusionReason === "low_confidence") {
+    excludedLines.push("⚠️ Low confidence — AI was not certain who this is");
+  }
+  if (row.exclusionReason === "unresolved") {
+    excludedLines.push("⚠️ Unresolved — AI could not identify this record");
+  }
+  if (row.exclusionReason === "missing_required_fields") {
+    const missing: string[] = [];
+    if (contact) {
+      if (!sanitizeCompanyName(contact.resolvedCompany)) missing.push("company");
+      if (!sanitizeUnknown(contact.title)) missing.push("title");
+      if (!sanitizeUnknown(contact.linkedinUrl)) missing.push("LinkedIn profile");
+    } else if (company) {
+      if (!sanitizeUnknown(company.resolvedName)) missing.push("company name");
+      if (!sanitizeUnknown(company.domain)) missing.push("domain");
+    }
+    excludedLines.push(`⚠️ Missing required fields — ${missing.join(", ") || "required fields"}`);
+  }
+  if (row.linkedinSource === "ai_search") {
+    excludedLines.push("⚠️ LinkedIn — came from web search, verify before trusting");
+  }
 
   if (bucket === "excluded") {
-    let reason = "Excluded from review.";
-    const exclusion = row.exclusionReason;
-    if (exclusion === "personal_email" && listType === "contacts") {
-      const email = ((row as EnrichedContact).resolvedEmail ?? "").trim();
-      const domain = email.includes("@") ? email.split("@")[1]?.toLowerCase() ?? "" : "";
-      const kind = classifyContactEmailDomain(email);
-      reason =
-        kind === "ISP"
-          ? `Personal email — flagged as ISP email address, ${domain || "unknown domain"}`
-          : `Personal email — ${domain || "unknown domain"}`;
-    } else if (exclusion === "international") {
-      reason = "International company — outside ICP";
-    } else if (exclusion === "government") {
-      reason = "Government entity — outside ICP";
-    } else if (exclusion === "low_confidence") {
-      reason = "Low identity confidence — AI was not certain who this is";
-    } else if (exclusion === "unresolved") {
-      reason = "Unresolved — AI could not identify this record";
-    } else if (exclusion === "missing_required_fields") {
-      const missing: string[] = [];
-      if (listType === "contacts") {
-        const c = row as EnrichedContact;
-        if (!sanitizeCompanyName(c.resolvedCompany)) missing.push("company");
-        if (!sanitizeUnknown(c.title)) missing.push("title");
-        if (!sanitizeUnknown(c.linkedinUrl)) missing.push("LinkedIn profile");
-      } else {
-        const c = row as EnrichedCompany;
-        if (!sanitizeUnknown(c.resolvedName)) missing.push("company name");
-        if (!sanitizeUnknown(c.domain)) missing.push("domain");
-      }
-      reason = `Missing required fields — ${missing.join(", ") || "required fields"}`;
-    }
     return (
       <div className="space-y-2">
-        <p className="font-semibold">✗ {fullName} — Excluded</p>
-        <p>
-          <span className="font-semibold">✗ {reason}</span>
-        </p>
-        {linkedInValue ? (
-          <p>
-            <span className="font-semibold">Sources:</span> LinkedIn {linkedInSourceText}
-          </p>
-        ) : null}
-        <p>✓ Check row checkbox to override &amp; include</p>
+        <p className="font-semibold">✗ {displayName} — Excluded</p>
+        <p>{identityLine}</p>
+        {excludedLines.map((line, idx) => (
+          <p key={idx}>{line}</p>
+        ))}
+        {sourceBlock}
+        <p>Check row checkbox to override &amp; include</p>
       </div>
     );
   }
 
   if (bucket === "needs_review") {
-    const reviewFor: string[] = [];
-    if (row.linkedinSource === "ai_search") {
-      reviewFor.push("⚠️ LinkedIn — came from web search, verify before trusting");
-    }
-    if (!row.hubspotId && !row.enrichedByZoomInfo) {
-      reviewFor.push("⚠️ Not verified by HubSpot or ZoomInfo");
-    }
-    if (row.identityConfidence === "medium") {
-      reviewFor.push("⚠️ AI was not certain of this match");
-    }
     return (
       <div className="space-y-2">
-        <p className="font-semibold">⚠️ {fullName} — Needs Review</p>
-        <p>{verifiedLine}</p>
-        {reviewFor.length > 0 ? (
-          <div>
-            <p className="font-semibold">Review for:</p>
-            <ul className="list-inside list-disc space-y-0.5">
-              {reviewFor.map((line, idx) => (
-                <li key={idx}>{line}</li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
-        <div>
-          <p className="font-semibold">Sources:</p>
-          <p>Identity {row.hubspotId ? "HubSpot ✓" : row.enrichedByZoomInfo ? "ZoomInfo ✓" : "Unknown"}</p>
-          <p>LinkedIn {linkedInSourceText}</p>
-          <p>Other data {otherDataSource}</p>
-        </div>
+        <p className="font-semibold">⚠️ {displayName} — Needs Review</p>
+        <p>{identityLine}</p>
+        {needsReviewLines.map((line, idx) => (
+          <p key={idx}>{line}</p>
+        ))}
+        {sourceBlock}
       </div>
     );
   }
 
-  if (contactMissingCompany || companyMissingDomain) {
+  if (missingLines.length > 0) {
     return (
       <div className="space-y-2">
-        <p className="font-semibold">~ {fullName} — Trusted but missing data</p>
-        <p>{`Verified as ${fullName}${title ? `, ${title}` : ""} — ${confidenceText}`}</p>
-        <div>
-          <p className="font-semibold">Missing:</p>
-          {contactMissingCompany ? <p>⚠️ Company name — search LinkedIn or Google</p> : null}
-          {companyMissingDomain ? <p>⚠️ Domain — needed for HubSpot matching</p> : null}
-        </div>
-        <div>
-          <p className="font-semibold">Sources:</p>
-          <p>Identity {row.hubspotId ? "HubSpot ✓" : row.enrichedByZoomInfo ? "ZoomInfo ✓" : "Unknown"}</p>
-          <p>LinkedIn {linkedInSourceText}</p>
-          <p>Other data {otherDataSource}</p>
-        </div>
+        <p className="font-semibold">~ {displayName} — Trusted but missing data</p>
+        <p>{identityLine}</p>
+        {missingLines.map((line, idx) => (
+          <p key={idx}>{line}</p>
+        ))}
+        {sourceBlock}
       </div>
     );
   }
 
   return (
     <div className="space-y-2">
-      <p className="font-semibold">✓ {fullName} — Trusted</p>
-      <p>{verifiedLine}</p>
-      <div>
-        <p className="font-semibold">Sources:</p>
-        <p>Identity {row.hubspotId ? "HubSpot ✓" : row.enrichedByZoomInfo ? "ZoomInfo ✓" : "Unknown"}</p>
-        <p>LinkedIn {linkedInSourceText}</p>
-        <p>Other data {otherDataSource}</p>
-      </div>
+      <p className="font-semibold">✓ {displayName} — Trusted</p>
+      <p>{identityLine}</p>
+      {sourceBlock}
     </div>
   );
 }
@@ -1133,6 +1103,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           </p>
                         </div>
                       }
+                      trigger={
+                        <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-gray-400 text-[9px] text-gray-500 cursor-help">
+                          ?
+                        </span>
+                      }
+                      triggerAriaLabel="LinkedIn source legend"
                     />
                   </span>
                 </th>
@@ -1176,6 +1152,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           </p>
                         </div>
                       }
+                      trigger={
+                        <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-gray-400 text-[9px] text-gray-500 cursor-help">
+                          ?
+                        </span>
+                      }
+                      triggerAriaLabel="LinkedIn source legend"
                     />
                   </span>
                 </th>

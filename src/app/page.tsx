@@ -968,14 +968,18 @@ export default function Home() {
   }, [clearSessionSnapshot]);
 
   const advanceToReview = useCallback(
-    (rows: EnrichedCompany[] | EnrichedContact[], listType: "companies" | "contacts") => {
+    (
+      rows: EnrichedCompany[] | EnrichedContact[],
+      listType: "companies" | "contacts",
+      options?: { forcePreReview?: boolean },
+    ) => {
       const finalized =
         listType === "companies"
           ? finalizeRowsForReview(rows as EnrichedCompany[], "companies")
           : finalizeRowsForReview(rows as EnrichedContact[], "contacts");
       setEnriched(finalized);
       setEnrichedListType(listType);
-      if (shouldOpenPreReviewGate(listType, finalized)) {
+      if (options?.forcePreReview || shouldOpenPreReviewGate(listType, finalized)) {
         setStep("prereview");
       } else {
         setStep("enriched");
@@ -1448,7 +1452,15 @@ export default function Home() {
       }
     }
 
-    const linkedInFoundCount = finalRows.filter((r) => Boolean(r.linkedinUrl?.trim())).length;
+    const withLinkedInSourceFallback = finalRows.map((row) => {
+      if (row.linkedinUrl?.trim() && !row.linkedinSource?.trim()) {
+        return { ...row, linkedinSource: "ai_search" as const };
+      }
+      return row;
+    }) as EnrichedCompany[] | EnrichedContact[];
+    const linkedInFoundCount = withLinkedInSourceFallback.filter(
+      (r) => r.linkedinSource === "ai_search",
+    ).length;
     const elapsedMinutes = Math.round((Date.now() - context.enrichmentStartTime) / 60000);
     setEventEnrichmentSummary({
       totalRows: context.totalRows,
@@ -1458,7 +1470,7 @@ export default function Home() {
       elapsedMinutes,
     });
 
-    advanceToReview(finalRows, listType);
+    advanceToReview(withLinkedInSourceFallback, listType, { forcePreReview: true });
     fireEnrichmentCompleteNotification();
     if (
       typeof window !== "undefined" &&
@@ -2588,41 +2600,6 @@ export default function Home() {
               >
                 ZoomInfo: credentials not configured
               </div>
-            ) : null}
-            {zoomInfoVerifySummary?.kind === "success" ? (
-              <p
-                className="mt-3 rounded-lg border border-(--border-default) bg-(--bg-muted) px-4 py-2 text-sm text-(--text-primary)"
-                role="status"
-              >
-                {(() => {
-                  const label =
-                    zoomInfoVerifySummary.listType === "companies" ? "companies" : "contacts";
-                  if (
-                    zoomInfoVerifySummary.enrichedCount > 0 &&
-                    zoomInfoVerifySummary.cachedCount === 0
-                  ) {
-                    return `✓ ZoomInfo enriched ${zoomInfoVerifySummary.enrichedCount} ${label}, ~${zoomInfoVerifySummary.creditsUsed} credits used`;
-                  }
-                  if (
-                    zoomInfoVerifySummary.cachedCount > 0 &&
-                    zoomInfoVerifySummary.enrichedCount === 0
-                  ) {
-                    return `✓ ZoomInfo: all ${zoomInfoVerifySummary.cachedCount} ${label} served from cache, 0 credits used`;
-                  }
-                  if (
-                    zoomInfoVerifySummary.enrichedCount > 0 &&
-                    zoomInfoVerifySummary.cachedCount > 0
-                  ) {
-                    return `✓ ZoomInfo enriched ${zoomInfoVerifySummary.enrichedCount} ${label} (~${zoomInfoVerifySummary.creditsUsed} credits), ${zoomInfoVerifySummary.cachedCount} from cache`;
-                  }
-                  return "✓ ZoomInfo searched, no matches found, 0 credits used";
-                })()}
-              </p>
-            ) : null}
-            {zoomInfoVerifySummary?.kind === "no_matches" ? (
-              <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">
-                ✓ ZoomInfo searched, no matches found, 0 credits used
-              </p>
             ) : null}
             <div className="mt-4">
               <ReviewTable

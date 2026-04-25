@@ -197,6 +197,10 @@ export function BulkProgressScreen({
             <dd className="tabular-nums">{jobState.creditsUsed}</dd>
           </div>
           <div className="flex justify-between gap-4">
+            <dt className="text-(--text-muted)">LinkedIn URLs from AI</dt>
+            <dd className="tabular-nums">{jobState.linkedInFromAiCount ?? 0}</dd>
+          </div>
+          <div className="flex justify-between gap-4">
             <dt className="text-(--text-muted)">Total time</dt>
             <dd className="tabular-nums">{totalTime}</dd>
           </div>
