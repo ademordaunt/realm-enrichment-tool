@@ -305,6 +305,14 @@ type ZoomInfoVerifySummary =
   | { kind: "no_matches" }
   | { kind: "credentials" };
 
+type EventEnrichmentSummary = {
+  totalRows: number;
+  hubspotFound: number;
+  creditsUsed: number;
+  linkedInFound: number;
+  elapsedMinutes: number;
+};
+
 type HubSpotPrecheckItem = {
   id: string;
   hubspotId: string | null;
@@ -804,6 +812,9 @@ export default function Home() {
   const [zoomInfoVerifySummary, setZoomInfoVerifySummary] = useState<ZoomInfoVerifySummary | null>(
     null,
   );
+  const [eventEnrichmentSummary, setEventEnrichmentSummary] = useState<EventEnrichmentSummary | null>(
+    null,
+  );
   const [result, setResult] = useState<ParseResponse | null>(null);
   const [listOverride, setListOverride] = useState<"companies" | "contacts" | null>(null);
   const [segmentIndex, setSegmentIndex] = useState(0);
@@ -1258,7 +1269,7 @@ export default function Home() {
     aiRows: EnrichedCompany[] | EnrichedContact[],
     listType: "companies" | "contacts",
     signal?: AbortSignal,
-  ): Promise<EnrichedCompany[] | EnrichedContact[]> => {
+  ): Promise<{ rows: EnrichedCompany[] | EnrichedContact[]; creditsUsed: number }> => {
     setStep("verifying");
     const totalRows = aiRows.length;
     const listLabel = listType === "contacts" ? "contacts" : "companies";
@@ -1270,7 +1281,7 @@ export default function Home() {
     });
     if (totalRows === 0) {
       setZoomInfoVerifySummary({ kind: "no_matches" });
-      return [];
+      return { rows: [], creditsUsed: 0 };
     }
 
     const nonHighTotal = computeZoomVerifyNonHighTotal(aiRows, listType);
@@ -1345,17 +1356,24 @@ export default function Home() {
           }
         : { kind: "no_matches" },
     );
-    return merged as EnrichedCompany[] | EnrichedContact[];
+    return {
+      rows: merged as EnrichedCompany[] | EnrichedContact[],
+      creditsUsed: sumCredits,
+    };
   };
 
   const runZoomVerifyAndLinkedInTail = async (
     rowsAfterPrecheck: EnrichedCompany[] | EnrichedContact[],
     listType: "companies" | "contacts",
     signal: AbortSignal,
+    context: { totalRows: number; hubspotFound: number; enrichmentStartTime: number },
   ): Promise<void> => {
     let rowsAfterVerify: EnrichedCompany[] | EnrichedContact[] = rowsAfterPrecheck;
+    let zoomCreditsUsed = 0;
     try {
-      rowsAfterVerify = await runZoomVerify(rowsAfterPrecheck, listType, signal);
+      const verify = await runZoomVerify(rowsAfterPrecheck, listType, signal);
+      rowsAfterVerify = verify.rows;
+      zoomCreditsUsed = verify.creditsUsed;
     } catch (verifyErr) {
       if (verifyErr instanceof Error && verifyErr.name === "AbortError") {
         setStep("context");
@@ -1429,6 +1447,16 @@ export default function Home() {
         );
       }
     }
+
+    const linkedInFoundCount = finalRows.filter((r) => Boolean(r.linkedinUrl?.trim())).length;
+    const elapsedMinutes = Math.round((Date.now() - context.enrichmentStartTime) / 60000);
+    setEventEnrichmentSummary({
+      totalRows: context.totalRows,
+      hubspotFound: context.hubspotFound,
+      creditsUsed: zoomCreditsUsed,
+      linkedInFound: linkedInFoundCount,
+      elapsedMinutes,
+    });
 
     advanceToReview(finalRows, listType);
     fireEnrichmentCompleteNotification();
@@ -1530,6 +1558,7 @@ export default function Home() {
     }
     const ac = new AbortController();
     enrichAbortRef.current = ac;
+    const enrichmentStartTime = Date.now();
     setStep("enriching");
     const batchSize = ENRICHMENT_BATCH_SIZE;
     const totalRows = workingRows.length;
@@ -1544,6 +1573,7 @@ export default function Home() {
     let pausedForCostEstimate = false;
     try {
       setPrecheckHubspotSkipCount(null);
+      setEventEnrichmentSummary(null);
       const batchErrors: string[] = [];
       const aiRowsMerged =
         resolvedListType === "companies"
@@ -1675,9 +1705,17 @@ export default function Home() {
         if (!pending) {
           return;
         }
-        await runZoomVerifyAndLinkedInTail(pending.rows, pending.listType, pending.signal);
+        await runZoomVerifyAndLinkedInTail(pending.rows, pending.listType, pending.signal, {
+          totalRows,
+          hubspotFound: hubspotCompleteCount,
+          enrichmentStartTime,
+        });
       } else {
-        await runZoomVerifyAndLinkedInTail(rowsAfterPrecheck, resolvedListType, ac.signal);
+        await runZoomVerifyAndLinkedInTail(rowsAfterPrecheck, resolvedListType, ac.signal, {
+          totalRows,
+          hubspotFound: hubspotCompleteCount,
+          enrichmentStartTime,
+        });
       }
     } catch (e) {
       if (e instanceof Error && e.name === "AbortError") {
@@ -1797,6 +1835,7 @@ export default function Home() {
       resolveGate?.();
       setCostEstimateMeta(null);
       setPrecheckHubspotSkipCount(null);
+      setEventEnrichmentSummary(null);
       setWizardImportMode("event");
       setBulkJobId(null);
       setBulkJobState(null);
@@ -2511,6 +2550,7 @@ export default function Home() {
           <PreReviewGate
             rows={enriched}
             listType={enrichedListType}
+            enrichmentSummary={wizardImportMode === "event" ? eventEnrichmentSummary : null}
             onContinue={(updatedRows) => {
               const lt = enrichedListType!;
               const finalized =

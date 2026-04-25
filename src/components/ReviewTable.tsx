@@ -64,6 +64,21 @@ function linkedinSourceLabel(s: LinkedInSource | undefined): string {
   }
 }
 
+function linkedinSourceLegendLabel(s: LinkedInSource | undefined): string {
+  switch (s) {
+    case "hubspot":
+      return "HubSpot ✓";
+    case "zoominfo":
+      return "ZoomInfo ✓";
+    case "commonroom":
+      return "Common Room ✓";
+    case "ai_search":
+      return "Web search ⚠️";
+    default:
+      return "Unknown";
+  }
+}
+
 function exclusionReasonBadgeLabel(reason: ExclusionReason | undefined): string {
   switch (reason) {
     case "international":
@@ -89,9 +104,8 @@ function exclusionReasonBadgeLabel(reason: ExclusionReason | undefined): string 
 
 function dataSourceLine(row: EnrichedCompany | EnrichedContact): string {
   const parts: string[] = [];
-  if (row.hubspotId) parts.push("HubSpot");
-  if (row.enrichedByZoomInfo) parts.push("ZoomInfo");
-  if (row.enrichedByAI) parts.push("AI only");
+  if (row.hubspotId) parts.push("HubSpot ✓");
+  if (row.enrichedByZoomInfo) parts.push("ZoomInfo ✓");
   if (parts.length === 0) return "AI only";
   return parts.join(" / ");
 }
@@ -101,80 +115,145 @@ function buildReasoningTooltipContent(
   listType: "companies" | "contacts",
 ): ReactNode {
   const identity = row.identityConfidence ?? row.confidenceScore;
-  const liRaw = row.linkedinUrl?.trim() ?? "";
-  const liSrc = row.linkedinSource;
-  const liShow = liRaw
-    ? `${liRaw.length > 56 ? `${liRaw.slice(0, 56)}…` : liRaw} (${linkedinSourceLabel(liSrc)})`
+  const confidenceText = `${identityLabel(identity)} confidence`;
+  const bucket = row.reviewBucket ?? "needs_review";
+  const linkedInValue = row.linkedinUrl?.trim() ?? "";
+  const linkedInSourceText = linkedInValue
+    ? `${linkedinSourceLegendLabel(row.linkedinSource)}`
     : "Not found";
-
-  const presetContactMsg = "All required contact fields were pre-populated.";
-  const identityReasoning =
-    listType === "contacts"
-      ? (() => {
-          const c = row as EnrichedContact;
-          if (c.aiReasoning !== presetContactMsg) return c.aiReasoning;
-          if (!c.enrichedByAI) return presetContactMsg;
-          return "Enrichment used AI; see data sources and fields below.";
-        })()
-      : row.aiReasoning;
-
-  const domainOrEmailLine =
+  const otherDataSource = dataSourceLine(row);
+  const fullName =
     listType === "companies"
-      ? `${(row as EnrichedCompany).domain || "—"} (${domainSourceLabel((row as EnrichedCompany).domainSource)})`
-      : (() => {
-          const c = row as EnrichedContact;
-          const email = c.resolvedEmail?.trim() ?? "";
-          const at = email.indexOf("@");
-          const domain = at >= 0 ? email.slice(at + 1).toLowerCase() : "";
-          const kind = classifyContactEmailDomain(email);
-          const kindLabel =
-            kind === "Invalid" ? "Invalid" : kind === "Work" ? "Work" : kind === "ISP" ? "ISP" : "Personal";
-          return `${domain || "—"} — ${kindLabel}`;
-        })();
+      ? sanitizeUnknown((row as EnrichedCompany).resolvedName || (row as EnrichedCompany).rawInput) || "Record"
+      : formatContactFullName(row as EnrichedContact) || "Record";
+  const company =
+    listType === "companies"
+      ? sanitizeUnknown((row as EnrichedCompany).resolvedName || (row as EnrichedCompany).rawInput)
+      : sanitizeCompanyName((row as EnrichedContact).resolvedCompany);
+  const title = listType === "contacts" ? sanitizeUnknown((row as EnrichedContact).title) : "";
+  const verifiedLine = listType === "contacts"
+    ? `Verified as ${fullName}${title ? `, ${title}` : ""}${company ? ` at ${company}` : ""} — ${confidenceText}`
+    : `Verified as ${fullName}${title ? `, ${title}` : ""}${company ? ` at ${company}` : ""} — ${confidenceText}`;
 
-  const whyLines: string[] = [];
-  if (row.reviewBucket === "needs_review") {
-    if (listType === "contacts") {
-      const c = row as EnrichedContact;
-      if (!c.hubspotId && !c.enrichedByZoomInfo) {
-        whyLines.push("Not verified: ZoomInfo could not find this contact");
+  const contactMissingCompany =
+    listType === "contacts" && !sanitizeCompanyName((row as EnrichedContact).resolvedCompany);
+  const companyMissingDomain =
+    listType === "companies" && !(row as EnrichedCompany).domain?.trim();
+
+  if (bucket === "excluded") {
+    let reason = "Excluded from review.";
+    const exclusion = row.exclusionReason;
+    if (exclusion === "personal_email" && listType === "contacts") {
+      const email = ((row as EnrichedContact).resolvedEmail ?? "").trim();
+      const domain = email.includes("@") ? email.split("@")[1]?.toLowerCase() ?? "" : "";
+      const kind = classifyContactEmailDomain(email);
+      reason =
+        kind === "ISP"
+          ? `Personal email — flagged as ISP email address, ${domain || "unknown domain"}`
+          : `Personal email — ${domain || "unknown domain"}`;
+    } else if (exclusion === "international") {
+      reason = "International company — outside ICP";
+    } else if (exclusion === "government") {
+      reason = "Government entity — outside ICP";
+    } else if (exclusion === "low_confidence") {
+      reason = "Low identity confidence — AI was not certain who this is";
+    } else if (exclusion === "unresolved") {
+      reason = "Unresolved — AI could not identify this record";
+    } else if (exclusion === "missing_required_fields") {
+      const missing: string[] = [];
+      if (listType === "contacts") {
+        const c = row as EnrichedContact;
+        if (!sanitizeCompanyName(c.resolvedCompany)) missing.push("company");
+        if (!sanitizeUnknown(c.title)) missing.push("title");
+        if (!sanitizeUnknown(c.linkedinUrl)) missing.push("LinkedIn profile");
+      } else {
+        const c = row as EnrichedCompany;
+        if (!sanitizeUnknown(c.resolvedName)) missing.push("company name");
+        if (!sanitizeUnknown(c.domain)) missing.push("domain");
       }
-    } else {
-      const c = row as EnrichedCompany;
-      if (!c.hubspotId && !c.enrichedByZoomInfo) {
-        whyLines.push("Not verified: ZoomInfo could not find this company");
-      }
+      reason = `Missing required fields — ${missing.join(", ") || "required fields"}`;
+    }
+    return (
+      <div className="space-y-2">
+        <p className="font-semibold">✗ {fullName} — Excluded</p>
+        <p>
+          <span className="font-semibold">✗ {reason}</span>
+        </p>
+        {linkedInValue ? (
+          <p>
+            <span className="font-semibold">Sources:</span> LinkedIn {linkedInSourceText}
+          </p>
+        ) : null}
+        <p>✓ Check row checkbox to override &amp; include</p>
+      </div>
+    );
+  }
+
+  if (bucket === "needs_review") {
+    const reviewFor: string[] = [];
+    if (row.linkedinSource === "ai_search") {
+      reviewFor.push("⚠️ LinkedIn — came from web search, verify before trusting");
+    }
+    if (!row.hubspotId && !row.enrichedByZoomInfo) {
+      reviewFor.push("⚠️ Not verified by HubSpot or ZoomInfo");
     }
     if (row.identityConfidence === "medium") {
-      whyLines.push("Medium identity confidence — AI was not certain of this match");
+      reviewFor.push("⚠️ AI was not certain of this match");
     }
+    return (
+      <div className="space-y-2">
+        <p className="font-semibold">⚠️ {fullName} — Needs Review</p>
+        <p>{verifiedLine}</p>
+        {reviewFor.length > 0 ? (
+          <div>
+            <p className="font-semibold">Review for:</p>
+            <ul className="list-inside list-disc space-y-0.5">
+              {reviewFor.map((line, idx) => (
+                <li key={idx}>{line}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        <div>
+          <p className="font-semibold">Sources:</p>
+          <p>Identity {row.hubspotId ? "HubSpot ✓" : row.enrichedByZoomInfo ? "ZoomInfo ✓" : "Unknown"}</p>
+          <p>LinkedIn {linkedInSourceText}</p>
+          <p>Other data {otherDataSource}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (contactMissingCompany || companyMissingDomain) {
+    return (
+      <div className="space-y-2">
+        <p className="font-semibold">~ {fullName} — Trusted but missing data</p>
+        <p>{`Verified as ${fullName}${title ? `, ${title}` : ""} — ${confidenceText}`}</p>
+        <div>
+          <p className="font-semibold">Missing:</p>
+          {contactMissingCompany ? <p>⚠️ Company name — search LinkedIn or Google</p> : null}
+          {companyMissingDomain ? <p>⚠️ Domain — needed for HubSpot matching</p> : null}
+        </div>
+        <div>
+          <p className="font-semibold">Sources:</p>
+          <p>Identity {row.hubspotId ? "HubSpot ✓" : row.enrichedByZoomInfo ? "ZoomInfo ✓" : "Unknown"}</p>
+          <p>LinkedIn {linkedInSourceText}</p>
+          <p>Other data {otherDataSource}</p>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-2">
-      <p>
-        <span className="font-semibold">Identity:</span> {identityLabel(identity)} — {identityReasoning}
-      </p>
-      <p>
-        <span className="font-semibold">{listType === "contacts" ? "Email domain:" : "Domain:"}</span>{" "}
-        {domainOrEmailLine}
-      </p>
-      {whyLines.length > 0 ? (
-        <div>
-          <p className="font-semibold">Why needs review</p>
-          <ul className="list-inside list-disc space-y-0.5">
-            {whyLines.map((line, i) => (
-              <li key={i}>{line}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      <p>
-        <span className="font-semibold">LinkedIn:</span> {liShow}
-      </p>
-      <p>
-        <span className="font-semibold">Data source:</span> {dataSourceLine(row)}
-      </p>
+      <p className="font-semibold">✓ {fullName} — Trusted</p>
+      <p>{verifiedLine}</p>
+      <div>
+        <p className="font-semibold">Sources:</p>
+        <p>Identity {row.hubspotId ? "HubSpot ✓" : row.enrichedByZoomInfo ? "ZoomInfo ✓" : "Unknown"}</p>
+        <p>LinkedIn {linkedInSourceText}</p>
+        <p>Other data {otherDataSource}</p>
+      </div>
     </div>
   );
 }
@@ -242,18 +321,6 @@ function initialContactReviewStatus(contact: EnrichedContact): EnrichedContact["
 
 function rowKey(id: string, field: string): string {
   return `${id}:${field}`;
-}
-
-function missingContactFieldsReason(contact: EnrichedContact): string | null {
-  const missing: string[] = [];
-  if (!sanitizeCompanyName(contact.resolvedCompany)) missing.push("company");
-  if (!sanitizeUnknown(contact.title)) missing.push("title");
-  if (!sanitizeUnknown(contact.linkedinUrl)) missing.push("LinkedIn profile");
-  if (missing.length === 0) return null;
-  if (missing.length === 1 && missing[0] === "LinkedIn profile") {
-    return "Could not find LinkedIn profile.";
-  }
-  return `Missing required fields: ${missing.join(", ")}.`;
 }
 
 /** Matches ConfidenceBadge footprint: inline, rounded-full, px-2 py-0.5 text-xs. */
@@ -957,13 +1024,28 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     <div className="flex flex-col gap-4 pb-24">
       <h2 className="text-lg font-semibold text-(--realm-navy)">Review &amp; Edit</h2>
 
-      <p className="text-sm font-medium text-(--text-secondary)">
-        <span>{trustedCount} Trusted</span>
-        {" · "}
-        <span>{needsReviewCount} Need Review</span>
-        {" · "}
-        <span>{excludedCount} Excluded</span>
-      </p>
+      <div className="flex flex-col gap-3 rounded-lg border border-(--border-default) bg-(--bg-card) p-4 shadow-(--shadow-card)">
+        <div>
+          <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+            ⚠️ Needs Review — {needsReviewCount} records
+          </p>
+          <p className="text-xs text-(--text-muted)">These records need a quick check before pushing</p>
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
+            ✓ Trusted — {trustedCount} records
+          </p>
+          <p className="text-xs text-(--text-muted)">Verified by HubSpot or ZoomInfo</p>
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-400">
+            ✗ Excluded — {excludedCount} records
+          </p>
+          <p className="text-xs text-(--text-muted)">
+            Not being pushed to HubSpot — check a row to override and include it
+          </p>
+        </div>
+      </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="flex flex-wrap gap-2">
@@ -1008,48 +1090,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         </div>
       </div>
 
-      <div className="flex flex-col gap-3 rounded-lg border border-(--border-default) bg-(--bg-card) p-4 shadow-(--shadow-card)">
-        <div>
-          <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
-            ⚠️ Needs Review — {needsRows.length} records
-          </p>
-          <p className="text-xs text-(--text-muted)">These records need a quick check before pushing</p>
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
-            ✓ Trusted — {trustedRows.length} records
-          </p>
-          <p className="text-xs text-(--text-muted)">Verified by HubSpot or ZoomInfo</p>
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-400">
-            ✗ Excluded — {excludedRows.length} records
-          </p>
-          <p className="text-xs text-(--text-muted)">
-            Not being pushed to HubSpot — check a row to override and include it
-          </p>
-        </div>
-      </div>
-
       <div className="min-w-0 overflow-x-auto rounded-lg border border-(--border-default)">
-        <p className="mb-1.5 flex flex-wrap items-center gap-x-4 gap-y-0.5 px-2 pt-2 text-xs text-(--text-muted)">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-violet-600" aria-hidden />
-            HubSpot
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-blue-600" aria-hidden />
-            ZoomInfo
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-teal-600" aria-hidden />
-            Common Room
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-amber-500" aria-hidden />
-            Web search
-          </span>
-        </p>
         <table className="min-w-full border-separate border-spacing-0 text-left text-xs sm:text-sm">
           <thead className="bg-(--bg-muted) text-(--text-secondary) text-sm font-semibold">
             {listType === "companies" ? (
@@ -1069,7 +1110,31 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   Number Of Employees
                 </th>
                 <th className="border-b border-(--border-default) px-2 py-2">
-                  LinkedIn Profile
+                  <span className="inline-flex items-center gap-1">
+                    LinkedIn Profile
+                    <ReasoningTooltip
+                      content={
+                        <div className="space-y-1.5 text-xs">
+                          <p>
+                            <span className="inline-block h-2 w-2 rounded-full bg-violet-600" /> HubSpot — verified, your
+                            source of truth
+                          </p>
+                          <p>
+                            <span className="inline-block h-2 w-2 rounded-full bg-blue-600" /> ZoomInfo — verified third-party
+                            data
+                          </p>
+                          <p>
+                            <span className="inline-block h-2 w-2 rounded-full bg-teal-600" /> Common Room — verified
+                            third-party data
+                          </p>
+                          <p>
+                            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> Web search — searched but
+                            unverified, review recommended
+                          </p>
+                        </div>
+                      }
+                    />
+                  </span>
                 </th>
                 <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">
                   Confidence
@@ -1088,7 +1153,31 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                 <th className="border-b border-(--border-default) px-2 py-2">Company</th>
                 <th className="border-b border-(--border-default) px-2 py-2">Title</th>
                 <th className="border-b border-(--border-default) px-2 py-2">
-                  LinkedIn Profile
+                  <span className="inline-flex items-center gap-1">
+                    LinkedIn Profile
+                    <ReasoningTooltip
+                      content={
+                        <div className="space-y-1.5 text-xs">
+                          <p>
+                            <span className="inline-block h-2 w-2 rounded-full bg-violet-600" /> HubSpot — verified, your
+                            source of truth
+                          </p>
+                          <p>
+                            <span className="inline-block h-2 w-2 rounded-full bg-blue-600" /> ZoomInfo — verified third-party
+                            data
+                          </p>
+                          <p>
+                            <span className="inline-block h-2 w-2 rounded-full bg-teal-600" /> Common Room — verified
+                            third-party data
+                          </p>
+                          <p>
+                            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> Web search — searched but
+                            unverified, review recommended
+                          </p>
+                        </div>
+                      }
+                    />
+                  </span>
                 </th>
                 <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">
                   Confidence
@@ -1364,19 +1453,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       <td className="max-w-56 px-2 py-1.5 align-middle wrap-break-word">
                         <div className="flex items-center justify-center">
                           <ReasoningTooltip
-                            content={
-                              getDisplayConfidence(row, "contacts") === "unresolved" &&
-                              missingContactFieldsReason(row) ? (
-                                <div className="space-y-2">
-                                  <p className="text-amber-800 dark:text-amber-200">
-                                    {missingContactFieldsReason(row)}
-                                  </p>
-                                  {buildReasoningTooltipContent(row, "contacts")}
-                                </div>
-                              ) : (
-                                buildReasoningTooltipContent(row, "contacts")
-                              )
-                            }
+                            content={buildReasoningTooltipContent(row, "contacts")}
                           />
                         </div>
                       </td>

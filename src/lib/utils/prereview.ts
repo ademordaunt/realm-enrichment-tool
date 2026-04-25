@@ -1,4 +1,5 @@
 import { isFullContact, isPersonalEmail } from "@/lib/utils/contacts";
+import { sanitizeCompanyName } from "@/lib/utils/sanitize";
 import type {
   EnrichedCompany,
   EnrichedContact,
@@ -216,6 +217,22 @@ export function computeReviewBucket(
       exclusionReason:
         row.identityConfidence === "low" ? "low_confidence" : "unresolved",
     };
+  }
+
+  if (listType === "contacts") {
+    const contact = row as EnrichedContact;
+    if (!sanitizeCompanyName(contact.resolvedCompany)) {
+      return { bucket: "needs_review" };
+    }
+  } else {
+    const company = row as EnrichedCompany;
+    if (!company.domain?.trim()) {
+      return { bucket: "needs_review" };
+    }
+  }
+
+  if (row.linkedinSource === "ai_search") {
+    return { bucket: "needs_review" };
   }
 
   const company = row as EnrichedCompany;

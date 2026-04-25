@@ -22,6 +22,12 @@ const BATCH_SIZE = ENRICHMENT_BATCH_SIZE;
 
 export const COMPANY_MODEL = "claude-sonnet-4-6" as const;
 
+function toTitleCase(str: string): string {
+  return str.replace(/\w\S*/g, (txt) =>
+    txt.charAt(0).toUpperCase() + txt.slice(1).toLowerCase(),
+  );
+}
+
 /** Old cache rows may have `linkedinUrl` without `linkedinSource`; infer from enrichment flags. */
 function withInferredLinkedinSource<T extends EnrichedCompany | EnrichedContact>(cached: T): T {
   const url = cached.linkedinUrl?.trim();
@@ -278,8 +284,10 @@ function mapContactAiToEnriched(
   const rawEmail = row.email?.trim() ?? "";
   const aiResolved = String(raw.resolvedEmail ?? "").trim();
   const resolvedEmail = rawEmail || aiResolved;
-  const firstName = String(raw.firstName ?? row.firstName ?? "").trim() || row.firstName;
-  const lastName = String(raw.lastName ?? row.lastName ?? "").trim() || row.lastName;
+  const firstNameRaw = String(raw.firstName ?? row.firstName ?? "").trim() || row.firstName;
+  const lastNameRaw = String(raw.lastName ?? row.lastName ?? "").trim() || row.lastName;
+  const firstName = toTitleCase(firstNameRaw);
+  const lastName = toTitleCase(lastNameRaw);
   const existingCompany = row.resolvedCompany?.trim() || row.company?.trim() || "";
   const resolvedCompany =
     String(raw.resolvedCompany ?? "").trim() || existingCompany;
@@ -374,8 +382,8 @@ function mapPresetContactRow(
   const phone = row.phone?.trim() ?? "";
   return {
     id: uuidv4(),
-    firstName: row.firstName,
-    lastName: row.lastName,
+    firstName: toTitleCase(row.firstName),
+    lastName: toTitleCase(row.lastName),
     rawEmail: email,
     rawCompany: row.company?.trim() ?? "",
     resolvedEmail: email,

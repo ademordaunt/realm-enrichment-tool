@@ -18,6 +18,13 @@ const cardClass =
 export interface PreReviewGateProps {
   rows: EnrichedCompany[] | EnrichedContact[];
   listType: "companies" | "contacts";
+  enrichmentSummary?: {
+    totalRows: number;
+    hubspotFound: number;
+    creditsUsed: number;
+    linkedInFound: number;
+    elapsedMinutes: number;
+  } | null;
   onContinue: (updatedRows: EnrichedCompany[] | EnrichedContact[]) => void;
 }
 
@@ -57,7 +64,7 @@ function keepFirstInEachDuplicateGroupContacts(
   return working.filter((r) => !toRemove.has(r.id));
 }
 
-export function PreReviewGate({ rows, listType, onContinue }: PreReviewGateProps) {
+export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }: PreReviewGateProps) {
   const [working, setWorking] = useState(rows);
   const [expandIntl, setExpandIntl] = useState(false);
   const [expandDup, setExpandDup] = useState(false);
@@ -153,6 +160,19 @@ export function PreReviewGate({ rows, listType, onContinue }: PreReviewGateProps
         <p className="mt-2 text-sm text-(--text-muted)">
           {working.length} {recordLabel} will be reviewed
         </p>
+        {enrichmentSummary ? (
+          <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100">
+            <p className="font-semibold">Enrichment Complete ✓</p>
+            <div className="mt-2 space-y-1 font-mono text-[0.8rem]">
+              <p>Records processed:      {enrichmentSummary.totalRows}</p>
+              <p>Found in HubSpot:       {enrichmentSummary.hubspotFound}</p>
+              <p>ZoomInfo credits used:   {enrichmentSummary.creditsUsed}</p>
+              <p>LinkedIn URLs found:    {enrichmentSummary.linkedInFound}</p>
+              <p>Total time:             {enrichmentSummary.elapsedMinutes} min</p>
+            </div>
+            <hr className="my-3 border-emerald-300/60 dark:border-emerald-700/60" />
+          </div>
+        ) : null}
 
         {summary.showIntlGov && listType === "companies" ? (
           <div className="mt-6 border-t border-(--border-default) pt-6">
