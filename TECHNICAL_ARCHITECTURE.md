@@ -102,7 +102,7 @@ Mapping:
 
 - **Start:** `startBulkJob()` calls `POST /api/jobs/start` from `context` step.
 - **Progress:** UI enters `enriching` and polls `GET /api/jobs/[jobId]/status` every 5 seconds.
-- **Completion:** on `status === "complete"`, client loads rows from `GET /api/jobs/[jobId]/rows`, then `advanceToReview` routes to either `prereview` or `enriched` based on `shouldOpenPreReviewGate`.
+- **Completion:** on `status === "complete"`, client loads rows from `GET /api/jobs/[jobId]/rows`, builds an **enrichment summary** from the loaded rows and `BulkJobState` (totals, HubSpot found count, credits, AI LinkedIn count, elapsed minutes), then `advanceToReview` **always** navigates to `prereview` before `enriched` (event and bulk both).
 - **Completion summary metadata:** bulk job state now includes `linkedInFromAiCount` (rows where `linkedinSource === "ai_search"`), shown in `BulkProgressScreen`.
 - **Failure/cancel:** client returns to `context` and surfaces `state.error` (or cancellation copy).
 - **Diagnostics:** failed job-start responses log status + body in `console.error("[startBulkJob] failed:", res.status, errBody)`.
@@ -134,15 +134,10 @@ Mapping:
 
 ### Pre-Review behavior (current)
 
-- `advanceToReview` in `src/app/page.tsx` finalizes rows via `finalizeRowsForReview`.
-- In **event mode**, the enrichment path forces the user through `prereview` before `enriched` (with an enrichment summary card).
-- `PreReviewGate` accepts optional `enrichmentSummary` and renders:
-  - records processed
-  - found in HubSpot
-  - ZoomInfo credits used
-  - LinkedIn URLs found from AI (`linkedinSource === "ai_search"`)
-  - elapsed minutes
-- `shouldOpenPreReviewGate` still exists for threshold-driven entry in non-forced paths.
+- `advanceToReview` in `src/app/page.tsx` finalizes rows via `finalizeRowsForReview` and **always** sets the wizard step to `prereview` (never jumps straight to `enriched`).
+- `PreReviewGate` receives optional `enrichmentSummary` (non-null in **event** and **bulk** flows when the parent sets it). The **enrichment complete** card renders only when `enrichmentSummary` is present.
+- **International & government** and **duplicate** blocks inside the gate are still **threshold-driven** per `PreReviewGate` (`PREREVIEW_INTL_GOV_THRESHOLD`, `PREREVIEW_DUPLICATE_THRESHOLD` in `prereview.ts`); the summary card is independent of those sections.
+- `shouldOpenPreReviewGate` in `prereview.ts` remains available but is **not** used to choose between `prereview` and `enriched` in `page.tsx` (routing is always pre-review first).
 
 ## 3. Enrichment pipeline — companies
 
@@ -354,10 +349,12 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 | **Auth** | `HUBSPOT_ACCESS_TOKEN` — **Private App** token (server-only). `hubspotFetch` in `http.ts` uses `https://api.hubapi.com` + `Authorization: Bearer …`. |
 | **Companies — properties written** | `name`, `domain`, `website`, `state`, `linkedin_company_page`, `numberofemployees`, `annualrevenue`, `industry`, `description`, `city`, optional `lead_source`, `lead_source_description`, `notes` (see `companies.ts`). |
 | **Contacts — properties written** | `firstname`, `lastname`, `email`, `jobtitle`, `company`, `ds_liprofile`, `state`, `phone`, `lead_source__deal_source`, `lead_source_description`, `hs_content_membership_notes`, `job_level`, `job_function`, `numemployees`, `industry`, `website` (see `contacts.ts`). |
-| **Lists** | Create: `POST /crm/v3/lists` with `name`, `objectTypeId` (`0-2` companies, `0-1` contacts), `processingType: "MANUAL"`, optional `folderId`. Membership: `PUT /crm/v3/lists/{listId}/memberships/add` with JSON array of record IDs. |
+| **Lists** | Create: `POST /crm/v3/lists` with `name`, `objectTypeId` (`0-2` companies, `0-1` contacts), `processingType: "MANUAL"`, optional `folderId`. Membership: `PUT /crm/v3/lists/{listId}/memberships/add` with JSON array of **HubSpot record IDs** from create/update (not import row UUIDs). |
+| **Batch create — HTTP "already exists"** | If `POST .../batch/create` fails at the HTTP level with an error containing `already exists`, `batchCreateContacts` / `batchCreateCompanies` **retry each row** with a single-object create (`POST /crm/v3/objects/contacts` or `.../companies`) so per-row duplicate IDs are correct; other HTTP failures still apply one error string to the whole chunk. |
 | **Folders** | `GET /crm/v3/lists/folders` — parsed by `list-folders.ts`; UI uses folder id on list create in `push-handler` (`createStaticListForPush`). |
 | **Import Settings folder UX** | `PrePushScreen` uses a placeholder `Select a folder` (disabled), then explicit `No Folder`, then live folders. If placeholder or `No Folder` is chosen, `folderId` is omitted in push payload. |
 | **Success screen list URL** | Uses HubSpot object-list path: `https://app.hubspot.com/contacts/{portalId}/objectLists/{listId}/filters`. |
+| **Success screen push errors** | `SuccessScreen` accepts optional `rowsById: Map<rowId, { displayName }>` from approved rows so per-row error lines show a **name** (contact: `firstName` + `lastName`; company: `resolvedName`) instead of internal UUIDs; unknown ids (e.g. synthetic `membership`) still show the raw id. |
 
 ---
 
@@ -382,6 +379,10 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 
 - **TTL:** `60 * 60 * 24 * 30` seconds (**30 days**) for both company and contact cache keys in `enrichment-cache.ts`.
 - **Keys:** `company:<normalized_name>`, `contact:<normalized_email>`.
+- **Read-time migrations (`getCachedCompany` only, in-memory — no write-back to KV):**
+  - If LinkedIn URL is set but `linkedinSource` is empty, set source to `zoominfo` vs `hubspot` from `enrichedByZoomInfo`.
+  - If ZoomInfo–like fields are present but `enrichedByZoomInfo` is false, infer ZoomInfo and optionally `domainSource: "zoominfo_verified"`.
+  - If `identityConfidence` is missing, null, or empty string but `confidenceScore` is a non-empty string, set `identityConfidence` from `confidenceScore` so `computeReviewBucket` and other logic that read `identityConfidence` behave correctly for **older cached payloads** that only stored `confidenceScore`.
 - **Connectivity probe:** `checkKvConnectivity()` writes/reads `__health_check__` and logs explicit misconfiguration/health errors (called once at module load in `enrich/zoominfo/route.ts`).
 - **Operational note:** Heavy duplicate imports benefit from cache; sustained high QPS may require a paid Upstash plan (monitor Upstash dashboard and Redis usage limits).
 
@@ -398,6 +399,8 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
   - `linkedinSource === "ai_search"` (forced `needs_review`)
   - contacts have visually missing company (`sanitizeCompanyName(resolvedCompany)` empty)
   - companies have missing domain
+- **Review & Edit header counts** (Needs Review / Trusted / Excluded) follow **`row.status`** (`pending` / `approved` / `skipped`), not `reviewBucket`, so they reflect the operator’s current checkbox selections. Unchecking a **needs_review** row restores `status` to `pending` (not `skipped`); unchecking **trusted** or **excluded** sets `skipped`.
+- **Select All / Deselect All** only changes status for rows **visible** under the current **Show** filter; rows outside the filter are unchanged.
 - Review tooltip in `ReviewTable` uses a simplified four-state template:
   - Trusted
   - Trusted but missing data

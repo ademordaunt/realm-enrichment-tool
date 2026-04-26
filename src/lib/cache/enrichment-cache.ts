@@ -3,6 +3,7 @@ import type {
   BulkJobState,
   EnrichedCompany,
   EnrichedContact,
+  IdentityConfidence,
 } from "@/lib/utils/types";
 
 const kv = new Redis({
@@ -55,6 +56,21 @@ export async function getCachedCompany(name: string): Promise<EnrichedCompany | 
               : migrated.domainSource,
         };
       }
+    }
+    const idConf = migrated.identityConfidence as
+      | IdentityConfidence
+      | null
+      | undefined
+      | "";
+    if (
+      (idConf === undefined || idConf === null || idConf === "") &&
+      typeof migrated.confidenceScore === "string" &&
+      migrated.confidenceScore.trim() !== ""
+    ) {
+      migrated = {
+        ...migrated,
+        identityConfidence: migrated.confidenceScore as IdentityConfidence,
+      };
     }
     return migrated;
   } catch {
