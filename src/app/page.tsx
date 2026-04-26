@@ -1014,22 +1014,6 @@ export default function Home() {
       const payload = (await res.json()) as {
         rows: EnrichedCompany[] | EnrichedContact[];
       };
-      const totalRows = payload.rows.length;
-      const hubspotFound = payload.rows.filter((r) => r.hubspotId != null).length;
-      const linkedInFound = payload.rows.filter((r) => r.linkedinSource === "ai_search").length;
-      const startedAtMs = bulkJobState?.startedAt ? Date.parse(bulkJobState.startedAt) : Number.NaN;
-      const completedAtMs = bulkJobState?.completedAt ? Date.parse(bulkJobState.completedAt) : Number.NaN;
-      const elapsedMinutes =
-        Number.isFinite(startedAtMs) && Number.isFinite(completedAtMs)
-          ? Math.max(0, Math.round((completedAtMs - startedAtMs) / 60000))
-          : 0;
-      setEventEnrichmentSummary({
-        totalRows,
-        hubspotFound,
-        creditsUsed: bulkJobState?.creditsUsed ?? 0,
-        linkedInFound,
-        elapsedMinutes,
-      });
       advanceToReview(payload.rows, listType);
       setShowEnrichmentInterruptedBanner(false);
       setProgress(null);
@@ -1039,7 +1023,7 @@ export default function Home() {
       setBulkJobId(null);
       setBulkJobState(null);
     },
-    [advanceToReview, bulkJobState?.completedAt, bulkJobState?.creditsUsed, bulkJobState?.startedAt],
+    [advanceToReview],
   );
 
   const handleContinueToReview = useCallback(async () => {

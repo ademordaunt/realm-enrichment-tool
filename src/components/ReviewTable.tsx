@@ -101,20 +101,14 @@ function buildReasoningTooltipContent(
       ? sanitizeUnknown(company?.resolvedName || company?.rawInput) || "Record"
       : formatContactFullName(contact as EnrichedContact) || "Record";
 
-  const identityLine =
+  const identityTarget =
     listType === "companies"
-      ? `Verified as ${displayName} (${company?.domain?.trim() || "—"}) — ${confidenceText}`
-      : (() => {
-          const fn = sanitizeUnknown(contact?.firstName);
-          const ln = sanitizeUnknown(contact?.lastName);
-          const title = sanitizeUnknown(contact?.title);
-          const co = sanitizeCompanyName(contact?.resolvedCompany);
-          const person = [fn, ln].filter(Boolean).join(" ").trim() || "Record";
-          if (title && co) return `Verified as ${person}, ${title} at ${co} — ${confidenceText}`;
-          if (!title && co) return `Verified as ${person} at ${co} — ${confidenceText}`;
-          if (title && !co) return `Verified as ${person}, ${title} — ${confidenceText}`;
-          return `Verified as ${person} — ${confidenceText}`;
-        })();
+      ? company?.domain?.trim() || "—"
+      : sanitizeCompanyName(contact?.resolvedCompany) || "—";
+  const identityLine =
+    identity === "high"
+      ? `Verified as ${displayName} (${identityTarget})`
+      : `Identified as ${displayName} (${identityTarget}) — ${confidenceText}`;
 
   const sourceBlock = (
     <div>
@@ -136,9 +130,6 @@ function buildReasoningTooltipContent(
   if (!row.hubspotId && !row.enrichedByZoomInfo) {
     needsReviewLines.push("⚠️ Not verified by HubSpot or ZoomInfo");
   }
-  if (row.identityConfidence === "medium") {
-    needsReviewLines.push("⚠️ AI was not certain of this match");
-  }
 
   const excludedLines: string[] = [];
   if (row.exclusionReason === "personal_email" && contact) {
@@ -158,7 +149,7 @@ function buildReasoningTooltipContent(
     excludedLines.push("⚠️ Government entity — outside ICP");
   }
   if (row.exclusionReason === "low_confidence") {
-    excludedLines.push("⚠️ Low confidence — AI was not certain who this is");
+    excludedLines.push("⚠️ Low confidence");
   }
   if (row.exclusionReason === "unresolved") {
     excludedLines.push("⚠️ Unresolved — AI could not identify this record");

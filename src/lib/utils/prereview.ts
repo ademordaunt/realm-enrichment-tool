@@ -94,7 +94,6 @@ const INTL_TLDS = [
   ".th",
   ".vn",
   ".co",
-  ".io",
 ] as const;
 
 const GOV_NAME_PATTERNS = [
@@ -138,7 +137,12 @@ function hasInternationalTld(host: string): boolean {
 
 export function isInternationalCompany(row: EnrichedCompany): boolean {
   const st = (row.state ?? "").toLowerCase();
-  if (st.includes("foreign")) return true;
+  if (
+    st.includes("foreign") &&
+    !st.includes("us hq") &&
+    !st.includes("u.s. hq") &&
+    !st.includes("united states hq")
+  ) return true;
   for (const s of INTL_STATE_SUBSTRINGS) {
     if (s.length <= 3) {
       if (st === s || st.startsWith(`${s} `) || st.endsWith(` ${s}`) || st.includes(` ${s} `)) {

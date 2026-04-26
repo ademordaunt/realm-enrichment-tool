@@ -27,15 +27,36 @@ export async function getCachedCompany(name: string): Promise<EnrichedCompany | 
   try {
     const result = await kv.get<EnrichedCompany>(normalizeCompanyKey(name));
     if (!result) return null;
-    const hasLinkedInUrl = typeof result.linkedinUrl === "string" && result.linkedinUrl.trim() !== "";
-    const hasLinkedInSource = typeof result.linkedinSource === "string" && result.linkedinSource.trim() !== "";
+    let migrated: EnrichedCompany = result;
+    const hasLinkedInUrl = typeof migrated.linkedinUrl === "string" && migrated.linkedinUrl.trim() !== "";
+    const hasLinkedInSource =
+      typeof migrated.linkedinSource === "string" && migrated.linkedinSource.trim() !== "";
     if (hasLinkedInUrl && !hasLinkedInSource) {
-      return {
-        ...result,
-        linkedinSource: result.enrichedByZoomInfo === true ? "zoominfo" : "hubspot",
+      migrated = {
+        ...migrated,
+        linkedinSource: migrated.enrichedByZoomInfo === true ? "zoominfo" : "hubspot",
       };
     }
-    return result;
+    if (migrated.enrichedByZoomInfo !== true) {
+      const hasZoomInfoIndicativeFields =
+        migrated.numberOfEmployees != null ||
+        (typeof migrated.industry === "string" && migrated.industry.trim() !== "") ||
+        migrated.revenue != null ||
+        (typeof migrated.description === "string" && migrated.description.trim() !== "");
+      if (hasZoomInfoIndicativeFields) {
+        migrated = {
+          ...migrated,
+          enrichedByZoomInfo: true,
+          domainSource:
+            typeof migrated.domain === "string" &&
+            migrated.domain.trim() !== "" &&
+            migrated.domainSource !== "hubspot_verified"
+              ? "zoominfo_verified"
+              : migrated.domainSource,
+        };
+      }
+    }
+    return migrated;
   } catch {
     return null; // Never let cache errors block enrichment
   }
