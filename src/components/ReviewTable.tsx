@@ -201,6 +201,9 @@ function buildReasoningTooltipContent(
       <div className="space-y-2">
         <p className="font-semibold">~ {displayName} — Trusted but missing data</p>
         <p>{identityLine}</p>
+        {row.linkedinSource === "ai_search" && (
+          <p>⚠️ LinkedIn came from web search — worth a quick check</p>
+        )}
         {missingLines.map((line, idx) => (
           <p key={idx}>{line}</p>
         ))}
@@ -213,6 +216,9 @@ function buildReasoningTooltipContent(
     <div className="space-y-2">
       <p className="font-semibold">✓ {displayName} — Trusted</p>
       <p>{identityLine}</p>
+      {row.linkedinSource === "ai_search" && (
+        <p>⚠️ LinkedIn came from web search — worth a quick check</p>
+      )}
       {sourceBlock}
     </div>
   );
@@ -856,7 +862,15 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
 
   const filteredByShowFilter = useMemo(() => {
     if (filter === "all") return displayRows;
-    return displayRows.filter((r) => (r.reviewBucket ?? "needs_review") === filter);
+    const list = displayRows.filter((r) => (r.reviewBucket ?? "needs_review") === filter);
+    if (filter === "trusted") {
+      return [...list].sort((a, b) => {
+        const aFirst = a.linkedinSource === "ai_search" ? 0 : 1;
+        const bFirst = b.linkedinSource === "ai_search" ? 0 : 1;
+        return aFirst - bFirst;
+      });
+    }
+    return list;
   }, [displayRows, filter]);
   const filteredRowIds = useMemo(
     () => new Set(filteredByShowFilter.map((r) => r.id)),
@@ -867,13 +881,17 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     if (listType === "companies") {
       setRows(
         (rows as EnrichedCompany[]).map((r) =>
-          filteredRowIds.has(r.id) ? { ...r, status: "approved" as const } : r,
+          filteredRowIds.has(r.id) && r.reviewBucket !== "excluded"
+            ? { ...r, status: "approved" as const }
+            : r,
         ),
       );
     } else {
       setRows(
         (rows as EnrichedContact[]).map((r) =>
-          filteredRowIds.has(r.id) ? { ...r, status: "approved" as const } : r,
+          filteredRowIds.has(r.id) && r.reviewBucket !== "excluded"
+            ? { ...r, status: "approved" as const }
+            : r,
         ),
       );
     }

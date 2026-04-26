@@ -171,6 +171,16 @@ export function isInternationalCompany(row: EnrichedCompany): boolean {
     " germany",
     " france",
     " australia",
+    " korea",
+    " israel",
+    " singapore",
+    " mexico",
+    " portugal",
+    " dubai",
+    " brazil",
+    " japan",
+    " china",
+    " taiwan",
   ] as const;
   for (const indicator of rawWordIndicators) {
     if (` ${rawInputLower}`.includes(indicator)) return true;
@@ -182,6 +192,21 @@ export function isInternationalCompany(row: EnrichedCompany): boolean {
     "- germany",
     "- france",
     "- australia",
+    "- korea",
+    "- israel",
+    "- singapore",
+    "- mexico",
+    "- portugal",
+    "- dubai",
+    "- brazil",
+    "- japan",
+    "- china",
+    "- taiwan",
+    "-kr",
+    "-sg",
+    "-pt",
+    "-ht",
+    "-mx",
   ] as const;
   for (const indicator of rawDashIndicators) {
     if (rawInputLower.includes(indicator)) return true;
@@ -322,10 +347,6 @@ export function computeReviewBucket(
     if (!company.domain?.trim()) {
       return { bucket: "needs_review" };
     }
-  }
-
-  if (row.linkedinSource === "ai_search") {
-    return { bucket: "needs_review" };
   }
 
   const company = row as EnrichedCompany;
