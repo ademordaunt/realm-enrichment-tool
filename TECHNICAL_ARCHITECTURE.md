@@ -138,6 +138,7 @@ Mapping:
 - `PreReviewGate` receives optional `enrichmentSummary` (non-null in **event** and **bulk** flows when the parent sets it). The **enrichment complete** card renders only when `enrichmentSummary` is present.
 - **International & government** and **duplicate** blocks inside the gate are still **threshold-driven** per `PreReviewGate` (`PREREVIEW_INTL_GOV_THRESHOLD`, `PREREVIEW_DUPLICATE_THRESHOLD` in `prereview.ts`); the summary card is independent of those sections.
 - `shouldOpenPreReviewGate` in `prereview.ts` remains available but is **not** used to choose between `prereview` and `enriched` in `page.tsx` (routing is always pre-review first).
+- **International heuristics (`isInternationalCompany` in `prereview.ts`):** besides **state** text, **non‑US TLD**, **Gartner-style name suffixes**, and **raw input word** patterns (space-prefixed tokens such as ` canada`, ` uk`, …), the **original CSV/Excel cell** (`rawInput`) is also scanned for additional region tokens (e.g. Korea, Israel, Singapore, Mexico, Dubai, Japan, China, Taiwan) and **dash-suffix** forms (e.g. `-kr`, `-sg`, `-mx`). Deliberately **omitted** as ambiguous: `-il` / `-in` (Illinois / Indiana).
 
 ## 3. Enrichment pipeline — companies
 
@@ -306,6 +307,7 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
   - `enrichedByAI: true`
 - Bulk linkedIn phase (`runLinkedInBatch` in `api/jobs/process/route.ts`) sets the same fields.
 - Finalization fallback now normalizes any row with a non-empty `linkedinUrl` and empty `linkedinSource` to `"ai_search"` before persisting/review handoff.
+- **Review bucket:** `computeReviewBucket` does **not** downgrade a row to **Needs review** solely because `linkedinSource === "ai_search"`; if other trusted criteria are met, the row can be **Trusted**. The **Review & Edit** UI still surfaces a **tooltip warning** for trusted rows whose LinkedIn came from web search, and when the **Show: Trusted** filter is active, those rows are **sorted to the top** for quick review.
 
 ## 5. External API integrations
 
@@ -395,12 +397,12 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 
 ### Tooltip and review-state rules (current)
 
-- `computeReviewBucket` now prevents trusted promotion when:
-  - `linkedinSource === "ai_search"` (forced `needs_review`)
-  - contacts have visually missing company (`sanitizeCompanyName(resolvedCompany)` empty)
-  - companies have missing domain
+- `computeReviewBucket` assigns buckets roughly as follows (see `prereview.ts` for the full decision tree):
+  - **Companies:** international / government → **excluded**; `identityConfidence` low or unresolved → **excluded**; empty domain after filters → **needs_review**; high/medium identity with HubSpot, ZoomInfo, or verified `domainSource` (or other trusted paths) → **trusted**; some high+`ai_guess`+domain cases → **trusted**; otherwise **needs_review**. **`linkedinSource === "ai_search"` is not, by itself, a needs-review rule** — a separate tooltip line calls out web-search LinkedIn on **trusted** rows.
+  - **Contacts:** similar exclusions (e.g. incomplete / personal email paths); empty sanitized company on an otherwise passable contact → **needs_review**; trusted paths mirror verification + identity rules.
 - **Review & Edit header counts** (Needs Review / Trusted / Excluded) follow **`row.status`** (`pending` / `approved` / `skipped`), not `reviewBucket`, so they reflect the operator’s current checkbox selections. Unchecking a **needs_review** row restores `status` to `pending` (not `skipped`); unchecking **trusted** or **excluded** sets `skipped`.
-- **Select All / Deselect All** only changes status for rows **visible** under the current **Show** filter; rows outside the filter are unchanged.
+- **Select All / Deselect All** only change status for rows **visible** under the current **Show** filter; rows outside the filter are unchanged. **Select All** never sets **`reviewBucket === "excluded"`** rows to **approved** — their `status` stays as-is.
+- **Trusted filter order:** with **Show: Trusted**, rows with `linkedinSource === "ai_search"` are listed **first** (stable sort); other filter tabs keep the default display order.
 - Review tooltip in `ReviewTable` uses a simplified four-state template:
   - Trusted
   - Trusted but missing data
