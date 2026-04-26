@@ -134,7 +134,7 @@ Mapping:
 
 ### Pre-Review behavior (current)
 
-- `advanceToReview` in `src/app/page.tsx` finalizes rows via `finalizeRowsForReview` and **always** sets the wizard step to `prereview` (never jumps straight to `enriched`).
+- `advanceToReview` in `src/app/page.tsx` finalizes rows via `finalizeRowsForReview` and **always** sets the wizard step to `prereview` (never jumps straight to `enriched`). Before `computeReviewBucket`, `finalizeRowsForReview` **backfills `identityConfidence` from `confidenceScore`** when identity is missing or empty and `confidenceScore` is set — so **bulk job rows** loaded from KV (which never pass through `getCachedCompany`) still bucket correctly for **high** / **medium** trusted rules.
 - `PreReviewGate` receives optional `enrichmentSummary` (non-null in **event** and **bulk** flows when the parent sets it). The **enrichment complete** card renders only when `enrichmentSummary` is present.
 - **International & government** and **duplicate** blocks inside the gate are still **threshold-driven** per `PreReviewGate` (`PREREVIEW_INTL_GOV_THRESHOLD`, `PREREVIEW_DUPLICATE_THRESHOLD` in `prereview.ts`); the summary card is independent of those sections.
 - `shouldOpenPreReviewGate` in `prereview.ts` remains available but is **not** used to choose between `prereview` and `enriched` in `page.tsx` (routing is always pre-review first).
@@ -381,10 +381,11 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 
 - **TTL:** `60 * 60 * 24 * 30` seconds (**30 days**) for both company and contact cache keys in `enrichment-cache.ts`.
 - **Keys:** `company:<normalized_name>`, `contact:<normalized_email>`.
-- **Read-time migrations (`getCachedCompany` only, in-memory — no write-back to KV):**
+- **Read-time migrations — `getCachedCompany` (in-memory on cache hit; no write-back to KV):**
   - If LinkedIn URL is set but `linkedinSource` is empty, set source to `zoominfo` vs `hubspot` from `enrichedByZoomInfo`.
   - If ZoomInfo–like fields are present but `enrichedByZoomInfo` is false, infer ZoomInfo and optionally `domainSource: "zoominfo_verified"`.
-  - If `identityConfidence` is missing, null, or empty string but `confidenceScore` is a non-empty string, set `identityConfidence` from `confidenceScore` so `computeReviewBucket` and other logic that read `identityConfidence` behave correctly for **older cached payloads** that only stored `confidenceScore`.
+  - If `identityConfidence` is missing, null, or empty string but `confidenceScore` is a non-empty string, set `identityConfidence` from `confidenceScore` for **older cached company payloads** that only stored `confidenceScore`.
+- **Identity backfill at review time — `finalizeRowsForReview` in `prereview.ts`:** the same **identityConfidence ← confidenceScore** rule runs **on every finalization** (event and bulk) before `computeReviewBucket`, and the backfilled value is **stored on the row objects** returned to the UI. This covers **job row JSON** and any path where a row was not read through `getCachedCompany` first.
 - **Connectivity probe:** `checkKvConnectivity()` writes/reads `__health_check__` and logs explicit misconfiguration/health errors (called once at module load in `enrich/zoominfo/route.ts`).
 - **Operational note:** Heavy duplicate imports benefit from cache; sustained high QPS may require a paid Upstash plan (monitor Upstash dashboard and Redis usage limits).
 
@@ -397,7 +398,7 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 
 ### Tooltip and review-state rules (current)
 
-- `computeReviewBucket` assigns buckets roughly as follows (see `prereview.ts` for the full decision tree):
+- `computeReviewBucket` assigns buckets roughly as follows (see `prereview.ts` for the full decision tree). **`identityConfidence`** in these rules is the value **after** `finalizeRowsForReview` backfills it from `confidenceScore` when missing.
   - **Companies:** international / government → **excluded**; `identityConfidence` low or unresolved → **excluded**; empty domain after filters → **needs_review**; high/medium identity with HubSpot, ZoomInfo, or verified `domainSource` (or other trusted paths) → **trusted**; some high+`ai_guess`+domain cases → **trusted**; otherwise **needs_review**. **`linkedinSource === "ai_search"` is not, by itself, a needs-review rule** — a separate tooltip line calls out web-search LinkedIn on **trusted** rows.
   - **Contacts:** similar exclusions (e.g. incomplete / personal email paths); empty sanitized company on an otherwise passable contact → **needs_review**; trusted paths mirror verification + identity rules.
 - **Review & Edit header counts** (Needs Review / Trusted / Excluded) follow **`row.status`** (`pending` / `approved` / `skipped`), not `reviewBucket`, so they reflect the operator’s current checkbox selections. Unchecking a **needs_review** row restores `status` to `pending` (not `skipped`); unchecking **trusted** or **excluded** sets `skipped`.

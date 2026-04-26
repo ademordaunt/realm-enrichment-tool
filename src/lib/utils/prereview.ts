@@ -4,6 +4,7 @@ import type {
   EnrichedCompany,
   EnrichedContact,
   ExclusionReason,
+  IdentityConfidence,
   ReviewBucket,
 } from "@/lib/utils/types";
 
@@ -382,9 +383,20 @@ export function finalizeRowsForReview<T extends EnrichedCompany | EnrichedContac
 ): T[] {
   const filtered = applyConfidenceFilter(rows);
   return filtered.map((row) => {
-    const { bucket, exclusionReason } = computeReviewBucket(row, listType);
+    const idConf = row.identityConfidence as
+      | IdentityConfidence
+      | null
+      | undefined
+      | "";
+    const patched: T =
+      (idConf === undefined || idConf === null || idConf === "") &&
+      typeof row.confidenceScore === "string" &&
+      row.confidenceScore.trim() !== ""
+        ? ({ ...row, identityConfidence: row.confidenceScore as IdentityConfidence } as T)
+        : row;
+    const { bucket, exclusionReason } = computeReviewBucket(patched, listType);
     return {
-      ...row,
+      ...patched,
       reviewBucket: bucket,
       exclusionReason,
     };
