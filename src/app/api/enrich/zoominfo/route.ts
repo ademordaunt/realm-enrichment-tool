@@ -9,6 +9,12 @@ import {
 import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
 
 export const maxDuration = 9;
+
+/** Rows per verify chunk when the client omits `chunkSize` (keep in sync with `page.tsx` verify loop). */
+const ZOOM_INFO_VERIFY_COMPANY_CHUNK_SIZE = 15;
+/** Contacts run Common Room + prospector + ZoomInfo per row — smaller chunks reduce timeouts. */
+const ZOOM_INFO_VERIFY_CONTACT_CHUNK_SIZE = 8;
+
 void checkKvConnectivity();
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -49,7 +55,9 @@ export async function POST(request: Request): Promise<Response> {
   const chunkSize =
     typeof body.chunkSize === "number" && body.chunkSize > 0
       ? body.chunkSize
-      : rows.length;
+      : listType === "contacts"
+        ? ZOOM_INFO_VERIFY_CONTACT_CHUNK_SIZE
+        : ZOOM_INFO_VERIFY_COMPANY_CHUNK_SIZE;
   const chunkRowOffset = chunkIndex * chunkSize;
 
   const encoder = new TextEncoder();

@@ -62,10 +62,16 @@ export async function batchCheckCompaniesInHubSpot(
     ),
   );
 
+  const searchDomains = Array.from(
+    new Set(
+      normalizedDomains.flatMap((d) => [d, `www.${d}`]),
+    ),
+  );
+
   const results = new Map<string, HubSpotCompanyPrecheckResult>();
   if (normalizedDomains.length === 0) return results;
 
-  for (const domainBatch of chunkValues(normalizedDomains, 100)) {
+  for (const domainBatch of chunkValues(searchDomains, 100)) {
     let after: string | undefined;
     do {
       const searchBody = {

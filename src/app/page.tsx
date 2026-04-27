@@ -42,7 +42,9 @@ const NAV_STEPS = [
 
 const PREVIEW_MAX_ROWS = 50;
 /** Rows per ZoomInfo verify request — aligned with API `maxDuration` and inter-row delay. */
-const ZOOM_VERIFY_CHUNK_SIZE = 15;
+const ZOOM_VERIFY_COMPANY_CHUNK_SIZE = 15;
+/** Contacts are heavier per row (Common Room + prospector + ZoomInfo); use smaller chunks than companies. */
+const ZOOM_VERIFY_CONTACT_CHUNK_SIZE = 8;
 const SESSION_STORAGE_KEY = "realm-enrichment-session-v1";
 const BULK_JOB_SESSION_KEY = "realm-bulk-job-id";
 
@@ -1296,17 +1298,21 @@ export default function Home() {
     }
 
     const nonHighTotal = computeZoomVerifyNonHighTotal(aiRows, listType);
-    const numChunks = Math.ceil(totalRows / ZOOM_VERIFY_CHUNK_SIZE);
+    const zoomVerifyChunkSize =
+      listType === "contacts"
+        ? ZOOM_VERIFY_CONTACT_CHUNK_SIZE
+        : ZOOM_VERIFY_COMPANY_CHUNK_SIZE;
+    const numChunks = Math.ceil(totalRows / zoomVerifyChunkSize);
     let sumEnriched = 0;
     let sumCached = 0;
     let sumCredits = 0;
     const merged: (EnrichedCompany | EnrichedContact)[] = [];
 
     for (let ci = 0; ci < numChunks; ci++) {
-      const chunkStart = ci * ZOOM_VERIFY_CHUNK_SIZE;
+      const chunkStart = ci * zoomVerifyChunkSize;
       const slice = aiRows.slice(
         chunkStart,
-        chunkStart + ZOOM_VERIFY_CHUNK_SIZE,
+        chunkStart + zoomVerifyChunkSize,
       );
       const nonHighPrefixCount = countZoomVerifyNonHighPrefix(
         aiRows,
@@ -1320,7 +1326,7 @@ export default function Home() {
           rows: slice,
           listType,
           chunkIndex: ci,
-          chunkSize: ZOOM_VERIFY_CHUNK_SIZE,
+          chunkSize: zoomVerifyChunkSize,
           totalRows,
           nonHighTotal,
           nonHighPrefixCount,
