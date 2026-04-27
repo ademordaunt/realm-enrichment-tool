@@ -865,9 +865,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     const list = displayRows.filter((r) => (r.reviewBucket ?? "needs_review") === filter);
     if (filter === "trusted") {
       return [...list].sort((a, b) => {
-        const aFirst = a.linkedinSource === "ai_search" ? 0 : 1;
-        const bFirst = b.linkedinSource === "ai_search" ? 0 : 1;
-        return aFirst - bFirst;
+        const aAiSearch = a.linkedinSource === "ai_search" ? 0 : 1;
+        const bAiSearch = b.linkedinSource === "ai_search" ? 0 : 1;
+        if (aAiSearch !== bAiSearch) return aAiSearch - bAiSearch;
+        const aMissingLinkedIn = !a.linkedinUrl?.trim() ? 0 : 1;
+        const bMissingLinkedIn = !b.linkedinUrl?.trim() ? 0 : 1;
+        return aMissingLinkedIn - bMissingLinkedIn;
       });
     }
     return list;

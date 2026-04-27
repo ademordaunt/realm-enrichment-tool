@@ -27,7 +27,7 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed, rowsById }: 
   const folderId = result.folderId?.trim() ?? "";
   const folderUrl =
     portalId && folderId
-      ? `https://app.hubspot.com/contacts/${portalId}/lists/folders/${encodeURIComponent(folderId)}`
+      ? `https://app.hubspot.com/contacts/${portalId}/objectLists/folders?folderId=${encodeURIComponent(folderId)}`
       : null;
 
   const failed = result.errors.length;
