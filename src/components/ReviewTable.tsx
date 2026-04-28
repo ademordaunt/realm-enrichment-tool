@@ -852,7 +852,24 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   }, [stableRowOrder, rowsById, sortedRows]);
 
   const filteredByShowFilter = useMemo(() => {
-    if (filter === "all") return displayRows;
+    if (filter === "all") {
+      return [...displayRows].sort((a, b) => {
+        const bucketOrder = (r: typeof a) => {
+          const bucket = r.reviewBucket ?? "needs_review";
+          if (bucket === "needs_review") return 0;
+          if (bucket === "trusted") return 1;
+          return 2;
+        };
+        const bucketDiff = bucketOrder(a) - bucketOrder(b);
+        if (bucketDiff !== 0) return bucketDiff;
+        const tier = (r: typeof a) => {
+          if (!r.linkedinUrl?.trim()) return 0;
+          if (r.linkedinSource === "ai_search") return 1;
+          return 2;
+        };
+        return tier(a) - tier(b);
+      });
+    }
     const list = displayRows.filter((r) => (r.reviewBucket ?? "needs_review") === filter);
     if (filter === "trusted") {
       return [...list].sort((a, b) => {
