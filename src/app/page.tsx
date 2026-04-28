@@ -140,7 +140,7 @@ type PersistedSession = {
 };
 
 type PersistedManualLinkedInEdits = {
-  rows: Array<{ id: string; linkedinUrl: string }>;
+  rows: Array<{ stableKey: string; linkedinUrl: string }>;
 };
 
 function rowDedupKey(row: RawCompanyRow | RawContactRow, kind: "companies" | "contacts"): string {
@@ -913,23 +913,34 @@ export default function Home() {
 
   useEffect(() => {
     if (step !== "enriched" || reviewRows.length === 0 || restoredManualEditsRef.current) return;
-    if (typeof window === "undefined") return;
+    if (!enrichedListType || typeof window === "undefined") return;
     const raw = window.sessionStorage.getItem(MANUAL_EDITS_SESSION_KEY);
     if (!raw) return;
     try {
       const saved = JSON.parse(raw) as PersistedManualLinkedInEdits;
       const savedRows = Array.isArray(saved?.rows) ? saved.rows : [];
       if (savedRows.length === 0) return;
-      const currentIds = new Set(reviewRows.map((r) => r.id));
-      const savedIds = new Set(savedRows.map((r) => r.id));
-      if (currentIds.size !== savedIds.size) return;
-      const idsMatch = [...currentIds].every((id) => savedIds.has(id));
-      if (!idsMatch) return;
-      const savedById = new Map(
-        savedRows.map((r) => [r.id, typeof r.linkedinUrl === "string" ? r.linkedinUrl.trim() : ""]),
-      );
+      const savedByStableKey = new Map<string, string>();
+      for (const r of savedRows) {
+        const rawKey =
+          typeof (r as { stableKey?: string }).stableKey === "string"
+            ? (r as { stableKey: string }).stableKey
+            : "";
+        const key = rawKey.trim().toLowerCase();
+        if (!key) continue;
+        const url =
+          typeof r.linkedinUrl === "string" ? r.linkedinUrl.trim() : String(r.linkedinUrl ?? "").trim();
+        if (url) savedByStableKey.set(key, url);
+      }
+      if (savedByStableKey.size === 0) return;
+
       const merged = reviewRows.map((row) => {
-        const savedLinkedIn = savedById.get(row.id) ?? "";
+        const stableKey =
+          enrichedListType === "contacts"
+            ? (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? ""
+            : (row as EnrichedCompany).domain?.trim().toLowerCase() ?? "";
+        if (!stableKey) return row;
+        const savedLinkedIn = savedByStableKey.get(stableKey) ?? "";
         const currentLinkedIn = (row.linkedinUrl ?? "").trim();
         if (!savedLinkedIn || currentLinkedIn) return row;
         return { ...row, linkedinUrl: savedLinkedIn };
@@ -940,7 +951,7 @@ export default function Home() {
     } catch {
       // Ignore malformed payloads and leave current rows untouched.
     }
-  }, [step, reviewRows]);
+  }, [step, reviewRows, enrichedListType]);
 
   useEffect(() => {
     return () => {
@@ -1967,13 +1978,20 @@ export default function Home() {
       if (!enrichedListType || !eventContext) return;
       const approved = reviewRows.filter((r) => r.status === "approved");
       if (approved.length === 0) return;
-      if (typeof window !== "undefined") {
-        const payload: PersistedManualLinkedInEdits = {
-          rows: reviewRows.map((row) => ({
-            id: row.id,
+      if (typeof window !== "undefined" && enrichedListType) {
+        const rowsWithStableKey: Array<{ stableKey: string; linkedinUrl: string }> = [];
+        for (const row of reviewRows) {
+          const stableKey =
+            enrichedListType === "contacts"
+              ? (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? ""
+              : (row as EnrichedCompany).domain?.trim().toLowerCase() ?? "";
+          if (!stableKey) continue;
+          rowsWithStableKey.push({
+            stableKey,
             linkedinUrl: String(row.linkedinUrl ?? ""),
-          })),
-        };
+          });
+        }
+        const payload: PersistedManualLinkedInEdits = { rows: rowsWithStableKey };
         try {
           window.sessionStorage.setItem(MANUAL_EDITS_SESSION_KEY, JSON.stringify(payload));
         } catch {

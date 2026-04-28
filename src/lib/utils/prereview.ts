@@ -342,6 +342,12 @@ export function computeReviewBucket(
   }
 
   if (row.enrichedByAI === false) {
+    if (listType === "contacts") {
+      const contact = row as EnrichedContact;
+      if (options?.importMode === "event" && !contact.linkedinUrl?.trim()) {
+        return { bucket: "needs_review" };
+      }
+    }
     return { bucket: "trusted" };
   }
 
