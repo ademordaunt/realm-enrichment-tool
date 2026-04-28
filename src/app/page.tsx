@@ -47,6 +47,7 @@ const ZOOM_VERIFY_COMPANY_CHUNK_SIZE = 15;
 const ZOOM_VERIFY_CONTACT_CHUNK_SIZE = 8;
 const SESSION_STORAGE_KEY = "realm-enrichment-session-v1";
 const BULK_JOB_SESSION_KEY = "realm-bulk-job-id";
+const MANUAL_EDITS_SESSION_KEY = "realm-enrichment-manual-edits-v1";
 
 /** Prefer `detail` from standardized API error JSON; fall back to `error`. */
 function apiJsonErrorMessage(o: { error?: string; detail?: string }): string {
@@ -136,6 +137,10 @@ type PersistedSession = {
   eventContext: EventContext | null;
   listType: "companies" | "contacts" | null;
   parseResult: ParseResponse | null;
+};
+
+type PersistedManualLinkedInEdits = {
+  rows: Array<{ id: string; linkedinUrl: string }>;
 };
 
 function rowDedupKey(row: RawCompanyRow | RawContactRow, kind: "companies" | "contacts"): string {
@@ -862,6 +867,7 @@ export default function Home() {
   const removeAllDupMsgTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const enrichmentBannerTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoredApprovedIdsRef = useRef<Set<string> | null>(null);
+  const restoredManualEditsRef = useRef(false);
   const sessionHydratedRef = useRef(false);
 
   const [showEnrichmentCompleteBanner, setShowEnrichmentCompleteBanner] = useState(false);
@@ -890,6 +896,7 @@ export default function Home() {
       setReviewRows([]);
       return;
     }
+    restoredManualEditsRef.current = false;
     const seeded = applyInitialReviewStatus(enriched);
     const approvedIds = restoredApprovedIdsRef.current;
     if (!approvedIds || approvedIds.size === 0) {
@@ -903,6 +910,37 @@ export default function Home() {
     setReviewRows(withRestoredApproval);
     restoredApprovedIdsRef.current = null;
   }, [enriched, enrichedListType]);
+
+  useEffect(() => {
+    if (step !== "enriched" || reviewRows.length === 0 || restoredManualEditsRef.current) return;
+    if (typeof window === "undefined") return;
+    const raw = window.sessionStorage.getItem(MANUAL_EDITS_SESSION_KEY);
+    if (!raw) return;
+    try {
+      const saved = JSON.parse(raw) as PersistedManualLinkedInEdits;
+      const savedRows = Array.isArray(saved?.rows) ? saved.rows : [];
+      if (savedRows.length === 0) return;
+      const currentIds = new Set(reviewRows.map((r) => r.id));
+      const savedIds = new Set(savedRows.map((r) => r.id));
+      if (currentIds.size !== savedIds.size) return;
+      const idsMatch = [...currentIds].every((id) => savedIds.has(id));
+      if (!idsMatch) return;
+      const savedById = new Map(
+        savedRows.map((r) => [r.id, typeof r.linkedinUrl === "string" ? r.linkedinUrl.trim() : ""]),
+      );
+      const merged = reviewRows.map((row) => {
+        const savedLinkedIn = savedById.get(row.id) ?? "";
+        const currentLinkedIn = (row.linkedinUrl ?? "").trim();
+        if (!savedLinkedIn || currentLinkedIn) return row;
+        return { ...row, linkedinUrl: savedLinkedIn };
+      }) as EnrichedCompany[] | EnrichedContact[];
+      restoredManualEditsRef.current = true;
+      setReviewRows(merged);
+      window.sessionStorage.removeItem(MANUAL_EDITS_SESSION_KEY);
+    } catch {
+      // Ignore malformed payloads and leave current rows untouched.
+    }
+  }, [step, reviewRows]);
 
   useEffect(() => {
     return () => {
@@ -986,15 +1024,16 @@ export default function Home() {
       rows: EnrichedCompany[] | EnrichedContact[],
       listType: "companies" | "contacts",
     ) => {
+      const finalizeOpts = { importMode: wizardImportMode };
       const finalized =
         listType === "companies"
-          ? finalizeRowsForReview(rows as EnrichedCompany[], "companies")
-          : finalizeRowsForReview(rows as EnrichedContact[], "contacts");
+          ? finalizeRowsForReview(rows as EnrichedCompany[], "companies", finalizeOpts)
+          : finalizeRowsForReview(rows as EnrichedContact[], "contacts", finalizeOpts);
       setEnriched(finalized);
       setEnrichedListType(listType);
       setStep("prereview");
     },
-    [],
+    [wizardImportMode],
   );
 
   const stopJobPolling = useCallback(() => {
@@ -1928,6 +1967,19 @@ export default function Home() {
       if (!enrichedListType || !eventContext) return;
       const approved = reviewRows.filter((r) => r.status === "approved");
       if (approved.length === 0) return;
+      if (typeof window !== "undefined") {
+        const payload: PersistedManualLinkedInEdits = {
+          rows: reviewRows.map((row) => ({
+            id: row.id,
+            linkedinUrl: String(row.linkedinUrl ?? ""),
+          })),
+        };
+        try {
+          window.sessionStorage.setItem(MANUAL_EDITS_SESSION_KEY, JSON.stringify(payload));
+        } catch {
+          // Best-effort persistence for recovery on push failure.
+        }
+      }
       setPushError(null);
       setLastPushLeadSource(settings.leadSource);
       pushListCreatedRef.current = null;
@@ -2578,10 +2630,13 @@ export default function Home() {
             enrichmentSummary={eventEnrichmentSummary}
             onContinue={(updatedRows) => {
               const lt = enrichedListType!;
+              const finalizeOpts = {
+                importMode: eventContext?.importMode ?? wizardImportMode,
+              };
               const finalized =
                 lt === "companies"
-                  ? finalizeRowsForReview(updatedRows as EnrichedCompany[], "companies")
-                  : finalizeRowsForReview(updatedRows as EnrichedContact[], "contacts");
+                  ? finalizeRowsForReview(updatedRows as EnrichedCompany[], "companies", finalizeOpts)
+                  : finalizeRowsForReview(updatedRows as EnrichedContact[], "contacts", finalizeOpts);
               setEnriched(finalized);
               setStep("enriched");
             }}

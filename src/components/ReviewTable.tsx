@@ -43,6 +43,8 @@ function linkedinSourceLegendLabel(s: LinkedInSource | undefined): string {
       return "Common Room ✓";
     case "ai_search":
       return "Web search ⚠️";
+    case "manual":
+      return "Manual edit";
     default:
       return "Unknown";
   }
@@ -610,6 +612,7 @@ function LinkedInSourceDot(props: { source: LinkedInSource }) {
     zoominfo: { className: "bg-blue-600", title: "From ZoomInfo" },
     commonroom: { className: "bg-teal-600", title: "From Common Room" },
     ai_search: { className: "bg-amber-500", title: "From web search — verify" },
+    manual: { className: "bg-slate-600", title: "Manually edited" },
   };
   const cfg = map[source];
   if (!cfg) return null;
@@ -1311,7 +1314,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             markEdited(row.id, "linkedinUrl");
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
-                                r.id === row.id ? { ...r, linkedinUrl: v, linkedinSource: "" } : r,
+                                r.id === row.id
+                                  ? { ...r, linkedinUrl: v, linkedinSource: "manual" }
+                                  : r,
                               ),
                             );
                           }}
@@ -1453,7 +1458,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
                                 r.id === row.id
-                                  ? { ...r, linkedinUrl: next, linkedinSource: "" }
+                                  ? { ...r, linkedinUrl: next, linkedinSource: "manual" }
                                   : r,
                               ),
                             );

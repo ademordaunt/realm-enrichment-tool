@@ -10,7 +10,7 @@ export type DomainSource =
   | "csv"
   | "";
 
-export type LinkedInSource = "hubspot" | "zoominfo" | "commonroom" | "ai_search" | "";
+export type LinkedInSource = "hubspot" | "zoominfo" | "commonroom" | "ai_search" | "manual" | "";
 
 export type ReviewBucket = "trusted" | "needs_review" | "excluded";
 

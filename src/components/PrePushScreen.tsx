@@ -88,20 +88,20 @@ function PrePushEditableCell(props: {
   );
 }
 
-export const LEAD_SOURCE_OPTIONS = [
-  "Marketing - Advertisement",
-  "Marketing - CisoExecNet",
-  "Marketing - CISO XC",
-  "Marketing - Cyalliance",
-  "Marketing - Cybersecurity Summit",
-  "Marketing - ExecWeb",
-  "Marketing - FutureCon",
-  "Marketing - SageTap",
-  "Marketing - Social Media",
-  "Marketing - Trade Show",
-  "Marketing - Webinar",
-  "Marketing - Website",
-] as const;
+export const LEAD_SOURCE_OPTIONS: Array<{ label: string; value: string }> = [
+  { label: "Marketing - Advertisement", value: "advertisement" },
+  { label: "Marketing - CisoExecNet", value: "Marketing - CisoExecNet" },
+  { label: "Marketing - CISO XC", value: "Marketing - CISO XC" },
+  { label: "Marketing - Cyalliance", value: "Marketing - Cyalliance" },
+  { label: "Marketing - Cybersecurity Summit", value: "Marekting - Cybersecurity Summit" },
+  { label: "Marketing - ExecWeb", value: "Marketing - ExecWeb" },
+  { label: "Marketing - FutureCon", value: "Marketing - FutureCon" },
+  { label: "Marketing - SageTap", value: "Marketing - SageTap" },
+  { label: "Marketing - Social Media", value: "social_media" },
+  { label: "Marketing - Trade Show", value: "trade_show" },
+  { label: "Marketing - Webinar", value: "Marketing - Webinar" },
+  { label: "Marketing - Website", value: "website" },
+];
 
 export type PrePushSettings = {
   listName: string;
@@ -381,8 +381,8 @@ export function PrePushScreen({
                   >
                     <option value="">Select lead source</option>
                     {LEAD_SOURCE_OPTIONS.map((opt) => (
-                      <option key={opt} value={opt}>
-                        {opt}
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
                       </option>
                     ))}
                   </select>

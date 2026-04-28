@@ -422,10 +422,15 @@ async function handler(req: Request): Promise<Response> {
       return Response.json({ ok: true });
     }
 
+    const finalizeOpts = {
+      importMode: jobState.eventContext?.importMode === "event"
+        ? ("event" as const)
+        : ("bulk" as const),
+    };
     const finalized =
       jobState.listType === "companies"
-        ? finalizeRowsForReview(allRows as EnrichedCompany[], "companies")
-        : finalizeRowsForReview(allRows as EnrichedContact[], "contacts");
+        ? finalizeRowsForReview(allRows as EnrichedCompany[], "companies", finalizeOpts)
+        : finalizeRowsForReview(allRows as EnrichedContact[], "contacts", finalizeOpts);
     const withLinkedInSourceFallback = finalized.map((row) => {
       if (row.linkedinUrl?.trim() && !row.linkedinSource?.trim()) {
         return { ...row, linkedinSource: "ai_search" as const };

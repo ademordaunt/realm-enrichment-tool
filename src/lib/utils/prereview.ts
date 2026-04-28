@@ -306,9 +306,12 @@ export function applyConfidenceFilter<T extends EnrichedCompany | EnrichedContac
   });
 }
 
+export type ComputeReviewBucketOptions = { importMode?: "event" | "bulk" };
+
 export function computeReviewBucket(
   row: EnrichedCompany | EnrichedContact,
   listType: "companies" | "contacts",
+  options?: ComputeReviewBucketOptions,
 ): { bucket: ReviewBucket; exclusionReason?: ExclusionReason } {
   if (listType === "companies") {
     const company = row as EnrichedCompany;
@@ -338,29 +341,39 @@ export function computeReviewBucket(
     };
   }
 
+  if (row.enrichedByAI === false) {
+    return { bucket: "trusted" };
+  }
+
   if (listType === "contacts") {
     const contact = row as EnrichedContact;
     if (!sanitizeCompanyName(contact.resolvedCompany)) {
       return { bucket: "needs_review" };
     }
+    if (options?.importMode === "event") {
+      if (!contact.title?.trim() || !contact.linkedinUrl?.trim()) {
+        return { bucket: "needs_review" };
+      }
+    }
   } else {
-    const company = row as EnrichedCompany;
-    if (!company.domain?.trim()) {
+    const companyNeedsDomain = row as EnrichedCompany;
+    if (!companyNeedsDomain.domain?.trim()) {
       return { bucket: "needs_review" };
     }
   }
 
   const company = row as EnrichedCompany;
-  const verifiedByHubSpotOrZoomInfo =
+  const verifiedByTrustedSource =
     row.hubspotId != null ||
     row.enrichedByZoomInfo === true ||
+    row.enrichedByCommonRoom === true ||
     (listType === "companies" &&
       (company.domainSource === "zoominfo_verified" ||
         company.domainSource === "hubspot_verified"));
 
   if (
     (row.identityConfidence === "high" || row.identityConfidence === "medium") &&
-    verifiedByHubSpotOrZoomInfo
+    verifiedByTrustedSource
   ) {
     return { bucket: "trusted" };
   }
@@ -380,6 +393,7 @@ export function computeReviewBucket(
 export function finalizeRowsForReview<T extends EnrichedCompany | EnrichedContact>(
   rows: T[],
   listType: "companies" | "contacts",
+  options?: ComputeReviewBucketOptions,
 ): T[] {
   const filtered = applyConfidenceFilter(rows);
   return filtered.map((row) => {
@@ -394,7 +408,7 @@ export function finalizeRowsForReview<T extends EnrichedCompany | EnrichedContac
       row.confidenceScore.trim() !== ""
         ? ({ ...row, identityConfidence: row.confidenceScore as IdentityConfidence } as T)
         : row;
-    const { bucket, exclusionReason } = computeReviewBucket(patched, listType);
+    const { bucket, exclusionReason } = computeReviewBucket(patched, listType, options);
     return {
       ...patched,
       reviewBucket: bucket,
