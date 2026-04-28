@@ -84,6 +84,28 @@ function contactPushExtras(
   };
 }
 
+function parseListIdFromHubSpotListsJson(json: {
+  list?: { listId?: string | number; id?: string | number; hs_list_id?: string | number };
+  listId?: string | number;
+  id?: string | number;
+  hs_list_id?: string | number;
+  list_id?: string | number;
+  objectId?: string | number;
+  object_id?: string | number;
+}): string | null {
+  const listId =
+    json.list?.listId ??
+    json.list?.id ??
+    json.list?.hs_list_id ??
+    json.listId ??
+    json.id ??
+    json.hs_list_id ??
+    json.list_id ??
+    json.objectId ??
+    json.object_id;
+  return listId != null && String(listId).trim() !== "" ? String(listId) : null;
+}
+
 async function createStaticListForPush(
   name: string,
   objectTypeId: string,
@@ -106,33 +128,31 @@ async function createStaticListForPush(
   });
 
   if (!res.ok) {
-    throw new Error(await readHubSpotError(res));
+    const createErr = await readHubSpotError(res);
+    if (!/already exist/i.test(createErr)) {
+      throw new Error(createErr);
+    }
+    const getPath = `/crm/v3/lists/object-type-id/${encodeURIComponent(objectTypeId)}/name/${encodeURIComponent(name)}`;
+    const getRes = await hubspotFetch(getPath, { method: "GET" });
+    if (!getRes.ok) {
+      throw new Error(createErr);
+    }
+    const getJson = (await getRes.json()) as Parameters<typeof parseListIdFromHubSpotListsJson>[0];
+    const existingId = parseListIdFromHubSpotListsJson(getJson);
+    if (!existingId) {
+      throw new Error(createErr);
+    }
+    console.log("[HubSpot] createStaticListForPush reusing existing list:", existingId);
+    return existingId;
   }
 
-  const json = (await res.json()) as {
-    list?: { listId?: string | number; id?: string | number; hs_list_id?: string | number };
-    listId?: string | number;
-    id?: string | number;
-    hs_list_id?: string | number;
-    list_id?: string | number;
-    objectId?: string | number;
-    object_id?: string | number;
-  };
+  const json = (await res.json()) as Parameters<typeof parseListIdFromHubSpotListsJson>[0];
   console.log("[HubSpot] createStaticListForPush raw response:", json);
-  const listId =
-    json.list?.listId ??
-    json.list?.id ??
-    json.list?.hs_list_id ??
-    json.listId ??
-    json.id ??
-    json.hs_list_id ??
-    json.list_id ??
-    json.objectId ??
-    json.object_id;
+  const listId = parseListIdFromHubSpotListsJson(json);
   if (!listId) {
     throw new Error("HubSpot did not return listId when creating a list.");
   }
-  return String(listId);
+  return listId;
 }
 
 /**

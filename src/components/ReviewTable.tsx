@@ -612,7 +612,7 @@ function LinkedInSourceDot(props: { source: LinkedInSource }) {
     zoominfo: { className: "bg-blue-600", title: "From ZoomInfo" },
     commonroom: { className: "bg-teal-600", title: "From Common Room" },
     ai_search: { className: "bg-amber-500", title: "From web search — verify" },
-    manual: { className: "bg-slate-600", title: "Manually edited" },
+    manual: { className: "bg-zinc-800 dark:bg-black", title: "Manually edited" },
   };
   const cfg = map[source];
   if (!cfg) return null;
@@ -630,11 +630,10 @@ function LinkedInProfileCell(props: {
   edited: boolean;
   muted?: boolean;
   breakAll?: boolean;
-  missingSearchUrl?: string;
   linkedinSource?: LinkedInSource;
   onSave: (next: string) => void;
 }) {
-  const { value, edited, muted, breakAll, missingSearchUrl, linkedinSource, onSave } = props;
+  const { value, edited, muted, breakAll, linkedinSource, onSave } = props;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => (value == null ? "" : String(value)));
 
@@ -687,17 +686,6 @@ function LinkedInProfileCell(props: {
         <span className={`min-w-0 flex-1 text-xs sm:text-sm ${muted ? "text-zinc-500" : "text-zinc-400"}`}>
           —
         </span>
-        {!linkedinSource?.trim() && missingSearchUrl ? (
-          <a
-            href={missingSearchUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Search LinkedIn on Google"
-            className="shrink-0 text-xs text-(--realm-purple) hover:underline"
-          >
-            🔍
-          </a>
-        ) : null}
         <button
           type="button"
           className="shrink-0 rounded p-0.5 text-sm text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
@@ -868,12 +856,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     const list = displayRows.filter((r) => (r.reviewBucket ?? "needs_review") === filter);
     if (filter === "trusted") {
       return [...list].sort((a, b) => {
-        const aAiSearch = a.linkedinSource === "ai_search" ? 0 : 1;
-        const bAiSearch = b.linkedinSource === "ai_search" ? 0 : 1;
-        if (aAiSearch !== bAiSearch) return aAiSearch - bAiSearch;
-        const aMissingLinkedIn = !a.linkedinUrl?.trim() ? 0 : 1;
-        const bMissingLinkedIn = !b.linkedinUrl?.trim() ? 0 : 1;
-        return aMissingLinkedIn - bMissingLinkedIn;
+        const tier = (r: typeof a) => {
+          if (!r.linkedinUrl?.trim()) return 0;
+          if (r.linkedinSource === "ai_search") return 1;
+          return 2;
+        };
+        return tier(a) - tier(b);
       });
     }
     return list;
@@ -1145,6 +1133,10 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             <span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> Web search — searched but
                             unverified, review recommended
                           </p>
+                          <p>
+                            <span className="inline-block h-2 w-2 rounded-full bg-zinc-800 dark:bg-black" /> Manual entry —
+                            added by you during review
+                          </p>
                         </div>
                       }
                       trigger={
@@ -1193,6 +1185,10 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           <p>
                             <span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> Web search — searched but
                             unverified, review recommended
+                          </p>
+                          <p>
+                            <span className="inline-block h-2 w-2 rounded-full bg-zinc-800 dark:bg-black" /> Manual entry —
+                            added by you during review
                           </p>
                         </div>
                       }
@@ -1349,12 +1345,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   const muted = row.status === "skipped";
                   const checked = row.status === "approved";
                   const fullName = formatContactFullName(row);
-                  const companyForSearch =
-                    sanitizeCompanyName(row.resolvedCompany) ||
-                    sanitizeUnknown(row.rawCompany);
-                  const searchLinkedInUrl = `https://www.google.com/search?q=${encodeURIComponent(
-                    `"${fullName}" "${companyForSearch}" LinkedIn`,
-                  )}`;
                   return (
                     <tr key={row.id} className={rowShellClass(row, ri)}>
                       <td
@@ -1451,7 +1441,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           muted={muted}
                           breakAll
                           linkedinSource={row.linkedinSource}
-                          missingSearchUrl={searchLinkedInUrl}
                           onSave={(v) => {
                             markEdited(row.id, "linkedinUrl");
                             const next = sanitizeUnknown(v);
