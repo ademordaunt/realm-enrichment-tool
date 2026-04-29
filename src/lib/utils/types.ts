@@ -19,6 +19,7 @@ export type ExclusionReason =
   | "government"
   | "low_confidence"
   | "unresolved"
+  | "no_email"
   | "duplicate"
   | "incomplete"
   | "personal_email"

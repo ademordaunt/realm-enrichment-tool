@@ -326,9 +326,12 @@ export function computeReviewBucket(
   if (listType === "contacts") {
     const contact = row as EnrichedContact;
     if (!isFullContact(contact)) {
-      const reason = isPersonalEmail(contact.resolvedEmail ?? "")
-        ? ("personal_email" as const)
-        : ("missing_required_fields" as const);
+      const email = contact.resolvedEmail ?? "";
+      const reason = !email.trim()
+        ? ("no_email" as const)
+        : isPersonalEmail(email)
+          ? ("personal_email" as const)
+          : ("missing_required_fields" as const);
       return { bucket: "excluded", exclusionReason: reason };
     }
   }

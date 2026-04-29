@@ -100,6 +100,17 @@ const CONTACT_HEADER_MAP: Record<string, keyof RawContactRow | "ignore"> = {
   location: "location",
   email: "email",
   emailaddress: "email",
+  businessemail: "email",
+  workemail: "email",
+  corporateemail: "email",
+  contactemail: "email",
+  primaryemail: "email",
+  linkedincontactprofileurl: "linkedinUrl",
+  linkedinprofileurl: "linkedinUrl",
+  linkedinurl: "linkedinUrl",
+  linkedinprofile: "linkedinUrl",
+  linkedincontacturl: "linkedinUrl",
+  linkedin: "linkedinUrl",
   phone: "phone",
   phonenumber: "phone",
   phonenum: "phone",
@@ -129,6 +140,17 @@ function rowLooksLikeHeaderRow(row: string[]): boolean {
     "lastname",
     "email",
     "emailaddress",
+    "businessemail",
+    "workemail",
+    "corporateemail",
+    "contactemail",
+    "primaryemail",
+    "linkedincontactprofileurl",
+    "linkedinprofileurl",
+    "linkedinurl",
+    "linkedinprofile",
+    "linkedincontacturl",
+    "linkedin",
     "company",
     "title",
     "jobtitle",
@@ -237,7 +259,14 @@ export function detectListType(normalizedHeaders: string[]): ListType {
   const hasFirst =
     nonempty.includes("first") || nonempty.includes("firstname");
   const hasLast = nonempty.includes("last") || nonempty.includes("lastname");
-  const hasEmail = nonempty.includes("email") || nonempty.includes("emailaddress");
+  const hasEmail =
+    nonempty.includes("email") ||
+    nonempty.includes("emailaddress") ||
+    nonempty.includes("businessemail") ||
+    nonempty.includes("workemail") ||
+    nonempty.includes("corporateemail") ||
+    nonempty.includes("contactemail") ||
+    nonempty.includes("primaryemail");
   const onlyCompany =
     nonempty.length === 1 && isCompanyHeader(nonempty[0]!);
 

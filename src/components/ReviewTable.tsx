@@ -60,6 +60,8 @@ function exclusionReasonBadgeLabel(reason: ExclusionReason | undefined): string 
       return "Low confidence";
     case "unresolved":
       return "Unresolved";
+    case "no_email":
+      return "No email";
     case "personal_email":
       return "Personal email";
     case "missing_required_fields":
@@ -870,17 +872,34 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   }, [stableRowOrder, rowsById, sortedRows]);
 
   const filteredByShowFilter = useMemo(() => {
-    if (filter === "all") return displayRows;
-    const list = displayRows.filter((r) => (r.reviewBucket ?? "needs_review") === filter);
-    if (filter === "trusted") {
-      return [...list].sort((a, b) => {
-        const tier = (r: typeof a) => {
-          if (!r.linkedinUrl?.trim()) return 0;
-          if (r.linkedinSource === "ai_search") return 1;
-          return 2;
-        };
-        return tier(a) - tier(b);
+    const linkedInTier = (r: EnrichedCompany | EnrichedContact) => {
+      if (!r.linkedinUrl?.trim()) return 0;
+      if (r.linkedinSource === "ai_search") return 1;
+      return 2;
+    };
+    const bucketRank = (r: EnrichedCompany | EnrichedContact) => {
+      const b = r.reviewBucket ?? "needs_review";
+      if (b === "needs_review") return 0;
+      if (b === "trusted") return 1;
+      return 2;
+    };
+    const displayIndexById = new Map(displayRows.map((r, idx) => [r.id, idx]));
+
+    if (filter === "all") {
+      return [...displayRows].sort((a, b) => {
+        const aBucket = bucketRank(a);
+        const bBucket = bucketRank(b);
+        if (aBucket !== bBucket) return aBucket - bBucket;
+        const aTier = linkedInTier(a);
+        const bTier = linkedInTier(b);
+        if (aTier !== bTier) return aTier - bTier;
+        return (displayIndexById.get(a.id) ?? 0) - (displayIndexById.get(b.id) ?? 0);
       });
+    }
+
+    const list = displayRows.filter((r) => (r.reviewBucket ?? "needs_review") === filter);
+    if (filter === "trusted" || filter === "excluded") {
+      return [...list].sort((a, b) => linkedInTier(a) - linkedInTier(b));
     }
     return list;
   }, [displayRows, filter]);
