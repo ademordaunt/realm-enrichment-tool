@@ -779,6 +779,24 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     [onRowsChange],
   );
 
+  const persistManualEdit = useCallback(
+    (stableKey: string, field: string, value: unknown) => {
+      const normalizedStableKey = stableKey.trim().toLowerCase();
+      if (!normalizedStableKey) return;
+      void fetch("/api/manual-edits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stableKey: normalizedStableKey,
+          listType,
+          field,
+          value,
+        }),
+      }).catch(() => {});
+    },
+    [listType],
+  );
+
   const sortedRows = useMemo(() => {
     if (listType === "companies") {
       return [...(rows as EnrichedCompany[])].sort((a, b) => {
@@ -1246,6 +1264,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                                 r.id === row.id ? { ...r, resolvedName: v } : r,
                               ),
                             );
+                            persistManualEdit(
+                              (row as EnrichedCompany).domain?.trim().toLowerCase() ?? "",
+                              "resolvedName",
+                              v,
+                            );
                           }}
                         />
                       </td>
@@ -1265,6 +1288,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                                   : r,
                               ),
                             );
+                            persistManualEdit(
+                              (row as EnrichedCompany).domain?.trim().toLowerCase() ?? "",
+                              "domain",
+                              domain,
+                            );
                           }}
                         />
                       </td>
@@ -1281,6 +1309,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                                 r.id === row.id ? { ...r, state: full } : r,
                               ),
                             );
+                            persistManualEdit(
+                              (row as EnrichedCompany).domain?.trim().toLowerCase() ?? "",
+                              "state",
+                              full,
+                            );
                           }}
                         />
                       </td>
@@ -1295,6 +1328,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               (rows as EnrichedCompany[]).map((r) =>
                                 r.id === row.id ? { ...r, numberOfEmployees: n } : r,
                               ),
+                            );
+                            persistManualEdit(
+                              (row as EnrichedCompany).domain?.trim().toLowerCase() ?? "",
+                              "numberOfEmployees",
+                              n,
                             );
                           }}
                         />
@@ -1314,6 +1352,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                                   ? { ...r, linkedinUrl: v, linkedinSource: "manual" }
                                   : r,
                               ),
+                            );
+                            persistManualEdit(
+                              (row as EnrichedCompany).domain?.trim().toLowerCase() ?? "",
+                              "linkedinUrl",
+                              v,
                             );
                           }}
                         />
@@ -1379,6 +1422,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                                 r.id === row.id ? { ...r, firstName, lastName } : r,
                               ),
                             );
+                            persistManualEdit(
+                              (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? "",
+                              "name",
+                              clean,
+                            );
                           }}
                         />
                       </td>
@@ -1397,6 +1445,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                                 r.id === row.id ? { ...r, rawEmail: next, resolvedEmail: next } : r,
                               ),
                             );
+                            persistManualEdit(
+                              (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? "",
+                              "rawEmail",
+                              next,
+                            );
                           }}
                         />
                       </td>
@@ -1414,6 +1467,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                                 r.id === row.id ? { ...r, resolvedCompany: next } : r,
                               ),
                             );
+                            persistManualEdit(
+                              (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? "",
+                              "resolvedCompany",
+                              next,
+                            );
                           }}
                         />
                       </td>
@@ -1430,6 +1488,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               (rows as EnrichedContact[]).map((r) =>
                                 r.id === row.id ? { ...r, title: next } : r,
                               ),
+                            );
+                            persistManualEdit(
+                              (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? "",
+                              "title",
+                              next,
                             );
                           }}
                         />
@@ -1450,6 +1513,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                                   ? { ...r, linkedinUrl: next, linkedinSource: "manual" }
                                   : r,
                               ),
+                            );
+                            persistManualEdit(
+                              (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? "",
+                              "linkedinUrl",
+                              next,
                             );
                           }}
                         />

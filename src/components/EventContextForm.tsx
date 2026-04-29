@@ -293,7 +293,10 @@ function detectRegionFromEventName(input: string): string | null {
     .trim();
   if (!normalized) return null;
   for (const key of LOCATION_MATCH_KEYS) {
-    if (normalized.includes(key)) {
+    const wordBoundary = new RegExp(
+      `(?<![a-z])${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z])`,
+    );
+    if (wordBoundary.test(normalized)) {
       return CITY_TO_STATE[key] ?? null;
     }
   }
@@ -456,6 +459,8 @@ export function EventContextForm({
 
   const nameFromFileApplied = useRef(false);
   const regionManuallySelected = useRef(false);
+  const monthManuallySelected = useRef(false);
+  const yearManuallySelected = useRef(false);
 
   const years = useMemo(() => {
     const y = new Date().getFullYear();
@@ -520,6 +525,62 @@ export function EventContextForm({
     setNoStateRegionSelected(false);
     setAutoDetectedRegion(true);
   }, [importMode, eventName, region, noStateRegionSelected]);
+
+  useEffect(() => {
+    if (importMode === "bulk") return;
+    const normalized = eventName
+      .toLowerCase()
+      .replace(/-/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!normalized) return;
+
+    if (!monthManuallySelected.current) {
+      const monthTokens: Array<{ token: string; month: (typeof MONTH_NAMES)[number] }> = [
+        { token: "january", month: "January" },
+        { token: "jan", month: "January" },
+        { token: "february", month: "February" },
+        { token: "feb", month: "February" },
+        { token: "march", month: "March" },
+        { token: "mar", month: "March" },
+        { token: "april", month: "April" },
+        { token: "apr", month: "April" },
+        { token: "may", month: "May" },
+        { token: "june", month: "June" },
+        { token: "jun", month: "June" },
+        { token: "july", month: "July" },
+        { token: "jul", month: "July" },
+        { token: "august", month: "August" },
+        { token: "aug", month: "August" },
+        { token: "september", month: "September" },
+        { token: "sep", month: "September" },
+        { token: "october", month: "October" },
+        { token: "oct", month: "October" },
+        { token: "november", month: "November" },
+        { token: "nov", month: "November" },
+        { token: "december", month: "December" },
+        { token: "dec", month: "December" },
+      ];
+
+      for (const { token, month } of monthTokens) {
+        const monthBoundary = new RegExp(`(?<![a-z])${token}(?![a-z])`);
+        if (monthBoundary.test(normalized)) {
+          setMonthName(month);
+          break;
+        }
+      }
+    }
+
+    if (!yearManuallySelected.current) {
+      const yearMatch = normalized.match(/(?<!\d)(20[2-3]\d)(?!\d)/);
+      if (yearMatch) {
+        const yearNum = Number(yearMatch[1]);
+        if (yearNum >= 2020 && yearNum <= 2035) {
+          setYear(String(yearNum));
+        }
+      }
+    }
+  }, [importMode, eventName]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -599,7 +660,10 @@ export function EventContextForm({
                   required={importMode === "event"}
                   className={selectClass}
                   value={monthName}
-                  onChange={(e) => setMonthName(e.target.value)}
+                  onChange={(e) => {
+                    monthManuallySelected.current = true;
+                    setMonthName(e.target.value);
+                  }}
                   disabled={disabled}
                 >
                   <option value="">Select Month</option>
@@ -621,7 +685,10 @@ export function EventContextForm({
                   required={importMode === "event"}
                   className={selectClass}
                   value={year}
-                  onChange={(e) => setYear(e.target.value)}
+                  onChange={(e) => {
+                    yearManuallySelected.current = true;
+                    setYear(e.target.value);
+                  }}
                   disabled={disabled}
                 >
                   <option value="">Select Year</option>

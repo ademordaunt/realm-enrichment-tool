@@ -1030,12 +1030,57 @@ export default function Home() {
     }
   }, [clearSessionSnapshot]);
 
+  const fetchManualEditsMap = useCallback(
+    async (
+      rows: EnrichedCompany[] | EnrichedContact[],
+      listType: "companies" | "contacts",
+    ): Promise<Map<string, Record<string, unknown>>> => {
+      const stableKeys = new Set<string>();
+      for (const row of rows) {
+        const stableKey =
+          listType === "contacts"
+            ? (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? ""
+            : (row as EnrichedCompany).domain?.trim().toLowerCase() ?? "";
+        if (stableKey) stableKeys.add(stableKey);
+      }
+      if (stableKeys.size === 0) return new Map<string, Record<string, unknown>>();
+
+      const entries = await Promise.all(
+        Array.from(stableKeys).map(async (stableKey) => {
+          try {
+            const res = await fetch(
+              `/api/manual-edits?stableKey=${encodeURIComponent(stableKey)}&listType=${encodeURIComponent(listType)}`,
+              { method: "GET", cache: "no-store" },
+            );
+            if (!res.ok) return [stableKey, null] as const;
+            const payload = (await res.json()) as { edits?: Record<string, unknown> | null };
+            const edits = payload.edits;
+            if (!edits || typeof edits !== "object" || Array.isArray(edits)) {
+              return [stableKey, null] as const;
+            }
+            return [stableKey, edits] as const;
+          } catch {
+            return [stableKey, null] as const;
+          }
+        }),
+      );
+
+      const out = new Map<string, Record<string, unknown>>();
+      for (const [stableKey, edits] of entries) {
+        if (edits) out.set(stableKey, edits);
+      }
+      return out;
+    },
+    [],
+  );
+
   const advanceToReview = useCallback(
-    (
+    async (
       rows: EnrichedCompany[] | EnrichedContact[],
       listType: "companies" | "contacts",
     ) => {
-      const finalizeOpts = { importMode: wizardImportMode };
+      const manualEdits = await fetchManualEditsMap(rows, listType);
+      const finalizeOpts = { importMode: wizardImportMode, manualEdits };
       const finalized =
         listType === "companies"
           ? finalizeRowsForReview(rows as EnrichedCompany[], "companies", finalizeOpts)
@@ -1044,7 +1089,7 @@ export default function Home() {
       setEnrichedListType(listType);
       setStep("prereview");
     },
-    [wizardImportMode],
+    [wizardImportMode, fetchManualEditsMap],
   );
 
   const stopJobPolling = useCallback(() => {
@@ -1066,7 +1111,7 @@ export default function Home() {
       const payload = (await res.json()) as {
         rows: EnrichedCompany[] | EnrichedContact[];
       };
-      advanceToReview(payload.rows, listType);
+      await advanceToReview(payload.rows, listType);
       setShowEnrichmentInterruptedBanner(false);
       setProgress(null);
       if (typeof window !== "undefined") {
@@ -1533,7 +1578,7 @@ export default function Home() {
       elapsedMinutes,
     });
 
-    advanceToReview(withLinkedInSourceFallback, listType);
+    await advanceToReview(withLinkedInSourceFallback, listType);
     fireEnrichmentCompleteNotification();
     if (
       typeof window !== "undefined" &&

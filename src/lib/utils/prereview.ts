@@ -396,31 +396,42 @@ export function computeReviewBucket(
   return { bucket: "needs_review" };
 }
 
-export function finalizeRowsForReview<T extends EnrichedCompany | EnrichedContact>(
-  rows: T[],
+export function finalizeRowsForReview<T extends EnrichedCompany[] | EnrichedContact[]>(
+  rows: T,
   listType: "companies" | "contacts",
-  options?: ComputeReviewBucketOptions,
-): T[] {
-  const filtered = applyConfidenceFilter(rows);
+  options?: ComputeReviewBucketOptions & {
+    manualEdits?: Map<string, Record<string, unknown>>;
+  },
+): T {
+  const filtered = applyConfidenceFilter(
+    rows as Array<EnrichedCompany | EnrichedContact>,
+  );
   return filtered.map((row) => {
-    const idConf = row.identityConfidence as
-      | IdentityConfidence
-      | null
-      | undefined
-      | "";
-    const patched: T =
-      (idConf === undefined || idConf === null || idConf === "") &&
-      typeof row.confidenceScore === "string" &&
-      row.confidenceScore.trim() !== ""
-        ? ({ ...row, identityConfidence: row.confidenceScore as IdentityConfidence } as T)
-        : row;
+    const stableKey =
+      listType === "contacts"
+        ? ((row as EnrichedContact).resolvedEmail ?? "").trim().toLowerCase()
+        : ((row as EnrichedCompany).domain ?? "").trim().toLowerCase();
+    const manualDiff = stableKey ? options?.manualEdits?.get(stableKey) : undefined;
+    const withManualEdits = manualDiff
+      ? ({ ...row, ...manualDiff } as EnrichedCompany | EnrichedContact)
+      : row;
+    const idConfSource = withManualEdits.identityConfidence;
+    const patched =
+      (idConfSource === undefined || idConfSource === null) &&
+      typeof withManualEdits.confidenceScore === "string" &&
+      withManualEdits.confidenceScore.trim() !== ""
+        ? ({
+            ...withManualEdits,
+            identityConfidence: withManualEdits.confidenceScore as IdentityConfidence,
+          } as EnrichedCompany | EnrichedContact)
+        : withManualEdits;
     const { bucket, exclusionReason } = computeReviewBucket(patched, listType, options);
     return {
       ...patched,
       reviewBucket: bucket,
       exclusionReason,
     };
-  }) as T[];
+  }) as T;
 }
 
 export function shouldOpenPreReviewGate(

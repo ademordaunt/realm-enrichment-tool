@@ -14,6 +14,7 @@ const kv = new Redis({
 const COMPANY_TTL = 60 * 60 * 24 * 30; // 30 days in seconds
 const CONTACT_TTL = 60 * 60 * 24 * 30;
 const JOB_TTL = 60 * 60 * 24 * 7;
+const MANUAL_EDITS_TTL = 60 * 60 * 24 * 7; // 7 days
 const RAW_SHARD_LIMIT_BYTES = 800 * 1024;
 
 function normalizeCompanyKey(name: string): string {
@@ -22,6 +23,10 @@ function normalizeCompanyKey(name: string): string {
 
 function normalizeContactKey(email: string): string {
   return `contact:${email.toLowerCase().trim()}`;
+}
+
+function normalizeManualEditsKey(stableKey: string, listType: "companies" | "contacts"): string {
+  return `manual_edits:${listType}:${stableKey.trim().toLowerCase()}`;
 }
 
 export async function getCachedCompany(name: string): Promise<EnrichedCompany | null> {
@@ -100,6 +105,36 @@ export async function setCachedContact(email: string, data: EnrichedContact): Pr
     await kv.set(normalizeContactKey(email), data, { ex: CONTACT_TTL });
   } catch {
     // Silently fail
+  }
+}
+
+export async function getManualEdits(
+  stableKey: string,
+  listType: "companies" | "contacts",
+): Promise<Record<string, unknown> | null> {
+  try {
+    const result = await kv.get<Record<string, unknown>>(
+      normalizeManualEditsKey(stableKey, listType),
+    );
+    return result ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setManualEdit(
+  stableKey: string,
+  listType: "companies" | "contacts",
+  field: string,
+  value: unknown,
+): Promise<void> {
+  try {
+    const key = normalizeManualEditsKey(stableKey, listType);
+    const existing = (await kv.get<Record<string, unknown>>(key)) ?? {};
+    existing[field] = value;
+    await kv.set(key, existing, { ex: MANUAL_EDITS_TTL });
+  } catch {
+    // Best-effort
   }
 }
 

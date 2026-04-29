@@ -1,6 +1,7 @@
 import { verifySignatureAppRouter } from "@upstash/qstash/nextjs";
 import {
   appendJobEnrichedRows,
+  getManualEdits,
   getJobEnrichedRows,
   getJobRawRows,
   getJobState,
@@ -115,6 +116,37 @@ async function persistRowsByAiChunks(jobId: string, rows: unknown[]): Promise<vo
 
 function isNonEmpty(v: unknown): boolean {
   return typeof v === "string" && v.trim() !== "";
+}
+
+async function fetchManualEditsMapForRows(
+  rows: Array<EnrichedCompany | EnrichedContact>,
+  listType: "companies" | "contacts",
+): Promise<Map<string, Record<string, unknown>>> {
+  const stableKeys = new Set<string>();
+  for (const row of rows) {
+    const stableKey =
+      listType === "contacts"
+        ? (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? ""
+        : (row as EnrichedCompany).domain?.trim().toLowerCase() ?? "";
+    if (stableKey) stableKeys.add(stableKey);
+  }
+  if (stableKeys.size === 0) return new Map<string, Record<string, unknown>>();
+
+  const entries = await Promise.all(
+    Array.from(stableKeys).map(async (stableKey) => {
+      const edits = await getManualEdits(stableKey, listType);
+      if (!edits || typeof edits !== "object" || Array.isArray(edits)) {
+        return [stableKey, null] as const;
+      }
+      return [stableKey, edits] as const;
+    }),
+  );
+
+  const out = new Map<string, Record<string, unknown>>();
+  for (const [stableKey, edits] of entries) {
+    if (edits) out.set(stableKey, edits);
+  }
+  return out;
 }
 
 function mergePrecheckCompany(row: EnrichedCompany, existingData: Record<string, string>): EnrichedCompany {
@@ -426,6 +458,7 @@ async function handler(req: Request): Promise<Response> {
       importMode: jobState.eventContext?.importMode === "event"
         ? ("event" as const)
         : ("bulk" as const),
+      manualEdits: await fetchManualEditsMapForRows(allRows, jobState.listType),
     };
     const finalized =
       jobState.listType === "companies"
