@@ -74,8 +74,35 @@ export function extractCompanyAndState(raw: string): { name: string; state: stri
   return { name: raw.trim(), state: "" };
 }
 
+/**
+ * Parses a combined "City, ST" location field into city and state parts.
+ * If the part after the last comma is a valid 2-letter US state abbreviation,
+ * sets city from the left part and state from the right. Otherwise stores the
+ * full string as location with no extracted state.
+ */
+export function parseLocation(location: string): { city: string; state: string; location: string } {
+  const raw = location.trim();
+  if (!raw) return { city: "", state: "", location: "" };
+  const lastComma = raw.lastIndexOf(",");
+  if (lastComma >= 0) {
+    const right = raw.slice(lastComma + 1).trim().toUpperCase();
+    if (US_STATE_ABBREVS.has(right)) {
+      return { city: raw.slice(0, lastComma).trim(), state: right, location: raw };
+    }
+  }
+  return { city: "", state: "", location: raw };
+}
+
 function isCompanyHeader(h: string): boolean {
-  return h === "company" || h === "companyname";
+  return (
+    h === "company" ||
+    h === "companyname" ||
+    h === "organization" ||
+    h === "org" ||
+    h === "account" ||
+    h === "accountname" ||
+    h === "employer"
+  );
 }
 
 /** Lowercase, trim, strip non-alphanumeric for header matching */
@@ -87,17 +114,40 @@ export function normalizeHeader(header: string): string {
 }
 
 const CONTACT_HEADER_MAP: Record<string, keyof RawContactRow | "ignore"> = {
+  // First name
   first: "firstName",
   firstname: "firstName",
+  givenname: "firstName",
+  fname: "firstName",
+  // Last name
   last: "lastName",
   lastname: "lastName",
+  surname: "lastName",
+  lname: "lastName",
+  // Notes
   notes: "membershipNotes",
   membershipnotes: "membershipNotes",
+  repnotes: "membershipNotes",
+  realmnotes: "membershipNotes",
+  johnsnotes: "membershipNotes",
+  comments: "membershipNotes",
+  // Title
   title: "title",
   jobtitle: "title",
+  position: "title",
+  role: "title",
+  // Company
   company: "company",
+  companyname: "company",
+  organization: "company",
+  org: "company",
+  account: "company",
+  accountname: "company",
+  employer: "company",
+  // Location
   hq: "location",
   location: "location",
+  // Email
   email: "email",
   emailaddress: "email",
   businessemail: "email",
@@ -105,18 +155,51 @@ const CONTACT_HEADER_MAP: Record<string, keyof RawContactRow | "ignore"> = {
   corporateemail: "email",
   contactemail: "email",
   primaryemail: "email",
+  // LinkedIn
   linkedincontactprofileurl: "linkedinUrl",
   linkedinprofileurl: "linkedinUrl",
   linkedinurl: "linkedinUrl",
   linkedinprofile: "linkedinUrl",
   linkedincontacturl: "linkedinUrl",
   linkedin: "linkedinUrl",
+  liurl: "linkedinUrl",
+  // Phone
   phone: "phone",
   phonenumber: "phone",
   phonenum: "phone",
+  mobile: "phone",
+  cell: "phone",
+  mobilephone: "phone",
+  // Lead source
   leadsource: "leadSource",
   leadsourcedescription: "leadSourceDescription",
   leadorigination: "ignore",
+  // Event fields
+  attended: "attended",
+  attendance: "attended",
+  didattend: "attended",
+  format: "eventFormat",
+  eventformat: "eventFormat",
+  attendancetype: "eventFormat",
+  // Pre-enriched company fields
+  domain: "companyDomain",
+  companydomain: "companyDomain",
+  companydomainname: "companyDomain",
+  website: "companyDomain",
+  web: "companyDomain",
+  state: "state",
+  stateregion: "state",
+  region: "state",
+  province: "state",
+  employees: "employees",
+  numberofemployees: "employees",
+  numemployees: "employees",
+  employeecount: "employees",
+  headcount: "employees",
+  industry: "industry",
+  primaryindustry: "industry",
+  sector: "industry",
+  vertical: "industry",
 };
 
 function padRow(row: string[], len: number): string[] {
@@ -134,36 +217,33 @@ function rowLooksLikeHeaderRow(row: string[]): boolean {
   const cells = row.map(normalizeHeader).filter(Boolean);
   if (cells.length < 2) return false;
   const keywords = new Set([
-    "first",
-    "firstname",
-    "last",
-    "lastname",
-    "email",
-    "emailaddress",
-    "businessemail",
-    "workemail",
-    "corporateemail",
-    "contactemail",
-    "primaryemail",
-    "linkedincontactprofileurl",
-    "linkedinprofileurl",
-    "linkedinurl",
-    "linkedinprofile",
-    "linkedincontacturl",
-    "linkedin",
-    "company",
-    "title",
-    "jobtitle",
-    "phone",
-    "phonenumber",
-    "phonenum",
-    "location",
-    "hq",
-    "notes",
-    "membershipnotes",
-    "leadsource",
-    "leadsourcedescription",
-    "leadorigination",
+    // Name fields
+    "first", "firstname", "givenname", "fname",
+    "last", "lastname", "surname", "lname",
+    // Email fields
+    "email", "emailaddress", "businessemail", "workemail",
+    "corporateemail", "contactemail", "primaryemail",
+    // LinkedIn
+    "linkedincontactprofileurl", "linkedinprofileurl", "linkedinurl",
+    "linkedinprofile", "linkedincontacturl", "linkedin", "liurl",
+    // Company
+    "company", "companyname", "organization", "org", "account", "accountname", "employer",
+    // Job
+    "title", "jobtitle", "position", "role",
+    // Phone
+    "phone", "phonenumber", "phonenum", "mobile", "cell", "mobilephone",
+    // Location
+    "location", "hq", "state", "stateregion", "region", "province",
+    // Notes
+    "notes", "membershipnotes", "repnotes", "realmnotes", "johnsnotes", "comments",
+    // Lead source
+    "leadsource", "leadsourcedescription", "leadorigination",
+    // Event fields
+    "attended", "attendance", "didattend", "format", "eventformat", "attendancetype",
+    // Pre-enriched
+    "domain", "companydomain", "website", "web",
+    "employees", "numberofemployees", "numemployees", "employeecount", "headcount",
+    "industry", "primaryindustry", "sector", "vertical",
   ]);
   const hits = cells.filter((c) => keywords.has(c)).length;
   return hits >= 3 && hits >= Math.ceil(cells.length * 0.35);
@@ -257,8 +337,11 @@ export function detectListType(normalizedHeaders: string[]): ListType {
   if (nonempty.length === 0) return "unknown";
 
   const hasFirst =
-    nonempty.includes("first") || nonempty.includes("firstname");
-  const hasLast = nonempty.includes("last") || nonempty.includes("lastname");
+    nonempty.includes("first") || nonempty.includes("firstname") ||
+    nonempty.includes("givenname") || nonempty.includes("fname");
+  const hasLast =
+    nonempty.includes("last") || nonempty.includes("lastname") ||
+    nonempty.includes("surname") || nonempty.includes("lname");
   const hasEmail =
     nonempty.includes("email") ||
     nonempty.includes("emailaddress") ||
@@ -277,13 +360,13 @@ export function detectListType(normalizedHeaders: string[]): ListType {
     return "companies";
   }
 
-  const contactPattern = hasFirst && hasLast && (hasEmail || nonempty.includes("title"));
+  const contactPattern = hasFirst && hasLast && (hasEmail || nonempty.includes("title") || nonempty.includes("jobtitle"));
   if (contactPattern) {
     return "contacts";
   }
 
   if (
-    (nonempty.includes("company") || nonempty.includes("companyname")) &&
+    nonempty.some((h) => isCompanyHeader(h)) &&
     !hasFirst &&
     !hasLast
   ) {
@@ -296,6 +379,26 @@ export function detectListType(normalizedHeaders: string[]): ListType {
 
   return "unknown";
 }
+
+const COMPANY_ENRICHED_ALIASES: Record<string, keyof RawCompanyRow> = {
+  domain: "domain",
+  companydomain: "domain",
+  companydomainname: "domain",
+  website: "domain",
+  web: "domain",
+  state: "state",
+  stateregion: "state",
+  region: "state",
+  employees: "employees",
+  numberofemployees: "employees",
+  numemployees: "employees",
+  employeecount: "employees",
+  headcount: "employees",
+  industry: "industry",
+  primaryindustry: "industry",
+  sector: "industry",
+  vertical: "industry",
+};
 
 function mapCompanyRow(
   headers: string[],
@@ -314,10 +417,20 @@ function mapCompanyRow(
     if (!key) continue;
     const val = (values[i] ?? "").trim();
     if (isCompanyHeader(key)) continue;
+
+    // Map pre-enriched columns to typed fields
+    const typedField = COMPANY_ENRICHED_ALIASES[key];
+    if (typedField) {
+      if (!row[typedField] && val) {
+        row[typedField] = val;
+      }
+      continue;
+    }
+
     row[key] = val;
   }
-  if (extractedState && !row["state"]) {
-    row["state"] = extractedState;
+  if (extractedState && !row.state) {
+    row.state = extractedState;
   }
   return { row, missingCompany: companyIdx < 0 };
 }
@@ -340,6 +453,15 @@ function mapContactRow(headers: string[], values: string[]): RawContactRow {
       row[nh] = val;
     }
   }
+
+  // Parse "City, ST" location field into city + state components
+  if (row.location?.trim()) {
+    const parsed = parseLocation(row.location);
+    if (parsed.state && !row.state) {
+      row.state = parsed.state;
+    }
+  }
+
   return row;
 }
 
@@ -365,8 +487,7 @@ function inferListTypeFromFirstRow(
   if (hasCompanyName && !hasNameParts) return "companies";
   if (
     normalizedHeaders.filter(Boolean).length === 1 &&
-    (normalizedHeaders.includes("company") ||
-      normalizedHeaders.includes("companyname"))
+    normalizedHeaders.some((h) => isCompanyHeader(h))
   ) {
     return "companies";
   }

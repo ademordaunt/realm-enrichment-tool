@@ -26,7 +26,7 @@ import {
   ENRICHMENT_BATCH_SIZE,
   needsCompanyLinkedInLookup,
   needsLinkedInLookup,
-} from "@/lib/enrichment/ai-enricher";
+} from "@/lib/enrichment/enrichment-utils";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const ACCEPT = ".csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
@@ -1475,15 +1475,16 @@ export default function Home() {
   };
 
   const runZoomVerifyAndLinkedInTail = async (
-    rowsAfterPrecheck: EnrichedCompany[] | EnrichedContact[],
+    rowsAfterAi: EnrichedCompany[] | EnrichedContact[],
     listType: "companies" | "contacts",
     signal: AbortSignal,
     context: { totalRows: number; hubspotFound: number; enrichmentStartTime: number },
   ): Promise<void> => {
-    let rowsAfterVerify: EnrichedCompany[] | EnrichedContact[] = rowsAfterPrecheck;
+    // Phase 2: ZoomInfo verify (runs before HubSpot precheck — uses ZoomInfo domain as match key)
+    let rowsAfterVerify: EnrichedCompany[] | EnrichedContact[] = rowsAfterAi;
     let zoomCreditsUsed = 0;
     try {
-      const verify = await runZoomVerify(rowsAfterPrecheck, listType, signal);
+      const verify = await runZoomVerify(rowsAfterAi, listType, signal);
       rowsAfterVerify = verify.rows;
       zoomCreditsUsed = verify.creditsUsed;
     } catch (verifyErr) {
@@ -1502,13 +1503,20 @@ export default function Home() {
             : "ZoomInfo / Common Room step failed.",
         );
       }
-      rowsAfterVerify = rowsAfterPrecheck;
+      rowsAfterVerify = rowsAfterAi;
     }
 
-    let finalRows: EnrichedCompany[] | EnrichedContact[] = rowsAfterVerify;
+    // Phase 3: HubSpot precheck — now runs AFTER ZoomInfo so ZoomInfo domain is used as match key
+    console.log("[Pipeline] HubSpot precheck starting after ZoomInfo");
+    const rowsAfterPrecheck = await runHubSpotPreCheck(rowsAfterVerify, listType, signal);
+    const hubspotCompleteCount = rowsAfterPrecheck.filter((r) => r.hubspotComplete === true).length;
+    setPrecheckHubspotSkipCount(hubspotCompleteCount);
+    context.hubspotFound = hubspotCompleteCount;
+
+    let finalRows: EnrichedCompany[] | EnrichedContact[] = rowsAfterPrecheck;
     if (listType === "contacts") {
-      const contactRowsAfterVerify = rowsAfterVerify as EnrichedContact[];
-      const missingLinkedInTotal = contactRowsAfterVerify.filter((r) =>
+      const contactRowsAfterPrecheck = rowsAfterPrecheck as EnrichedContact[];
+      const missingLinkedInTotal = contactRowsAfterPrecheck.filter((r) =>
         needsLinkedInLookup(r),
       ).length;
       if (missingLinkedInTotal > 0) {
@@ -1519,7 +1527,7 @@ export default function Home() {
           detail: `Searching for remaining LinkedIn URLs: 0 of ${missingLinkedInTotal}…`,
         });
         finalRows = await runLinkedInLookupPass(
-          contactRowsAfterVerify,
+          contactRowsAfterPrecheck,
           signal,
           (done, total) => {
             setProgress({
@@ -1534,8 +1542,8 @@ export default function Home() {
     }
 
     if (listType === "companies") {
-      const companyRowsAfterVerify = rowsAfterVerify as EnrichedCompany[];
-      const missingCompanyLinkedIn = companyRowsAfterVerify.filter((r) =>
+      const companyRowsAfterPrecheck = rowsAfterPrecheck as EnrichedCompany[];
+      const missingCompanyLinkedIn = companyRowsAfterPrecheck.filter((r) =>
         needsCompanyLinkedInLookup(r),
       ).length;
       if (missingCompanyLinkedIn > 0) {
@@ -1546,7 +1554,7 @@ export default function Home() {
           detail: `Finding remaining company LinkedIn profiles… (0 of ${missingCompanyLinkedIn})`,
         });
         finalRows = await runCompanyLinkedInLookupPass(
-          companyRowsAfterVerify,
+          companyRowsAfterPrecheck,
           signal,
           (done, total) => {
             setProgress({
@@ -1634,6 +1642,7 @@ export default function Home() {
             ...row,
             hubspotId: match.hubspotId,
             hubspotComplete: match.hubspotComplete,
+            existingData: match.existingData,
           };
           if (match.hubspotComplete) {
             mergeHubSpotExistingIntoCompany(merged, match.existingData);
@@ -1649,6 +1658,7 @@ export default function Home() {
           ...row,
           hubspotId: match.hubspotId,
           hubspotComplete: match.hubspotComplete,
+          existingData: match.existingData,
         };
         if (match.hubspotComplete) {
           mergeHubSpotExistingIntoContact(merged, match.existingData);
@@ -1795,22 +1805,16 @@ export default function Home() {
         | EnrichedCompany[]
         | EnrichedContact[];
 
-      // 2. HubSpot pre-check — runs after AI enrichment and before ZoomInfo.
-      const rowsAfterPrecheck = await runHubSpotPreCheck(aiRows, resolvedListType, ac.signal);
-      const hubspotCompleteCount = rowsAfterPrecheck.filter((r) => r.hubspotComplete === true)
-        .length;
-      setPrecheckHubspotSkipCount(hubspotCompleteCount);
-
       if (wizardImportMode === "bulk") {
         pausedForCostEstimate = true;
         bulkContinueRef.current = {
-          rows: rowsAfterPrecheck,
+          rows: aiRows,
           listType: resolvedListType,
           signal: ac.signal,
         };
         setCostEstimateMeta({
           totalRows: workingRows.length,
-          hubspotCompleteCount,
+          hubspotCompleteCount: 0,
         });
         setProgress(null);
         setStep("costestimate");
@@ -1827,13 +1831,13 @@ export default function Home() {
         }
         await runZoomVerifyAndLinkedInTail(pending.rows, pending.listType, pending.signal, {
           totalRows,
-          hubspotFound: hubspotCompleteCount,
+          hubspotFound: 0,
           enrichmentStartTime,
         });
       } else {
-        await runZoomVerifyAndLinkedInTail(rowsAfterPrecheck, resolvedListType, ac.signal, {
+        await runZoomVerifyAndLinkedInTail(aiRows, resolvedListType, ac.signal, {
           totalRows,
-          hubspotFound: hubspotCompleteCount,
+          hubspotFound: 0,
           enrichmentStartTime,
         });
       }

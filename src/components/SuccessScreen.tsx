@@ -77,6 +77,51 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed, rowsById }: 
         </p>
       ) : null}
 
+      {/* Association summary — contacts push only */}
+      {(result.contactsAssociated != null ||
+        result.contactsDomainNotFound != null ||
+        result.contactsNoDomain != null) ? (
+        <div className="flex flex-col gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-950/40">
+          <p className="font-semibold text-zinc-800 dark:text-zinc-200">Company Associations</p>
+          {result.contactsAssociated != null && result.contactsAssociated > 0 ? (
+            <p className="text-zinc-700 dark:text-zinc-300">
+              ✓ {result.contactsAssociated} contact{result.contactsAssociated === 1 ? "" : "s"} associated to HubSpot companies
+            </p>
+          ) : null}
+          {result.contactsDomainNotFound != null && result.contactsDomainNotFound > 0 ? (
+            <p className="text-zinc-600 dark:text-zinc-400">
+              ⚠ {result.contactsDomainNotFound} contact{result.contactsDomainNotFound === 1 ? "" : "s"}: company not in HubSpot (no company association made)
+            </p>
+          ) : null}
+          {result.contactsNoDomain != null && result.contactsNoDomain > 0 ? (
+            <p className="text-zinc-600 dark:text-zinc-400">
+              — {result.contactsNoDomain} contact{result.contactsNoDomain === 1 ? "" : "s"}: no company domain available (no company association possible)
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Ownership failure warnings */}
+      {((result.companiesNoState != null && result.companiesNoState > 0) ||
+        (result.contactsNoCompanyAssociation != null && result.contactsNoCompanyAssociation > 0)) ? (
+        <div className="flex flex-col gap-1.5 rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm dark:border-amber-800 dark:bg-amber-950/30">
+          <p className="font-semibold text-amber-900 dark:text-amber-100">Ownership Assignment Warnings</p>
+          <p className="text-xs text-amber-800 dark:text-amber-200">
+            The following records may not receive an owner assigned automatically:
+          </p>
+          {result.companiesNoState != null && result.companiesNoState > 0 ? (
+            <p className="text-amber-800 dark:text-amber-200">
+              • {result.companiesNoState} {result.companiesNoState === 1 ? "company has" : "companies have"} no state/region
+            </p>
+          ) : null}
+          {result.contactsNoCompanyAssociation != null && result.contactsNoCompanyAssociation > 0 ? (
+            <p className="text-amber-800 dark:text-amber-200">
+              • {result.contactsNoCompanyAssociation} {result.contactsNoCompanyAssociation === 1 ? "contact has" : "contacts have"} no HubSpot company association
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {failed > 0 ? (
         <div className="flex flex-col gap-2">
           <button

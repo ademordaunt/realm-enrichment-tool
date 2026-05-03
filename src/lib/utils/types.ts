@@ -28,7 +28,15 @@ export type ExclusionReason =
 /** Company list input */
 export interface RawCompanyRow {
   rawName: string;
-  [key: string]: string;
+  /** Domain / website pre-populated in CSV. */
+  domain?: string;
+  /** State / region pre-populated in CSV. */
+  state?: string;
+  /** Employee count pre-populated in CSV. */
+  employees?: string;
+  /** Industry pre-populated in CSV. */
+  industry?: string;
+  [key: string]: string | undefined;
 }
 
 /** Contact list input */
@@ -45,6 +53,18 @@ export interface RawContactRow {
   membershipNotes?: string;
   leadSource?: string;
   leadSourceDescription?: string;
+  /** Event attendance flag (e.g. "Yes" / "No") from event CSVs. */
+  attended?: string;
+  /** Event format (e.g. "In-Person", "Virtual") from event CSVs. */
+  eventFormat?: string;
+  /** Company domain / website pre-populated in CSV. */
+  companyDomain?: string;
+  /** State / region pre-populated in CSV. */
+  state?: string;
+  /** Employee count pre-populated in CSV. */
+  employees?: string;
+  /** Industry pre-populated in CSV. */
+  industry?: string;
   [key: string]: string | undefined;
 }
 
@@ -73,10 +93,27 @@ export interface EnrichedCompany {
   hubspotId?: string | null;
   hubspotComplete?: boolean;
   hubspotAction?: "create" | "update";
+  existingData?: Record<string, string>;
   revenue?: number;
   industry?: string;
   description?: string;
   city?: string;
+  phone?: string;
+  companyType?: string;
+  /** CSV-sourced domain (Phase 1 source — lower trust than ZoomInfo). */
+  csvDomain?: string;
+  /** CSV-sourced state (Phase 1 fallback). */
+  csvState?: string;
+  /** CSV-sourced employee count (Phase 1 fallback). */
+  csvEmployees?: string;
+  /** CSV-sourced industry (Phase 1 fallback). */
+  csvIndustry?: string;
+  /** True when LinkedIn URL came from AI web search — row stays Trusted but flagged amber. */
+  linkedinAmberFlag?: boolean;
+  /** Sort tier within Trusted bucket: 1 = amber flag (top), 2 = clean. */
+  trustedSortTier?: number;
+  /** True when row was matched by company name only (no domain). Low-confidence match. */
+  matchedByName?: boolean;
 }
 
 /** Enriched Contact Record */
@@ -112,12 +149,41 @@ export interface EnrichedContact {
   hubspotId?: string | null;
   hubspotComplete?: boolean;
   hubspotAction?: "create" | "update";
+  existingData?: Record<string, string>;
   /** ZoomInfo → HubSpot only (push); not shown in review UI. */
   ziManagementLevel?: string;
   ziJobFunction?: string;
   ziCompanyEmployeeCount?: string;
   ziCompanyPrimaryIndustry?: string;
   ziCompanyWebsite?: string;
+  /** ZoomInfo contact accuracy score (0–100). Internal signal — never pushed to HubSpot. */
+  ziContactAccuracyScore?: number;
+  /** True when ziContactAccuracyScore < 25 — ZoomInfo enrichment data discarded for this contact. */
+  ziMatchDiscarded?: boolean;
+  /** Personal email captured from CSV when ZoomInfo returned a work email. */
+  personalEmail?: string;
+  /** Source of resolvedEmail: "csv" | "zoominfo". */
+  emailSource?: "csv" | "zoominfo";
+  /** HubSpot company id resolved via domain lookup for association. */
+  hubspotCompanyId?: string;
+  /** CSV-sourced title (highest trust for contacts). */
+  csvTitle?: string;
+  /** CSV-sourced company domain (Phase 1 fallback). */
+  csvDomain?: string;
+  /** CSV-sourced state (Phase 1 fallback). */
+  csvState?: string;
+  /** CSV-sourced employee count (Phase 1 fallback). */
+  csvEmployees?: string;
+  /** CSV-sourced industry (Phase 1 fallback). */
+  csvIndustry?: string;
+  /** True when LinkedIn URL came from AI web search — row stays Trusted but flagged amber. */
+  linkedinAmberFlag?: boolean;
+  /** Sort tier within Trusted bucket: 1 = amber flag (top), 2 = clean. */
+  trustedSortTier?: number;
+  /** Event attendance flag from CSV. */
+  attended?: string;
+  /** Event format from CSV. */
+  eventFormat?: string;
 }
 
 /** Event context passed to AI enrichment (lead source is set at pre-push import). */

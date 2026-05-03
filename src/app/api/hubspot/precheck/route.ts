@@ -12,6 +12,7 @@ type PrecheckResult = {
 };
 
 const EMPTY_COMPANY_EXISTING_DATA: Record<string, string> = {
+  name: "",
   domain: "",
   state: "",
   numberofemployees: "",

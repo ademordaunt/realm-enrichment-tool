@@ -22,6 +22,7 @@ type HubSpotCompanyPrecheckResult = {
 };
 
 const COMPANY_PRECHECK_PROPERTIES = [
+  "name",
   "domain",
   "state",
   "numberofemployees",
@@ -107,7 +108,14 @@ export async function batchCheckCompaniesInHubSpot(
       for (const row of json.results ?? []) {
         const props = row.properties ?? {};
         const normalized = normalizeDomain(String(props.domain ?? ""));
-        if (!normalized || results.has(normalized)) continue;
+        if (!normalized || results.has(normalized)) {
+          if (normalized && results.has(normalized)) {
+            console.log(
+              `[HubSpot] batchCheckCompaniesInHubSpot: duplicate domain "${normalized}" — keeping most recent record, skipping id ${row.id}`,
+            );
+          }
+          continue;
+        }
         const existingData: Record<string, string> = {};
         for (const key of COMPANY_PRECHECK_PROPERTIES) {
           existingData[key] = String(props[key] ?? "");
@@ -154,35 +162,127 @@ function delayBatchCooldown(chunkIndex: number): Promise<void> {
   return new Promise((r) => setTimeout(r, HUBSPOT_BATCH_COOLDOWN_MS));
 }
 
+/**
+ * Builds HubSpot properties payload for a company.
+ *
+ * When `existingData` is provided (update path), field-specific write rules are applied:
+ * - "Fill empty only": field is only included if the existing HubSpot value is empty.
+ * - "Never overwrite" (domain): same as fill-empty-only — never clear an existing domain.
+ * - "Overwrite": field is always included when we have a non-empty value.
+ *
+ * When `existingData` is omitted (create path), all available fields are sent.
+ */
 function companyProperties(
   company: EnrichedCompany,
   extras?: HubSpotCompanyPushExtras,
+  existingData?: Record<string, string>,
 ): Record<string, string> {
+  const ex = existingData ?? {};
   const domain = normalizeDomain(company.domain);
-  const props: Record<string, string> = {
-    name: company.resolvedName?.trim() || company.rawInput?.trim() || "Unknown",
-    domain,
-    website: websiteFromDomain(company.domain),
-    state: company.state?.trim() ?? "",
-    linkedin_company_page: company.linkedinUrl?.trim() ?? "",
-  };
+  const props: Record<string, string> = {};
+
+  // name — Fill empty only
+  if (isEmpty(ex.name)) {
+    props.name = company.resolvedName?.trim() || company.rawInput?.trim() || "Unknown";
+  }
+
+  // domain — Never overwrite (fill only if HubSpot has no domain)
+  if (isEmpty(ex.domain)) props.domain = domain;
+
+  // website — Fill empty only
+  if (isEmpty(ex.website)) props.website = websiteFromDomain(company.domain);
+
+  // linkedin_company_page — Fill empty only
+  if (company.linkedinUrl?.trim() && isEmpty(ex.linkedin_company_page)) {
+    props.linkedin_company_page = company.linkedinUrl.trim();
+  }
+
+  // industry — Fill empty only
+  if (company.industry?.trim() && isEmpty(ex.industry)) {
+    props.industry = company.industry.trim();
+  }
+
+  // description — Fill empty only
+  if (company.description?.trim() && isEmpty(ex.description)) {
+    props.description = company.description.trim();
+  }
+
+  // phone — Fill empty only
+  if (company.phone?.trim() && isEmpty(ex.phone)) {
+    props.phone = company.phone.trim();
+  }
+
+  // state — Overwrite (send whenever we have a value)
+  if (company.state?.trim()) props.state = company.state.trim();
+
+  // numberofemployees — Overwrite
   if (company.numberOfEmployees != null && !Number.isNaN(company.numberOfEmployees)) {
     props.numberofemployees = String(company.numberOfEmployees);
   }
+
+  // annualrevenue — Overwrite
   if (company.revenue != null && !Number.isNaN(Number(company.revenue))) {
     props.annualrevenue = String(company.revenue * 1000);
   }
-  if (company.industry?.trim()) {
-    props.industry = company.industry.trim();
-  }
-  if (company.description?.trim()) {
-    props.description = company.description.trim();
-  }
-  if (company.city?.trim()) {
-    props.city = company.city.trim();
-  }
+
+  // city — Overwrite
+  if (company.city?.trim()) props.city = company.city.trim();
+
   mergeLeadExtras(props, extras);
   return props;
+}
+
+/**
+ * Last-resort name-based company lookup for records with no domain.
+ * Strips common legal suffixes and punctuation, then runs a CONTAINS_TOKEN
+ * search. Requires exactly one result to accept the match (same safety
+ * pattern as findContactByNameAndCompany).
+ */
+export async function findCompanyByName(resolvedName: string): Promise<string | null> {
+  const base = resolvedName.trim();
+  if (!base) return null;
+
+  const searchToken = base
+    .replace(/[,.]?\s*(inc\.?|llc\.?|corp\.?|ltd\.?|co\.?|l\.l\.c\.?)$/i, "")
+    .replace(/[^a-zA-Z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+
+  if (!searchToken || searchToken.length < 3) return null;
+
+  const res = await hubspotFetch("/crm/v3/objects/companies/search", {
+    method: "POST",
+    body: JSON.stringify({
+      filterGroups: [
+        {
+          filters: [
+            { propertyName: "name", operator: "CONTAINS_TOKEN", value: searchToken },
+          ],
+        },
+      ],
+      properties: ["name", "domain"],
+      limit: 2,
+    }),
+  });
+
+  if (!res.ok) return null;
+
+  const json = (await res.json()) as { results?: Array<{ id?: string | number }> };
+  const results = json.results ?? [];
+  if (results.length !== 1) {
+    if (results.length > 1) {
+      console.log(
+        `[HubSpot] findCompanyByName: ambiguous match for "${base}" (${results.length} results) — skipping`,
+      );
+    }
+    return null;
+  }
+
+  const id = results[0]?.id;
+  if (id == null || String(id).trim() === "") return null;
+  console.log(`[HubSpot] findCompanyByName: matched "${base}" → HubSpot id ${id}`);
+  return String(id);
 }
 
 export async function findExistingCompany(domain: string): Promise<string | null> {
@@ -518,7 +618,7 @@ export async function batchUpdateCompanies(
       body: JSON.stringify({
         inputs: chunk.map((row) => ({
           id: row.id,
-          properties: companyProperties(row.company, extras),
+          properties: companyProperties(row.company, extras, row.company.existingData ?? {}),
         })),
       }),
     });

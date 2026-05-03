@@ -17,7 +17,7 @@ import type {
 } from "@/lib/utils/types";
 
 /** Batch size for AI enrichment (client batched requests + streaming generator; keep in sync with progress UI). */
-export const ENRICHMENT_BATCH_SIZE = 3;
+import { ENRICHMENT_BATCH_SIZE } from "@/lib/enrichment/enrichment-utils";
 const BATCH_SIZE = ENRICHMENT_BATCH_SIZE;
 
 export const COMPANY_MODEL = "claude-sonnet-4-6" as const;
@@ -37,14 +37,6 @@ function withInferredLinkedinSource<T extends EnrichedCompany | EnrichedContact>
   if (cached.enrichedByCommonRoom) return { ...cached, linkedinSource: "commonroom" };
   if (cached.enrichedByAI) return { ...cached, linkedinSource: "ai_search" };
   return cached;
-}
-
-export function needsLinkedInLookup(contact: EnrichedContact): boolean {
-  return !String(contact.linkedinUrl ?? "").trim();
-}
-
-export function needsCompanyLinkedInLookup(company: EnrichedCompany): boolean {
-  return !String(company.linkedinUrl ?? "").trim();
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -273,6 +265,11 @@ function mapCompanyAiToEnriched(
     enrichedByCommonRoom: false,
     enrichedByAI: true,
     status: "pending",
+    // Carry CSV pre-enriched fields as Phase 1 source
+    csvDomain: row.domain?.trim() || undefined,
+    csvState: row.state?.trim() || undefined,
+    csvEmployees: row.employees?.trim() || undefined,
+    csvIndustry: row.industry?.trim() || undefined,
   };
 }
 
@@ -313,7 +310,7 @@ function mapContactAiToEnriched(
     linkedinUrl: "",
     linkedinSource: "",
     reviewBucket: "needs_review",
-    companyDomain: "",
+    companyDomain: row.companyDomain?.trim() ?? "",
     location: row.location?.trim() ?? "",
     leadSource: row.leadSource?.trim() ?? "",
     leadSourceDescription: row.leadSourceDescription?.trim() ?? "",
@@ -324,6 +321,15 @@ function mapContactAiToEnriched(
     enrichedByCommonRoom: false,
     enrichedByAI: true,
     status: "pending",
+    attended: row.attended?.trim() || undefined,
+    eventFormat: row.eventFormat?.trim() || undefined,
+    // Carry CSV pre-enriched fields as Phase 1 source
+    csvTitle: row.title?.trim() || undefined,
+    csvDomain: row.companyDomain?.trim() || undefined,
+    csvState: row.state?.trim() || undefined,
+    csvEmployees: row.employees?.trim() || undefined,
+    csvIndustry: row.industry?.trim() || undefined,
+    emailSource: rawEmail ? "csv" : undefined,
   };
 }
 
@@ -369,6 +375,10 @@ function mapPresetCompanyRow(row: RawCompanyRow): EnrichedCompany {
     enrichedByCommonRoom: false,
     enrichedByAI: false,
     status: "pending",
+    csvDomain: row.domain?.trim() || undefined,
+    csvState: row.state?.trim() || undefined,
+    csvEmployees: row.employees?.trim() || undefined,
+    csvIndustry: row.industry?.trim() || undefined,
   };
 }
 
@@ -399,7 +409,7 @@ function mapPresetContactRow(
     linkedinUrl: linkedInUrl,
     linkedinSource: linkedInUrl && linkedInFromAi ? "ai_search" : "",
     reviewBucket: "needs_review",
-    companyDomain: "",
+    companyDomain: row.companyDomain?.trim() ?? "",
     location: row.location?.trim() ?? "",
     leadSource: row.leadSource?.trim() ?? "",
     leadSourceDescription: row.leadSourceDescription?.trim() ?? "",
@@ -410,6 +420,14 @@ function mapPresetContactRow(
     enrichedByCommonRoom: false,
     enrichedByAI: linkedInFromAi,
     status: "pending",
+    attended: row.attended?.trim() || undefined,
+    eventFormat: row.eventFormat?.trim() || undefined,
+    csvTitle: row.title?.trim() || undefined,
+    csvDomain: row.companyDomain?.trim() || undefined,
+    csvState: row.state?.trim() || undefined,
+    csvEmployees: row.employees?.trim() || undefined,
+    csvIndustry: row.industry?.trim() || undefined,
+    emailSource: email ? "csv" : undefined,
   };
 }
 
@@ -419,7 +437,8 @@ function isFullyPopulatedContactRow(row: RawContactRow): boolean {
   const title = row.title?.trim() ?? "";
   const email = row.email?.trim() ?? "";
   const company = row.resolvedCompany?.trim() || row.company?.trim() || "";
-  return Boolean(firstName && lastName && email && company && title);
+  const companyDomain = row.companyDomain?.trim() ?? "";
+  return Boolean(firstName && lastName && email && company && title && companyDomain);
 }
 
 /** One numbered line for prompts and matching `rawInput` from the model. */

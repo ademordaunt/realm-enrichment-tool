@@ -27,6 +27,7 @@ The product is built as an **internal-style tool** (no authentication on API rou
 | **Tailwind CSS** | `^4` (`@tailwindcss/postcss` ^4) |
 | **Anthropic SDK** | `@anthropic-ai/sdk` `^0.90.0` |
 | **Upstash Redis** | `@upstash/redis` `^1.34.0` |
+| **Upstash QStash** | `@upstash/qstash` `^2.10.1` (bulk job callbacks) |
 | **ESLint** | `eslint` `^9` + `eslint-config-next` `16.2.4` |
 
 ### Repository structure (key directories)
@@ -47,6 +48,7 @@ src/
         precheck/route.ts # HubSpot existing-record pre-check before ZoomInfo
         push/route.ts     # NDJSON HubSpot push stream
         folders/route.ts  # GET list folders for PrePush UI
+      manual-edits/route.ts  # GET/POST: KV-backed field overrides for review (stableKey + listType)
       jobs/
         start/route.ts                # Create bulk job + queue processing
         process/route.ts              # Worker endpoint for chunk processing
@@ -58,9 +60,11 @@ src/
   components/             # UI only (ReviewTable, PrePushScreen, SuccessScreen, etc.)
     StarterScreen.tsx
     CostEstimateScreen.tsx
+    ReasoningTooltip.tsx   # Shared hover + click-to-pin tooltip (review copy, header help)
   lib/
     enrichment/           # ai-enricher, zoominfo-enricher, merger, commonroom-enricher
-    hubspot/              # CRM API helpers (companies, contacts, lists, push-handler)
+    hubspot/              # CRM API helpers (companies, contacts, lists, push-handler, push-result types)
+    jobs/                 # qstash.ts — QStash publisher for `/api/jobs/process`
     parsers/              # CSV, Excel, column mapping
     cache/enrichment-cache.ts   # Upstash Redis keys for AI/ZoomInfo cache
     zoominfo/auth.ts      # OAuth token for ZoomInfo Data API
@@ -96,6 +100,7 @@ Mapping:
 - **Key:** `realm-enrichment-session-v1` (`SESSION_STORAGE_KEY` in `page.tsx`).
 - **Stored:** `step`, enriched rows snapshot, approved rows, `eventContext`, `listType`, `parseResult`.
 - **Bulk job key:** `realm-bulk-job-id` (`BULK_JOB_SESSION_KEY`) stores active bulk job ID for resume/polling.
+- **Manual LinkedIn restore (session bridge):** `realm-enrichment-manual-edits-v1` (`MANUAL_EDITS_SESSION_KEY`). When the operator returns to **Review & Edit**, a one-shot effect can merge saved per-row LinkedIn URLs (keyed by stable key: normalized **domain** or **resolved email**) from this key into `reviewRows`, then **removes** the key. Long-lived overrides live in **Redis** via `/api/manual-edits` (see below), not only in session storage.
 - **Purpose:** Refresh-safe progress across the wizard; cleared when starting a new import (see `sessionStorage.removeItem` usage in `page.tsx`).
 
 ### Bulk job flow (bulk mode)
@@ -103,6 +108,7 @@ Mapping:
 - **Start:** `startBulkJob()` calls `POST /api/jobs/start` from `context` step.
 - **Progress:** UI enters `enriching` and polls `GET /api/jobs/[jobId]/status` every 5 seconds.
 - **Completion:** on `status === "complete"`, client loads rows from `GET /api/jobs/[jobId]/rows`, builds an **enrichment summary** from the loaded rows and `BulkJobState` (totals, HubSpot found count, credits, AI LinkedIn count, elapsed minutes), then `advanceToReview` **always** navigates to `prereview` before `enriched` (event and bulk both).
+- **Large uploads in KV:** raw parsed rows for a job are stored under `job:{jobId}:raw` when the JSON payload is under **~800 KiB**; larger uploads are **sharded** across `job:{jobId}:raw:{shardIndex}` with metadata `job:{jobId}:raw:meta` (`setJobRawRows` / `getJobRawRows` in `enrichment-cache.ts`) so a single Redis value is not oversized.
 - **Completion summary metadata:** bulk job state now includes `linkedInFromAiCount` (rows where `linkedinSource === "ai_search"`), shown in `BulkProgressScreen`.
 - **Failure/cancel:** client returns to `context` and surfaces `state.error` (or cancellation copy).
 - **Diagnostics:** failed job-start responses log status + body in `console.error("[startBulkJob] failed:", res.status, errBody)`.
@@ -117,7 +123,8 @@ Mapping:
 
 **2) HubSpot push — `POST /api/hubspot/push`**
 
-- NDJSON: `progress` (`current`, `total`), then `done` with create/update counts, errors, `listId`, etc. (see `handleHubSpotPushRequest` in `src/lib/hubspot/push-handler.ts`).
+- NDJSON event order: **`list_created`** (`listId`, `listName`, optional `folderId`) → **`progress`** (`current`, `total`, cumulative across create/update chunks) → **`done`** with create/update counts, per-row `errors`, `listId`, `listName`, `totalPushed`, optional `folderId` (payload shape in `HubSpotPushDonePayload`, `src/lib/hubspot/push-result.ts`). **`error`** line on fatal failure.
+- Client: `consumePushNdjson` in `page.tsx` parses lines incrementally; optional callback on `list_created` for early list snapshot (e.g. logging / UI).
 - **Why:** Long-running push over many rows; same timeout considerations.
 
 **3) AI enrichment — `POST /api/enrich/ai`**
@@ -134,7 +141,8 @@ Mapping:
 
 ### Pre-Review behavior (current)
 
-- `advanceToReview` in `src/app/page.tsx` finalizes rows via `finalizeRowsForReview` and **always** sets the wizard step to `prereview` (never jumps straight to `enriched`). Before `computeReviewBucket`, `finalizeRowsForReview` **backfills `identityConfidence` from `confidenceScore`** when identity is missing or empty and `confidenceScore` is set — so **bulk job rows** loaded from KV (which never pass through `getCachedCompany`) still bucket correctly for **high** / **medium** trusted rules.
+- `advanceToReview` in `src/app/page.tsx` loads a **`manualEdits` map** from `GET /api/manual-edits` (one request per distinct **stable key**: normalized company **domain** or contact **resolved email**), then calls `finalizeRowsForReview` with `{ importMode, manualEdits }` and **always** sets the wizard step to `prereview` (never jumps straight to `enriched`). For each row, `finalizeRowsForReview` **merges** `manualEdits.get(stableKey)` onto the row object **before** `computeReviewBucket`, so operator-corrected fields (e.g. LinkedIn) affect buckets. It still **backfills `identityConfidence` from `confidenceScore`** when identity is missing or empty and `confidenceScore` is set — so **bulk job rows** loaded from KV (which never pass through `getCachedCompany`) still bucket correctly for **high** / **medium** trusted rules.
+- **Bulk worker** (`process/route.ts`) passes the same style of `manualEdits` map when finalizing rows for consistency across chunks.
 - `PreReviewGate` receives optional `enrichmentSummary` (non-null in **event** and **bulk** flows when the parent sets it). The **enrichment complete** card renders only when `enrichmentSummary` is present.
 - **International & government** and **duplicate** blocks inside the gate are still **threshold-driven** per `PreReviewGate` (`PREREVIEW_INTL_GOV_THRESHOLD`, `PREREVIEW_DUPLICATE_THRESHOLD` in `prereview.ts`); the summary card is independent of those sections.
 - `shouldOpenPreReviewGate` in `prereview.ts` remains available but is **not** used to choose between `prereview` and `enriched` in `page.tsx` (routing is always pre-review first).
@@ -350,9 +358,14 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 |--------|--------|
 | **Auth** | `HUBSPOT_ACCESS_TOKEN` — **Private App** token (server-only). `hubspotFetch` in `http.ts` uses `https://api.hubapi.com` + `Authorization: Bearer …`. |
 | **Companies — properties written** | `name`, `domain`, `website`, `state`, `linkedin_company_page`, `numberofemployees`, `annualrevenue`, `industry`, `description`, `city`, optional `lead_source`, `lead_source_description`, `notes` (see `companies.ts`). |
-| **Contacts — properties written** | `firstname`, `lastname`, `email`, `jobtitle`, `company`, `ds_liprofile`, `state`, `phone`, `lead_source__deal_source`, `lead_source_description`, `hs_content_membership_notes`, `job_level`, `job_function`, `numemployees`, `industry`, `website` (see `contacts.ts`). |
-| **Lists** | Create: `POST /crm/v3/lists` with `name`, `objectTypeId` (`0-2` companies, `0-1` contacts), `processingType: "MANUAL"`, optional `folderId`. Membership: `PUT /crm/v3/lists/{listId}/memberships/add` with JSON array of **HubSpot record IDs** from create/update (not import row UUIDs). |
-| **Batch create — HTTP "already exists"** | If `POST .../batch/create` fails at the HTTP level with an error containing `already exists`, `batchCreateContacts` / `batchCreateCompanies` **retry each row** with a single-object create (`POST /crm/v3/objects/contacts` or `.../companies`) so per-row duplicate IDs are correct; other HTTP failures still apply one error string to the whole chunk. |
+| **Contacts — properties written** | `firstname`, `lastname`, `email`, `jobtitle`, `company`, `ds_liprofile`, `state`, `phone`, `lead_source__deal_source`, `lead_source_description`, `hs_content_membership_notes`, `job_level`, `job_function`, `numemployees`, `industry`, `website` (see `contacts.ts`). **`website`** from ZoomInfo company URL is sent only when **`companyDomain`** is empty (avoids overwriting a known company domain). |
+| **Contact pre-check (search)** | `batchCheckContactsInHubSpot` uses `POST /crm/v3/objects/contacts/search` with `IN` on normalized emails (chunks of **100**), properties `CONTACT_PRECHECK_PROPERTIES` (`email`, `jobtitle`, `company`, `ds_liprofile`, `state`, `phone`, `job_level`, `job_function`), pagination via `after`, sort `hs_lastmodifieddate` descending. **`hubspotSearchWithBackoff`** retries **429** at **1s** then **3s**. |
+| **Push — approved deduplication** | Before create/update, `deduplicateApproved` in `push-handler.ts`: **contacts** — one row per normalized **resolved email**; **companies** — one per normalized **domain**, then a second pass drops duplicate **`resolvedName` + `state`** pairs (case-insensitive). |
+| **Push — contact CRM match** | Rows without `hubspotId`: **`batchFindContactsByEmail`** (same search as precheck, **100** emails per chunk, **200 ms** between chunks) maps email → id. Remaining unknowns: sequential **`findContactByNameAndCompany`** (exact `firstname` + `lastname` + `company`, `limit: 2` → require exactly one result), **100 ms** delay between attempts. Then **batch update** known matches, **batch create** the rest. |
+| **Push — company CRM match** | **`batchFindCompaniesByDomain`** on unknowns without `hubspotId`; known `hubspotId` and domain matches go to update; remainder to create. |
+| **Lists** | Create: `POST /crm/v3/lists` with `name`, `objectTypeId` (`0-2` companies, `0-1` contacts), `processingType: "MANUAL"`, optional `folderId` (numeric string sent as number when it parses cleanly). If create fails with **“already exist”**, **`GET /crm/v3/lists/object-type-id/{objectTypeId}/name/{name}`** resolves the existing list id and push reuses it. Membership: `PUT /crm/v3/lists/{listId}/memberships/add` with JSON array of **HubSpot record IDs** from create/update (not import row UUIDs). |
+| **Batch create — duplicates** | **HTTP-level:** If `POST .../batch/create` fails with body/error text matching **`already exists`**, contacts path **retries each row** with single `POST /crm/v3/objects/contacts`; duplicates parsed via **`parseHubSpotDuplicateExistingId`** (`Contact|Company already exists. Existing ID: …`) feed **`batchUpdateContacts`** (deduped by HubSpot id). **Batch JSON 200 with gaps:** per-index results without `id` use **`errorMessageForBatchIndex`**; same **Existing ID** pattern triggers update. Companies mirror this pattern in `companies.ts`. Batch chunks use size **100** and **200 ms** cooldown between chunks (`HUBSPOT_BATCH_COOLDOWN_MS`). |
+| **Import Settings — contacts only** | Push JSON may include **`useExistingLeadSource`** and **`useExistingLeadSourceDescription`** (booleans). When true, **`contactPushExtras`** prefers each row’s CSV **`leadSource` / `leadSourceDescription`** over the global Import Settings strings (`push-handler.ts`). |
 | **Folders** | `GET /crm/v3/lists/folders` — parsed by `list-folders.ts`; UI uses folder id on list create in `push-handler` (`createStaticListForPush`). |
 | **Import Settings folder UX** | `PrePushScreen` uses a placeholder `Select a folder` (disabled), then explicit `No Folder`, then live folders. If placeholder or `No Folder` is chosen, `folderId` is omitted in push payload. |
 | **Success screen list URL** | Uses HubSpot object-list path: `https://app.hubspot.com/contacts/{portalId}/objectLists/{listId}/filters`. |
@@ -380,7 +393,8 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 ### Upstash Redis cache (`@upstash/redis`)
 
 - **TTL:** `60 * 60 * 24 * 30` seconds (**30 days**) for both company and contact cache keys in `enrichment-cache.ts`.
-- **Keys:** `company:<normalized_name>`, `contact:<normalized_email>`.
+- **Keys:** `company:<normalized_name>`, `contact:<normalized_email>`, bulk job `job:{jobId}:…` (meta, rows, raw / raw shards), **`manual_edits:{listType}:{stableKey}`** (field-level overrides for review; **7-day** TTL, `MANUAL_EDITS_TTL` in `enrichment-cache.ts`).
+- **Manual edits API:** `POST /api/manual-edits` body `{ stableKey, listType, field, value }` merges into the KV-stored **JSON object** for that stable key (`existing[field] = value`). `GET ?stableKey=&listType=` returns `{ edits }`. `ReviewTable` POSTs on cell edits; `advanceToReview` and bulk **`process`** load edits for finalization.
 - **Read-time migrations — `getCachedCompany` (in-memory on cache hit; no write-back to KV):**
   - If LinkedIn URL is set but `linkedinSource` is empty, set source to `zoominfo` vs `hubspot` from `enrichedByZoomInfo`.
   - If ZoomInfo–like fields are present but `enrichedByZoomInfo` is false, infer ZoomInfo and optionally `domainSource: "zoominfo_verified"`.
@@ -410,6 +424,7 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
   - Needs Review
   - Excluded
 - LinkedIn column legend is shown via header hover tooltip (`?` trigger) instead of a persistent legend row.
+- **`ReasoningTooltip`** (`ReasoningTooltip.tsx`): shared **`?` / info** control with **hover** preview and **click-to-pin** (outside click dismisses); used for structured review copy and header help, with **fixed** positioning and viewport-aware above/below placement.
 
 ## 7. Known limitations & active blockers
 

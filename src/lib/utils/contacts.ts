@@ -9,6 +9,7 @@ const PERSONAL_CONSUMER_EMAIL_DOMAINS = [
   "icloud.com",
   "aol.com",
   "protonmail.com",
+  "proton.me",
   "live.com",
   "msn.com",
   "me.com",

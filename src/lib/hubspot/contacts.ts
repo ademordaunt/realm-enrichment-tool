@@ -47,46 +47,102 @@ function isEmpty(val: string | null | undefined): boolean {
   return String(val).trim() === "";
 }
 
+/**
+ * Builds HubSpot properties payload for a contact.
+ *
+ * When `existingData` is provided (update path), field-specific write rules are applied:
+ * - "Fill empty only": included only when the existing HubSpot value is empty.
+ * - "Never overwrite" (email): never sent on updates.
+ * - "Overwrite": always sent when we have a non-empty value.
+ *
+ * When `existingData` is omitted (create path), all available fields are sent.
+ */
 function contactProperties(
   contact: EnrichedContact,
   extras?: HubSpotCompanyPushExtras,
+  existingData?: Record<string, string>,
 ): Record<string, string> {
-  const props: Record<string, string> = {
-    firstname: contact.firstName?.trim() ?? "",
-    lastname: contact.lastName?.trim() ?? "",
-    email: contact.resolvedEmail?.trim() ?? "",
-    jobtitle: contact.title?.trim() ?? "",
-    company: contact.resolvedCompany?.trim() ?? "",
-    ds_liprofile: contact.linkedinUrl?.trim() ?? "",
-    state: contact.location?.trim() ?? "",
-  };
-  const phone = contact.phone?.trim();
-  if (phone) props.phone = phone;
-  const ls = contact.leadSource?.trim();
-  if (ls) props.lead_source__deal_source = ls;
-  const lsd = contact.leadSourceDescription?.trim();
-  if (lsd) props.lead_source_description = lsd;
-  const n = contact.membershipNotes?.trim() || contact.notes?.trim();
-  if (n) props.hs_content_membership_notes = n;
-  if (contact.ziManagementLevel?.trim()) props.job_level = contact.ziManagementLevel.trim();
-  if (contact.ziJobFunction?.trim()) props.job_function = contact.ziJobFunction.trim();
-  if (contact.ziCompanyPrimaryIndustry?.trim()) {
+  const ex = existingData ?? {};
+  const isUpdate = existingData !== undefined;
+  const props: Record<string, string> = {};
+
+  // firstname — Fill empty only
+  if (isEmpty(ex.firstname)) props.firstname = contact.firstName?.trim() ?? "";
+
+  // lastname — Fill empty only
+  if (isEmpty(ex.lastname)) props.lastname = contact.lastName?.trim() ?? "";
+
+  // email — Never overwrite (only sent on create)
+  if (!isUpdate) props.email = contact.resolvedEmail?.trim() ?? "";
+
+  // jobtitle — Fill empty only
+  if (isEmpty(ex.jobtitle)) props.jobtitle = contact.title?.trim() ?? "";
+
+  // company — Fill empty only
+  if (isEmpty(ex.company)) props.company = contact.resolvedCompany?.trim() ?? "";
+
+  // ds_liprofile (LinkedIn) — Fill empty only
+  if (contact.linkedinUrl?.trim() && isEmpty(ex.ds_liprofile)) {
+    props.ds_liprofile = contact.linkedinUrl.trim();
+  }
+
+  // state — Overwrite (send whenever we have a value)
+  const state = contact.location?.trim() ?? "";
+  if (state) props.state = state;
+
+  // phone — Fill empty only
+  if (contact.phone?.trim() && isEmpty(ex.phone)) props.phone = contact.phone.trim();
+
+  // lead source — Fill empty only (extras take priority over row value)
+  const leadSourceVal = extras?.leadSource?.trim() || contact.leadSource?.trim();
+  if (leadSourceVal && isEmpty(ex.lead_source__deal_source)) {
+    props.lead_source__deal_source = leadSourceVal;
+  }
+
+  // lead source description — Fill empty only
+  const lsdVal = extras?.leadSourceDescription?.trim() || contact.leadSourceDescription?.trim();
+  if (lsdVal && isEmpty(ex.lead_source_description)) {
+    props.lead_source_description = lsdVal;
+  }
+
+  // membership notes — Fill empty only
+  const notesVal = extras?.notes?.trim() || contact.membershipNotes?.trim() || contact.notes?.trim();
+  if (notesVal && isEmpty(ex.hs_content_membership_notes)) {
+    props.hs_content_membership_notes = notesVal;
+  }
+
+  // job_level — Fill empty only
+  if (contact.ziManagementLevel?.trim() && isEmpty(ex.job_level)) {
+    props.job_level = contact.ziManagementLevel.trim();
+  }
+
+  // job_function — Fill empty only
+  if (contact.ziJobFunction?.trim() && isEmpty(ex.job_function)) {
+    props.job_function = contact.ziJobFunction.trim();
+  }
+
+  // industry — Fill empty only
+  if (contact.ziCompanyPrimaryIndustry?.trim() && isEmpty(ex.industry)) {
     props.industry = contact.ziCompanyPrimaryIndustry.trim();
   }
+
+  // numemployees — Overwrite
   if (contact.ziCompanyEmployeeCount?.trim()) {
     props.numemployees = contact.ziCompanyEmployeeCount.trim();
   }
-  if (
-    isEmpty(contact.companyDomain) &&
-    contact.ziCompanyWebsite?.trim()
-  ) {
+
+  // website — Fill empty only
+  if (isEmpty(contact.companyDomain) && contact.ziCompanyWebsite?.trim() && isEmpty(ex.website)) {
     props.website = contact.ziCompanyWebsite.trim();
   }
-  if (extras?.leadSource?.trim()) props.lead_source__deal_source = extras.leadSource.trim();
-  if (extras?.leadSourceDescription?.trim()) {
-    props.lead_source_description = extras.leadSourceDescription.trim();
+
+  // personalEmail — not pushed to HubSpot (additional emails API not implemented); log for reference
+  if (contact.personalEmail?.trim()) {
+    console.log(
+      `[HubSpot Push] personalEmail not pushed (requires HubSpot additional emails API): ${contact.personalEmail}`,
+    );
   }
-  if (extras?.notes?.trim()) props.hs_content_membership_notes = extras.notes.trim();
+
   return props;
 }
 
@@ -120,6 +176,45 @@ export async function findExistingContact(email: string): Promise<string | null>
   const json = (await res.json()) as { results?: { id: string }[] };
   const id = json.results?.[0]?.id;
   return id ?? null;
+}
+
+export async function findContactByNameAndCompany(
+  firstName: string,
+  lastName: string,
+  company: string,
+): Promise<string | null> {
+  const fn = firstName.trim();
+  const ln = lastName.trim();
+  const co = company.trim();
+  if (!fn || !ln || !co) return null;
+
+  const res = await hubspotFetch("/crm/v3/objects/contacts/search", {
+    method: "POST",
+    body: JSON.stringify({
+      filterGroups: [
+        {
+          filters: [
+            { propertyName: "firstname", operator: "EQ", value: fn },
+            { propertyName: "lastname", operator: "EQ", value: ln },
+            { propertyName: "company", operator: "EQ", value: co },
+          ],
+        },
+      ],
+      properties: ["email", "firstname", "lastname", "company"],
+      limit: 2,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(await readHubSpotError(res));
+  }
+
+  const json = (await res.json()) as { results?: Array<{ id?: string | number }> };
+  const results = json.results ?? [];
+  if (results.length !== 1) return null;
+
+  const id = results[0]?.id;
+  return id != null && String(id).trim() !== "" ? String(id) : null;
 }
 
 export async function batchCheckContactsInHubSpot(
@@ -384,7 +479,7 @@ export async function batchUpdateContacts(
       body: JSON.stringify({
         inputs: chunk.map((row) => ({
           id: row.id,
-          properties: contactProperties(row.contact, resolveExtras(row.contact)),
+          properties: contactProperties(row.contact, resolveExtras(row.contact), row.contact.existingData ?? {}),
         })),
       }),
     });
@@ -417,6 +512,49 @@ export async function batchUpdateContacts(
     onAfterChunk?.(chunk.length);
   }
   return { success, rowErrors };
+}
+
+/**
+ * Writes HubSpot contact-to-company associations in batches of 100.
+ * Uses association type 279 (standard primary contact-company link).
+ */
+export async function batchAssociateContactsToCompanies(
+  associations: Array<{ contactHubSpotId: string; companyHubSpotId: string }>,
+): Promise<{ associated: number; errors: Array<{ contactHubSpotId: string; error: string }> }> {
+  let associated = 0;
+  const errors: Array<{ contactHubSpotId: string; error: string }> = [];
+  if (associations.length === 0) return { associated, errors };
+
+  for (let c = 0; c < associations.length; c += HUBSPOT_BATCH_SIZE) {
+    await delayBatchCooldown(c);
+    const chunk = associations.slice(c, c + HUBSPOT_BATCH_SIZE);
+    const res = await hubspotFetch("/crm/v4/associations/contacts/companies/batch/create", {
+      method: "PUT",
+      body: JSON.stringify({
+        inputs: chunk.map(({ contactHubSpotId, companyHubSpotId }) => ({
+          from: { id: contactHubSpotId },
+          to: { id: companyHubSpotId },
+          types: [
+            {
+              associationCategory: "HUBSPOT_DEFINED",
+              associationTypeId: 279,
+            },
+          ],
+        })),
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await readHubSpotError(res);
+      for (const { contactHubSpotId } of chunk) {
+        errors.push({ contactHubSpotId, error: errText });
+      }
+      continue;
+    }
+    associated += chunk.length;
+  }
+
+  return { associated, errors };
 }
 
 export async function createContact(

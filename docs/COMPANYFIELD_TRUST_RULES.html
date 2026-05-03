@@ -1,0 +1,138 @@
+
+<style>
+  * { box-sizing: border-box; }
+  .wrap { padding: 4px 0 16px; }
+  .trust-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+  .trust-table th { font-size: 10px; font-weight: 500; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.05em; padding: 8px 10px; text-align: left; border-bottom: 0.5px solid var(--color-border-primary); }
+  .trust-table td { padding: 8px 10px; vertical-align: top; border-bottom: 0.5px solid var(--color-border-tertiary); color: var(--color-text-primary); line-height: 1.5; }
+  .trust-table tr:last-child td { border-bottom: none; }
+  .trust-table tr:hover td { background: var(--color-background-secondary); }
+  .field-name { font-weight: 500; font-size: 13px; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 500; padding: 2px 6px; border-radius: 4px; white-space: nowrap; margin-bottom: 2px; }
+  .b-overwrite { background: #EAF3DE; color: #3B6D11; }
+  .b-fill { background: #E6F1FB; color: #185FA5; }
+  .b-never { background: #FCEBEB; color: #A32D2D; }
+  .b-flag { background: #FAEEDA; color: #854F0B; }
+  .b-silent { background: #F1EFE8; color: #5F5E5A; }
+  .b-conf-hi { background: #EAF3DE; color: #3B6D11; }
+  .note { color: var(--color-text-secondary); font-size: 11px; display: block; margin-top: 3px; font-style: italic; }
+  .disq { color: var(--color-text-secondary); font-size: 11px; font-style: italic; }
+  .col-field { width: 11%; }
+  .col-source { width: 17%; }
+  .col-agree { width: 16%; }
+  .col-conflict { width: 26%; }
+  .col-write { width: 16%; }
+  .col-notes { width: 14%; }
+  @media (prefers-color-scheme: dark) {
+    .b-overwrite { background: #173404; color: #C0DD97; }
+    .b-fill { background: #042C53; color: #B5D4F4; }
+    .b-never { background: #501313; color: #F7C1C1; }
+    .b-flag { background: #412402; color: #FAC775; }
+    .b-silent { background: #2C2C2A; color: #B4B2A9; }
+    .b-conf-hi { background: #173404; color: #C0DD97; }
+  }
+</style>
+<div class="wrap">
+  <table class="trust-table">
+    <thead>
+      <tr>
+        <th class="col-field">Field</th>
+        <th class="col-source">Source priority</th>
+        <th class="col-agree">Sources agree</th>
+        <th class="col-conflict">Sources conflict</th>
+        <th class="col-write">Write to HubSpot<br><span style="font-size:9px;font-weight:400;text-transform:none;">(pre-review / automated)</span></th>
+        <th class="col-notes">Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="field-name">Company name</span></td>
+        <td>HubSpot (matched) → ZoomInfo → AI<br><span class="note">Net-new: ZoomInfo wins</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td>Flag if root words differ meaningfully.<br><br><strong>Edge case:</strong> if AI is high-confidence AND ZoomInfo + AI agree on a name meaningfully different from HubSpot (e.g. "RUSH" vs "Rush University Medical Center") → flag for operator review. Do not silently keep stale HubSpot name.</td>
+        <td><span class="badge b-fill">Fill empty only</span><br><span class="note">Never overwrite without operator review</span></td>
+        <td>Name doesn't affect HubSpot deduplication — domain does.</td>
+      </tr>
+      <tr>
+        <td><span class="field-name">Domain</span></td>
+        <td>ZoomInfo → HubSpot → AI</td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-flag">Always flag</span><br>Record identity conflict — entire ZoomInfo payload is anchored to ZoomInfo's domain. Operator must resolve before any other field can be trusted.</td>
+        <td><span class="badge b-never">Never overwrite</span><br><span class="note">Fill if HubSpot has no domain</span></td>
+        <td>Domain is the HubSpot dedup key. Wrong domain = duplicate record.</td>
+      </tr>
+      <tr>
+        <td><span class="field-name">State / Region</span></td>
+        <td>ZoomInfo → HubSpot → AI</td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span><br>More current; companies move HQs.</td>
+        <td><span class="badge b-overwrite">Overwrite</span></td>
+        <td></td>
+      </tr>
+      <tr>
+        <td><span class="field-name">Employee count</span></td>
+        <td>ZoomInfo → HubSpot<br><span class="disq">AI disqualified</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span><br>Fast-aging; HubSpot value likely stale.</td>
+        <td><span class="badge b-overwrite">Overwrite</span></td>
+        <td></td>
+      </tr>
+      <tr>
+        <td><span class="field-name">Revenue</span></td>
+        <td>ZoomInfo → HubSpot<br><span class="disq">AI disqualified</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span><br>Fast-aging; HubSpot value likely stale.</td>
+        <td><span class="badge b-overwrite">Overwrite</span></td>
+        <td>Private company revenue always approximate even from ZoomInfo.</td>
+      </tr>
+      <tr>
+        <td><span class="field-name">Industry</span></td>
+        <td>ZoomInfo → HubSpot → AI</td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span><br>ZoomInfo and HubSpot taxonomies align well enough to auto-resolve.</td>
+        <td><span class="badge b-fill">Fill empty only</span><br><span class="note">Existing value may be manually curated</span></td>
+        <td></td>
+      </tr>
+      <tr>
+        <td><span class="field-name">Description</span></td>
+        <td>AI → ZoomInfo → HubSpot<br><span class="note">ZoomInfo descriptions are boilerplate</span></td>
+        <td>Use AI value — it's better regardless</td>
+        <td>If HubSpot has a description: skip. Assume it was written intentionally.</td>
+        <td><span class="badge b-fill">Fill empty only</span></td>
+        <td>Only field where AI is the top source.</td>
+      </tr>
+      <tr>
+        <td><span class="field-name">City</span></td>
+        <td>ZoomInfo → HubSpot → AI</td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span></td>
+        <td><span class="badge b-overwrite">Overwrite</span></td>
+        <td></td>
+      </tr>
+      <tr>
+        <td><span class="field-name">LinkedIn URL</span></td>
+        <td>HubSpot → ZoomInfo → AI</td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td>Flag if HubSpot and ZoomInfo both have different values.<br>ZoomInfo returns nothing → keep HubSpot silently. A null result is not a conflict.<br>AI-sourced → always amber flag.</td>
+        <td><span class="badge b-fill">Fill if HubSpot empty</span><br><span class="note">Pre-review: never overwrite existing. Post-review: operator decision is truth — write whatever was approved, including overwrite.</span></td>
+        <td>HubSpot wins pre-review. Post-review the table is the source of truth.</td>
+      </tr>
+      <tr>
+        <td><span class="field-name">Phone</span></td>
+        <td>ZoomInfo → HubSpot</td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span></td>
+        <td><span class="badge b-overwrite">Overwrite</span></td>
+        <td>Main office line. Consistent with city, revenue, state.</td>
+      </tr>
+      <tr>
+        <td><span class="field-name">Company type</span></td>
+        <td>ZoomInfo → HubSpot</td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span></td>
+        <td><span class="badge b-overwrite">Overwrite</span></td>
+        <td>Public / private / nonprofit. Slow-aging but ZoomInfo is more reliable.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>

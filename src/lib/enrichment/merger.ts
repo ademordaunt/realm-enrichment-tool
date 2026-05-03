@@ -87,6 +87,7 @@ export function mergeEnrichedCompany(
       ai.linkedinUrl?.trim() ||
       commonroom.linkedinUrl?.trim() ||
       "";
+    // ZoomInfo wins on fast-aging fields; CSV fills when ZoomInfo returns nothing
     merged.numberOfEmployees = (zi.numberOfEmployees || ai.numberOfEmployees) ?? null;
     merged.state = zi.state?.trim() || ai.state?.trim() || "";
     merged.domain =
@@ -98,6 +99,29 @@ export function mergeEnrichedCompany(
     merged.description = zi.description || ai.description || "";
     merged.confidenceScore = zi.enrichedByZoomInfo ? "high" : ai.confidenceScore;
   }
+
+  // Section 2b: Apply CSV fallbacks for fields ZoomInfo didn't provide.
+  // CSV is lower trust than ZoomInfo — only fills when ZoomInfo returned nothing.
+  if (!merged.domain?.trim() && !ai.domain?.trim() && ai.csvDomain?.trim()) {
+    merged.domain = ai.csvDomain.trim();
+    if (!merged.domainSource) merged.domainSource = "csv";
+  }
+  if (!merged.state?.trim() && ai.csvState?.trim()) {
+    merged.state = ai.csvState.trim();
+  }
+  if (merged.numberOfEmployees == null && ai.csvEmployees?.trim()) {
+    const n = Number(ai.csvEmployees.trim());
+    if (Number.isFinite(n)) merged.numberOfEmployees = n;
+  }
+  if (!merged.industry?.trim() && ai.csvIndustry?.trim()) {
+    merged.industry = ai.csvIndustry.trim();
+  }
+
+  // Carry csv fields forward on the merged row
+  merged.csvDomain = ai.csvDomain;
+  merged.csvState = ai.csvState;
+  merged.csvEmployees = ai.csvEmployees;
+  merged.csvIndustry = ai.csvIndustry;
 
   merged.website = websiteFromDomain(merged.domain);
   merged.enrichedByZoomInfo = ai.enrichedByZoomInfo || Boolean(zi.enrichedByZoomInfo);
@@ -173,6 +197,12 @@ export function mergeEnrichedContact(
   commonroom: Partial<EnrichedContact>,
   prospector?: Partial<EnrichedContact>,
 ): EnrichedContact {
+  // Section 9c: If ZoomInfo accuracy score < 25, discard all ZoomInfo field values.
+  // The score is preserved on the output row but no ZI fields are applied.
+  const ziScore = zoominfo.ziContactAccuracyScore;
+  const ziDiscarded = typeof ziScore === "number" && ziScore < 25;
+  const zi: Partial<EnrichedContact> = ziDiscarded ? {} : zoominfo;
+
   /** CSV email is canonical; never use AI/ZoomInfo/Common Room suggestions for the stored email. */
   const resolvedEmail = ai.rawEmail?.trim() ?? "";
 
@@ -180,36 +210,43 @@ export function mergeEnrichedContact(
     commonroom.linkedinUrl,
     prospector?.linkedinUrl,
     ai.linkedinUrl,
-    zoominfo.linkedinUrl,
+    zi.linkedinUrl,
   );
 
   const resolvedCompany = firstNonEmptyString(
     commonroom.resolvedCompany,
-    zoominfo.resolvedCompany,
+    zi.resolvedCompany,
     ai.resolvedCompany,
   );
 
+  // Section 2b: CSV title is highest trust — never overwrite with ZoomInfo
   const title = firstNonEmptyString(
+    ai.csvTitle,           // CSV title is highest trust for contacts
     commonroom.title,
     prospector?.title,
-    zoominfo.title,
+    zi.title,
     ai.title,
   );
 
   const location = firstNonEmptyString(
     commonroom.location,
     prospector?.location,
-    zoominfo.location,
+    zi.location,
     ai.location,
   );
 
-  let companyDomain = firstNonEmptyString(ai.companyDomain);
+  // Company domain: ZoomInfo wins on conflict, CSV used as fallback
+  let companyDomain = firstNonEmptyString(
+    zi.ziCompanyWebsite,
+    ai.companyDomain,
+    ai.csvDomain,
+  );
   if (!companyDomain && resolvedEmail) {
     companyDomain = domainFromEmail(resolvedEmail);
   }
 
   let confidenceScore = ai.confidenceScore;
-  if (zoominfo.enrichedByZoomInfo) {
+  if (zi.enrichedByZoomInfo) {
     confidenceScore = "high";
   } else if (
     commonroom.enrichedByCommonRoom &&
@@ -230,10 +267,19 @@ export function mergeEnrichedContact(
   const linkedinSource = linkedinSourceForContactUrl(
     linkedinUrl,
     ai,
-    zoominfo,
+    zi,
     commonroom,
     prospector,
   );
+
+  // Section 2b: CSV fallback fields — only used when ZoomInfo returned nothing
+  const mergedLocation = location || (ai.csvState?.trim() ? ai.csvState : undefined) || ai.location;
+
+  const ziEmployeeCount = zi.ziCompanyEmployeeCount?.trim();
+  const mergedEmployeeCount = ziEmployeeCount || ai.csvEmployees;
+
+  const ziIndustry = zi.ziCompanyPrimaryIndustry?.trim();
+  const mergedIndustry = ziIndustry || ai.csvIndustry;
 
   return {
     ...ai,
@@ -242,24 +288,29 @@ export function mergeEnrichedContact(
     linkedinSource,
     resolvedCompany,
     title: title || ai.title,
-    location: location || ai.location,
+    location: mergedLocation || ai.location,
     companyDomain,
+    // Carry csv fields forward
+    csvTitle: ai.csvTitle,
+    csvDomain: ai.csvDomain,
+    csvState: ai.csvState,
+    csvEmployees: ai.csvEmployees,
+    csvIndustry: ai.csvIndustry,
     ziManagementLevel:
-      firstNonEmptyString(ai.ziManagementLevel, zoominfo.ziManagementLevel) || undefined,
+      firstNonEmptyString(ai.ziManagementLevel, zi.ziManagementLevel) || undefined,
     ziJobFunction:
-      firstNonEmptyString(ai.ziJobFunction, zoominfo.ziJobFunction) || undefined,
-    ziCompanyEmployeeCount:
-      firstNonEmptyString(ai.ziCompanyEmployeeCount, zoominfo.ziCompanyEmployeeCount) ||
-      undefined,
-    ziCompanyPrimaryIndustry:
-      firstNonEmptyString(ai.ziCompanyPrimaryIndustry, zoominfo.ziCompanyPrimaryIndustry) ||
-      undefined,
+      firstNonEmptyString(ai.ziJobFunction, zi.ziJobFunction) || undefined,
+    ziCompanyEmployeeCount: mergedEmployeeCount || undefined,
+    ziCompanyPrimaryIndustry: mergedIndustry || undefined,
     ziCompanyWebsite:
-      firstNonEmptyString(ai.ziCompanyWebsite, zoominfo.ziCompanyWebsite) || undefined,
-    enrichedByZoomInfo: ai.enrichedByZoomInfo || Boolean(zoominfo.enrichedByZoomInfo),
+      firstNonEmptyString(ai.ziCompanyWebsite, zi.ziCompanyWebsite) || undefined,
+    enrichedByZoomInfo: ai.enrichedByZoomInfo || Boolean(zi.enrichedByZoomInfo),
     enrichedByCommonRoom: ai.enrichedByCommonRoom || Boolean(commonroom.enrichedByCommonRoom),
     confidenceScore,
     identityConfidence: confidenceScore,
     needsReview: confidenceScore === "high" ? false : ai.needsReview,
+    // Always preserve the raw score, even when discarded
+    ziContactAccuracyScore: ziScore ?? ai.ziContactAccuracyScore,
+    ziMatchDiscarded: ziDiscarded || ai.ziMatchDiscarded || false,
   };
 }

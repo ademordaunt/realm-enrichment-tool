@@ -3,12 +3,15 @@ import {
   batchCreateCompanies,
   batchFindCompaniesByDomain,
   batchUpdateCompanies,
+  findCompanyByName,
   normalizeDomain,
 } from "@/lib/hubspot/companies";
 import {
+  batchAssociateContactsToCompanies,
   batchCreateContacts,
   batchFindContactsByEmail,
   batchUpdateContacts,
+  findContactByNameAndCompany,
 } from "@/lib/hubspot/contacts";
 import { getHubSpotAccessToken, hubspotFetch, readHubSpotError } from "@/lib/hubspot/http";
 import { addRecordsToList } from "@/lib/hubspot/lists";
@@ -249,6 +252,11 @@ export async function handleHubSpotPushRequest(
 
       let created = 0;
       let updated = 0;
+      let nameMatchedCount = 0;
+      let contactsAssociated = 0;
+      let contactsDomainNotFound = 0;
+      let contactsNoDomain = 0;
+      let companiesNoState = 0;
       const errors: { rowId: string; error: string }[] = [];
       const recordIds: string[] = [];
 
@@ -281,6 +289,10 @@ export async function handleHubSpotPushRequest(
 
         if (listType === "companies") {
           const rowsC = approved as EnrichedCompany[];
+
+          // Count ownership failures before push
+          companiesNoState = rowsC.filter((c) => !c.state?.trim()).length;
+
           const known: EnrichedCompany[] = [];
           const unknown: EnrichedCompany[] = [];
           for (const c of rowsC) {
@@ -307,6 +319,21 @@ export async function handleHubSpotPushRequest(
           const toUpdateIds = new Set(toUpdate.map((x) => x.company.id));
           const toCreate = unknown.filter((c) => !toUpdateIds.has(c.id));
 
+          // 6a: Name-based fallback for no-domain companies that weren't matched by domain
+          for (const c of toCreate) {
+            if (c.domain?.trim()) continue;
+            const name = c.resolvedName?.trim() || c.rawInput?.trim();
+            if (!name) continue;
+            const fallbackId = await findCompanyByName(name);
+            if (fallbackId) {
+              toUpdate.push({ id: fallbackId, company: { ...c, matchedByName: true } });
+              nameMatchedCount += 1;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          const finalToCreateIds = new Set(toUpdate.map((x) => x.company.id));
+          const finalToCreate = toCreate.filter((c) => !finalToCreateIds.has(c.id));
+
           const { success: uOk, rowErrors: uErr } = await batchUpdateCompanies(
             toUpdate,
             pushExtras,
@@ -317,7 +344,7 @@ export async function handleHubSpotPushRequest(
           uOk.forEach((r) => recordIds.push(r.id));
 
           const { success: cOk, rowErrors: cErr } = await batchCreateCompanies(
-            toCreate,
+            finalToCreate,
             pushExtras,
             onAfterChunk,
           );
@@ -326,6 +353,29 @@ export async function handleHubSpotPushRequest(
           cOk.forEach((r) => recordIds.push(r.id));
         } else {
           const rowsT = approved as EnrichedContact[];
+
+          // 8a: Domain-based company pre-lookup for associations
+          const allDomains = rowsT.flatMap((t) => {
+            const d = (t.companyDomain?.trim() || t.ziCompanyWebsite?.trim()) ?? "";
+            return d ? [d] : [];
+          });
+          const domainToCompanyIdMap = await batchFindCompaniesByDomain(allDomains);
+
+          // 8d: Annotate contacts with resolved hubspotCompanyId
+          for (const t of rowsT) {
+            const domain = t.companyDomain?.trim() || t.ziCompanyWebsite?.trim() || "";
+            if (!domain) {
+              contactsNoDomain += 1;
+            } else {
+              const compHsId = domainToCompanyIdMap.get(normalizeDomain(domain));
+              if (compHsId) {
+                t.hubspotCompanyId = compHsId;
+              } else {
+                contactsDomainNotFound += 1;
+              }
+            }
+          }
+
           const known: EnrichedContact[] = [];
           const unknown: EnrichedContact[] = [];
           for (const t of rowsT) {
@@ -359,8 +409,29 @@ export async function handleHubSpotPushRequest(
               toUpdate.push({ id: hid, contact: t });
             }
           }
+          const matchedByNameCompany = new Set<string>(toUpdate.map((x) => x.contact.id));
+          for (const t of unknown) {
+            if (matchedByNameCompany.has(t.id)) continue;
+            const firstName = t.firstName?.trim() ?? "";
+            const lastName = t.lastName?.trim() ?? "";
+            const company = t.resolvedCompany?.trim() ?? "";
+            if (!firstName || !lastName || !company) continue;
+            const fallbackId = await findContactByNameAndCompany(firstName, lastName, company);
+            if (fallbackId) {
+              toUpdate.push({ id: fallbackId, contact: t });
+              matchedByNameCompany.add(t.id);
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
           const toUpdateIds = new Set(toUpdate.map((x) => x.contact.id));
           const toCreate = unknown.filter((t) => !toUpdateIds.has(t.id));
+
+          // Build a rowId → hubspotCompanyId lookup for association phase
+          const rowIdToHsCompanyId = new Map<string, string>(
+            rowsT
+              .filter((t) => t.hubspotCompanyId)
+              .map((t) => [t.id, t.hubspotCompanyId!]),
+          );
 
           const { success: uOk, rowErrors: uErr } = await batchUpdateContacts(
             toUpdate,
@@ -379,6 +450,26 @@ export async function handleHubSpotPushRequest(
           created += cOk.length;
           mergeRowErrors(cErr);
           cOk.forEach((r) => recordIds.push(r.id));
+
+          // 8c: Write contact-to-company associations for all successfully pushed contacts
+          const allPushed = [...uOk, ...cOk];
+          const associations: Array<{ contactHubSpotId: string; companyHubSpotId: string }> = [];
+          for (const pushed of allPushed) {
+            const companyHsId = rowIdToHsCompanyId.get(pushed.rowId);
+            if (companyHsId) {
+              associations.push({ contactHubSpotId: pushed.id, companyHubSpotId: companyHsId });
+            }
+          }
+          if (associations.length > 0) {
+            const assocResult = await batchAssociateContactsToCompanies(associations);
+            contactsAssociated = assocResult.associated;
+            if (assocResult.errors.length > 0) {
+              console.error(
+                `[hubspot/push] ${assocResult.errors.length} association errors`,
+                assocResult.errors.slice(0, 3),
+              );
+            }
+          }
         }
 
         if (currentProgress < total) {
@@ -397,6 +488,18 @@ export async function handleHubSpotPushRequest(
           listName,
           totalPushed,
           ...(folderId ? { folderId } : {}),
+          ...(nameMatchedCount > 0 ? { nameMatchedCount } : {}),
+          ...(listType === "companies" && companiesNoState > 0 ? { companiesNoState } : {}),
+          ...(listType === "contacts"
+            ? {
+                ...(contactsAssociated > 0 ? { contactsAssociated } : {}),
+                ...(contactsDomainNotFound > 0 ? { contactsDomainNotFound } : {}),
+                ...(contactsNoDomain > 0 ? { contactsNoDomain } : {}),
+                ...(contactsDomainNotFound + contactsNoDomain > 0
+                  ? { contactsNoCompanyAssociation: contactsDomainNotFound + contactsNoDomain }
+                  : {}),
+              }
+            : {}),
         };
 
         try {

@@ -134,6 +134,102 @@ function websiteFromDomain(domain: string): string {
   return d ? `https://www.${d}` : "";
 }
 
+function normalizeDomainLocal(d: string): string {
+  return d.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0] ?? "";
+}
+
+type FieldPreviewEntry = { key: string; label: string; value: string };
+type FieldPreviewResult = {
+  written: FieldPreviewEntry[];
+  skipped: Array<{ key: string; label: string; hsValue: string }>;
+};
+
+function isEmpty(v: string | null | undefined): boolean {
+  return v == null || String(v).trim() === "";
+}
+
+function previewCompanyFields(
+  company: EnrichedCompany,
+  isUpdate: boolean,
+): FieldPreviewResult {
+  const ex: Record<string, string> = isUpdate ? (company.existingData ?? {}) : {};
+  const written: FieldPreviewEntry[] = [];
+  const skipped: Array<{ key: string; label: string; hsValue: string }> = [];
+
+  const check = (key: string, label: string, value: string | undefined | null, overwrite = false) => {
+    const v = value?.trim() ?? "";
+    if (!v) return;
+    if (!overwrite && !isEmpty(ex[key])) {
+      skipped.push({ key, label, hsValue: ex[key] ?? "" });
+    } else {
+      written.push({ key, label, value: v });
+    }
+  };
+
+  const domain = normalizeDomainLocal(company.domain ?? "");
+  check("name", "Name", company.resolvedName?.trim() || company.rawInput?.trim() || "Unknown");
+  check("domain", "Domain", domain);
+  check("website", "Website", domain ? `https://www.${domain}` : "");
+  check("linkedin_company_page", "LinkedIn Page", company.linkedinUrl?.trim());
+  check("industry", "Industry", company.industry?.trim());
+  check("description", "Description", company.description?.trim());
+  check("phone", "Phone", company.phone?.trim());
+  check("state", "State/Region", company.state?.trim(), true);
+  if (company.numberOfEmployees != null && !Number.isNaN(company.numberOfEmployees)) {
+    check("numberofemployees", "Employees", String(company.numberOfEmployees), true);
+  }
+  if (company.revenue != null && !Number.isNaN(Number(company.revenue))) {
+    check("annualrevenue", "Annual Revenue", String(company.revenue * 1000), true);
+  }
+  check("city", "City", company.city?.trim(), true);
+
+  return { written, skipped };
+}
+
+function previewContactFields(
+  contact: EnrichedContact,
+  isUpdate: boolean,
+): FieldPreviewResult {
+  const ex: Record<string, string> = isUpdate ? (contact.existingData ?? {}) : {};
+  const written: FieldPreviewEntry[] = [];
+  const skipped: Array<{ key: string; label: string; hsValue: string }> = [];
+
+  const check = (key: string, label: string, value: string | undefined | null, overwrite = false) => {
+    const v = value?.trim() ?? "";
+    if (!v) return;
+    if (!overwrite && !isEmpty(ex[key])) {
+      skipped.push({ key, label, hsValue: ex[key] ?? "" });
+    } else {
+      written.push({ key, label, value: v });
+    }
+  };
+
+  check("firstname", "First Name", contact.firstName?.trim());
+  check("lastname", "Last Name", contact.lastName?.trim());
+  if (!isUpdate) {
+    const email = contact.resolvedEmail?.trim();
+    if (email) written.push({ key: "email", label: "Email", value: email });
+  } else if (contact.resolvedEmail?.trim()) {
+    skipped.push({ key: "email", label: "Email", hsValue: "(never overwritten)" });
+  }
+  check("jobtitle", "Job Title", contact.title?.trim());
+  check("company", "Company Name", contact.resolvedCompany?.trim());
+  check("ds_liprofile", "LinkedIn Profile", contact.linkedinUrl?.trim());
+  check("state", "State/Region", contact.location?.trim(), true);
+  check("phone", "Phone", contact.phone?.trim());
+  check("job_level", "Job Level", contact.ziManagementLevel?.trim());
+  check("job_function", "Job Function", contact.ziJobFunction?.trim());
+  check("industry", "Industry", contact.ziCompanyPrimaryIndustry?.trim());
+  if (contact.ziCompanyEmployeeCount?.trim()) {
+    check("numemployees", "Employees (Company)", contact.ziCompanyEmployeeCount.trim(), true);
+  }
+  if (!contact.companyDomain?.trim() && contact.ziCompanyWebsite?.trim()) {
+    check("website", "Company Website", contact.ziCompanyWebsite.trim());
+  }
+
+  return { written, skipped };
+}
+
 export interface PrePushScreenProps {
   listType: "companies" | "contacts";
   approvedRows: Array<EnrichedCompany | EnrichedContact>;
@@ -166,6 +262,8 @@ export function PrePushScreen({
   const [folderManual, setFolderManual] = useState("");
 
   const [contactEditRows, setContactEditRows] = useState<EnrichedContact[] | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [expandedPreviewRows, setExpandedPreviewRows] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setListName(defaultListName);
@@ -291,6 +389,34 @@ export function PrePushScreen({
       prev ? prev.map((r) => (r.id === id ? { ...r, ...partial } : r)) : prev,
     );
   }, []);
+
+  const fieldPreviewRows = useMemo(() => {
+    const rows = listType === "contacts"
+      ? (contactRowsForTable as Array<EnrichedCompany | EnrichedContact>)
+      : (approvedRows as Array<EnrichedCompany | EnrichedContact>);
+    return rows.map((row) => {
+      const isUpdate = typeof (row as EnrichedCompany).hubspotId === "string" && (row as EnrichedCompany).hubspotId !== null && (row as EnrichedCompany).hubspotId !== "";
+      const preview = listType === "companies"
+        ? previewCompanyFields(row as EnrichedCompany, isUpdate)
+        : previewContactFields(row as EnrichedContact, isUpdate);
+      const name = listType === "companies"
+        ? ((row as EnrichedCompany).resolvedName?.trim() || (row as EnrichedCompany).rawInput?.trim() || "—")
+        : `${(row as EnrichedContact).firstName ?? ""} ${(row as EnrichedContact).lastName ?? ""}`.trim() || "—";
+      return { id: row.id, name, ...preview };
+    });
+  }, [listType, approvedRows, contactRowsForTable]);
+
+  const ownershipCompaniesNoState = useMemo(() => {
+    if (listType !== "companies") return 0;
+    return (approvedRows as EnrichedCompany[]).filter((r) => !r.state?.trim()).length;
+  }, [listType, approvedRows]);
+
+  const ownershipContactsNoDomain = useMemo(() => {
+    if (listType !== "contacts") return 0;
+    return (contactRowsForTable as EnrichedContact[]).filter(
+      (r) => !r.companyDomain?.trim() && !r.ziCompanyWebsite?.trim(),
+    ).length;
+  }, [listType, contactRowsForTable]);
 
   return (
     <>
@@ -510,6 +636,129 @@ export function PrePushScreen({
           </div>
         </div>
       </section>
+
+      {/* Section 10a: Collapsible field preview */}
+      <div className={CARD_PANEL}>
+        <button
+          type="button"
+          className="flex w-full items-center justify-between text-sm font-semibold text-zinc-800 dark:text-zinc-200"
+          onClick={() => setPreviewOpen((o) => !o)}
+          aria-expanded={previewOpen}
+        >
+          <span>Preview fields being pushed to HubSpot</span>
+          <span className="text-zinc-500">{previewOpen ? "▼" : "▶"}</span>
+        </button>
+
+        {previewOpen ? (
+          <div className="mt-3 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+            <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
+              <thead className="bg-zinc-100 dark:bg-zinc-800/80">
+                <tr>
+                  <th className={TABLE_HEAD_CELL}>Record</th>
+                  <th className={TABLE_HEAD_CELL}>Fields being written</th>
+                  <th className={TABLE_HEAD_CELL}>Fields skipped (HubSpot has value)</th>
+                  <th className={TABLE_HEAD_CELL}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {fieldPreviewRows.map((row) => {
+                  const isExpanded = expandedPreviewRows.has(row.id);
+                  return (
+                    <>
+                      <tr key={row.id} className={TABLE_ROW}>
+                        <td className="max-w-40 wrap-break-word px-3 py-2 font-medium text-zinc-800 dark:text-zinc-200">
+                          {row.name}
+                        </td>
+                        <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
+                          <span className="font-medium text-emerald-700 dark:text-emerald-400">{row.written.length}</span>
+                        </td>
+                        <td className="px-3 py-2 tabular-nums text-zinc-600 dark:text-zinc-400">
+                          {row.skipped.length > 0 ? (
+                            <span className="text-amber-700 dark:text-amber-400">{row.skipped.length}</span>
+                          ) : "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {(row.written.length > 0 || row.skipped.length > 0) ? (
+                            <button
+                              type="button"
+                              className="text-xs text-blue-600 underline hover:text-blue-800 dark:text-blue-400"
+                              onClick={() =>
+                                setExpandedPreviewRows((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(row.id)) next.delete(row.id);
+                                  else next.add(row.id);
+                                  return next;
+                                })
+                              }
+                            >
+                              {isExpanded ? "Hide" : "Details"}
+                            </button>
+                          ) : null}
+                        </td>
+                      </tr>
+                      {isExpanded ? (
+                        <tr key={`${row.id}-detail`} className="bg-zinc-50 dark:bg-zinc-900/50">
+                          <td colSpan={4} className="px-4 pb-3 pt-1">
+                            <div className="flex flex-wrap gap-6">
+                              {row.written.length > 0 ? (
+                                <div className="min-w-48">
+                                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                                    Will write ({row.written.length})
+                                  </p>
+                                  <ul className="space-y-0.5">
+                                    {row.written.map((f) => (
+                                      <li key={f.key} className="flex items-baseline gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
+                                        <span className="font-medium text-zinc-900 dark:text-zinc-100 shrink-0">{f.label}:</span>
+                                        <span className="break-all">{f.value}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+                              {row.skipped.length > 0 ? (
+                                <div className="min-w-48">
+                                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                                    Skipped — HubSpot has value ({row.skipped.length})
+                                  </p>
+                                  <ul className="space-y-0.5">
+                                    {row.skipped.map((f) => (
+                                      <li key={f.key} className="flex items-baseline gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                                        <span className="font-medium shrink-0">{f.label}:</span>
+                                        <span className="break-all italic">{f.hsValue}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
+
+      {/* Section 10b: Ownership failure preview */}
+      {(ownershipCompaniesNoState > 0 || ownershipContactsNoDomain > 0) ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-4 dark:border-amber-800 dark:bg-amber-950/30">
+          <p className="mb-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
+            After this push, the following records may not have an owner assigned automatically:
+          </p>
+          <ul className="space-y-1 text-sm text-amber-800 dark:text-amber-200">
+            {ownershipCompaniesNoState > 0 ? (
+              <li>• {ownershipCompaniesNoState} {ownershipCompaniesNoState === 1 ? "company" : "companies"} with no state/region</li>
+            ) : null}
+            {ownershipContactsNoDomain > 0 ? (
+              <li>• {ownershipContactsNoDomain} {ownershipContactsNoDomain === 1 ? "contact" : "contacts"} with no company domain (no HubSpot company association possible)</li>
+            ) : null}
+          </ul>
+        </div>
+      ) : null}
 
       <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50 border-t border-zinc-200 bg-white/95 px-4 py-4 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/95">
         <div className="pointer-events-auto mx-auto flex w-full max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

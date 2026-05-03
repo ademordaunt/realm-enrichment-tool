@@ -215,6 +215,7 @@ async function runHubSpotPrecheck(
       const mergedRow = mergePrecheckCompany(row, match.existingData);
       mergedRow.hubspotId = match.hubspotId;
       mergedRow.hubspotComplete = complete;
+      mergedRow.existingData = match.existingData;
       return mergedRow;
     });
     return { rows: merged, skippedCount };
@@ -237,6 +238,7 @@ async function runHubSpotPrecheck(
     const mergedRow = mergePrecheckContact(row, match.existingData);
     mergedRow.hubspotId = match.hubspotId;
     mergedRow.hubspotComplete = complete;
+    mergedRow.existingData = match.existingData;
     return mergedRow;
   });
   return { rows: merged, skippedCount };
@@ -353,14 +355,8 @@ async function handler(req: Request): Promise<Response> {
       }
 
       const allAiRows = await getJobEnrichedRows(jobId, jobState.totalAiChunks);
-      const prechecked = await runHubSpotPrecheck(
-        jobState.listType,
-        allAiRows as EnrichedCompany[] | EnrichedContact[],
-      );
-      await persistRowsByAiChunks(jobId, prechecked.rows);
-      jobState.hubspotSkippedCount = prechecked.skippedCount;
+      await persistRowsByAiChunks(jobId, allAiRows);
       jobState.aiComplete = true;
-      jobState.precheckComplete = true;
       jobState.currentPhase = "zoominfo";
       jobState.processedRows = 0;
       jobState.checkpointChunk = 0;
@@ -417,6 +413,15 @@ async function handler(req: Request): Promise<Response> {
       jobState.currentPhase = "linkedin";
       jobState.processedRows = 0;
       jobState.checkpointChunk = 0;
+
+      // Phase 3: HubSpot pre-check now runs AFTER ZoomInfo so ZoomInfo domain is used as match key
+      console.log("[Jobs/Process] HubSpot precheck starting after ZoomInfo");
+      const allRowsAfterZoom = (await getJobEnrichedRows(jobId, jobState.totalAiChunks)) as EnrichedCompany[] | EnrichedContact[];
+      const prechecked = await runHubSpotPrecheck(jobState.listType, allRowsAfterZoom);
+      await persistRowsByAiChunks(jobId, prechecked.rows);
+      jobState.hubspotSkippedCount = prechecked.skippedCount;
+      jobState.precheckComplete = true;
+
       await setJobState(jobId, jobState);
       await queueJobChunk({ jobId, chunkIndex: 0, phase: "linkedin" });
       return Response.json({ ok: true });

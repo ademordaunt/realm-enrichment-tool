@@ -1,0 +1,218 @@
+
+<style>
+  * { box-sizing: border-box; }
+  .wrap { padding: 4px 0 16px; }
+  .trust-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+  .trust-table th { font-size: 10px; font-weight: 500; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.05em; padding: 8px 10px; text-align: left; border-bottom: 0.5px solid var(--color-border-primary); }
+  .trust-table td { padding: 8px 10px; vertical-align: top; border-bottom: 0.5px solid var(--color-border-tertiary); color: var(--color-text-primary); line-height: 1.5; }
+  .trust-table tr:last-child td { border-bottom: none; }
+  .trust-table tr:hover td { background: var(--color-background-secondary); }
+  .group-header td { background: var(--color-background-secondary); font-size: 10px; font-weight: 500; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.07em; padding: 6px 10px; border-bottom: 0.5px solid var(--color-border-secondary); border-top: 0.5px solid var(--color-border-secondary); }
+  .field-name { font-weight: 500; font-size: 13px; }
+  .badge { display: inline-block; font-size: 11px; font-weight: 500; padding: 2px 6px; border-radius: 4px; white-space: nowrap; margin-bottom: 2px; }
+  .b-overwrite { background: #EAF3DE; color: #3B6D11; }
+  .b-fill { background: #E6F1FB; color: #185FA5; }
+  .b-never { background: #FCEBEB; color: #A32D2D; }
+  .b-flag { background: #FAEEDA; color: #854F0B; }
+  .b-silent { background: #F1EFE8; color: #5F5E5A; }
+  .b-conf-hi { background: #EAF3DE; color: #3B6D11; }
+  .b-operator { background: #EEEDFE; color: #534AB7; }
+  .b-internal { background: #FAECE7; color: #993C1D; }
+  .note { color: var(--color-text-secondary); font-size: 11px; display: block; margin-top: 3px; font-style: italic; }
+  .disq { color: var(--color-text-secondary); font-size: 11px; font-style: italic; }
+  .col-field { width: 11%; }
+  .col-source { width: 20%; }
+  .col-agree { width: 15%; }
+  .col-conflict { width: 25%; }
+  .col-write { width: 16%; }
+  .col-notes { width: 13%; }
+  @media (prefers-color-scheme: dark) {
+    .b-overwrite { background: #173404; color: #C0DD97; }
+    .b-fill { background: #042C53; color: #B5D4F4; }
+    .b-never { background: #501313; color: #F7C1C1; }
+    .b-flag { background: #412402; color: #FAC775; }
+    .b-silent { background: #2C2C2A; color: #B4B2A9; }
+    .b-conf-hi { background: #173404; color: #C0DD97; }
+    .b-operator { background: #26215C; color: #CECBF6; }
+    .b-internal { background: #4A1B0C; color: #F0997B; }
+    .group-header td { background: var(--color-background-tertiary); }
+  }
+</style>
+<div class="wrap">
+  <table class="trust-table">
+    <thead>
+      <tr>
+        <th class="col-field">Field</th>
+        <th class="col-source">Source priority</th>
+        <th class="col-agree">Sources agree</th>
+        <th class="col-conflict">Sources conflict</th>
+        <th class="col-write">Write to HubSpot<br><span style="font-size:9px;font-weight:400;text-transform:none;">(pre-review / automated)</span></th>
+        <th class="col-notes">Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+
+      <tr class="group-header"><td colspan="6">Personal fields — describing the person</td></tr>
+
+      <tr>
+        <td><span class="field-name">First / Last name</span></td>
+        <td>CSV → HubSpot → ZoomInfo → AI<br><span class="note">CSV = self-reported at registration</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td>Flag if names differ meaningfully — not nickname vs full name ("Bob" vs "Robert" is fine). Flag if first+last suggest a different person entirely.</td>
+        <td><span class="badge b-fill">Fill empty only</span><br><span class="note">CSV name is truth — don't overwrite with ZoomInfo's version</span></td>
+        <td>Unlike companies, a person registered with this name intentionally.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">Email</span></td>
+        <td>Work email always canonical.<br>CSV work email → ZoomInfo work email → HubSpot<br><span class="note">Personal emails (gmail, yahoo, etc.) are never canonical. If CSV has personal email and ZoomInfo finds work email, use work email as primary.</span></td>
+        <td>N/A — work email is truth by definition once resolved</td>
+        <td><span class="badge b-flag">Always flag</span> if CSV email and HubSpot email differ for what looks like the same person — contact identity conflict, not data quality issue.<br><br>No-email contacts: allow enrichment, flag every one as needs review. If ZoomInfo returns an email on name+company match, use it. If not, push without email and note it — no HubSpot deduplication will occur.</td>
+        <td><span class="badge b-never">Never overwrite</span><br><span class="note">Email is the HubSpot contact dedup key</span></td>
+        <td>Most important field in this table. Personal email exclusion still applies — personal-email-only contacts are excluded unless ZoomInfo finds a work email.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">Phone / Mobile</span></td>
+        <td>CSV → ZoomInfo → HubSpot<br><span class="note">CSV phone = self-submitted at registration</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">CSV wins if present</span>, then ZoomInfo. HubSpot may have a direct line a rep entered.</td>
+        <td><span class="badge b-fill">Fill empty only</span><br><span class="note">Reps may store direct lines in HubSpot — preserve those</span></td>
+        <td>CSV phone is self-reported at registration — fresher than ZoomInfo's database.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">Job title</span></td>
+        <td>CSV → Common Room → ZoomInfo → HubSpot → AI<br><span class="note">CSV = self-reported; Common Room = community-verified</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td>Flag if titles differ meaningfully across levels (VP vs Director, different function). Minor wording differences ("VP Information Security" vs "VP Cybersecurity") → don't flag.</td>
+        <td><span class="badge b-fill">Fill empty only</span><br><span class="note">HubSpot title may reflect relationship-specific context a rep entered</span></td>
+        <td>Fast-aging. CSV and Common Room are freshest.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">LinkedIn URL</span></td>
+        <td>Common Room → HubSpot → ZoomInfo → AI<br><span class="note">Common Room = self-reported by community member</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td>Flag if Common Room/HubSpot and ZoomInfo differ. ZoomInfo returns nothing → keep existing silently (null ≠ conflict). AI-sourced → always amber flag regardless of other signals.</td>
+        <td><span class="badge b-fill">Fill if HubSpot empty</span><br><span class="note">Pre-review: never overwrite. Post-review: operator decision is truth.</span></td>
+        <td>Common Room leads — self-reported LinkedIn is highest possible trust for this field.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">State / Region</span></td>
+        <td>ZoomInfo → HubSpot → AI<br><span class="note">Reflects company HQ location — used for rep assignment</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span><br>Same logic as company table — this is company HQ state, not personal location.</td>
+        <td><span class="badge b-overwrite">Overwrite</span><br><span class="note">Rep assignment depends on accuracy here — freshness matters</span></td>
+        <td>Corrected from previous version. Rep assignment is by company HQ, not where the person lives.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">City</span></td>
+        <td>ZoomInfo → HubSpot → AI<br><span class="note">Company HQ city — consistent with state/region logic</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span></td>
+        <td><span class="badge b-overwrite">Overwrite</span></td>
+        <td>Same correction as state — company HQ, not personal location.</td>
+      </tr>
+
+      <tr class="group-header"><td colspan="6">Company-context fields — their employer, stored on the contact record</td></tr>
+
+      <tr>
+        <td><span class="field-name">Company name</span></td>
+        <td>ZoomInfo → HubSpot → Common Room → AI → CSV<br><span class="note">CSV company name is raw and often messy — lowest trust</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td>Flag if names differ meaningfully. If AI + ZoomInfo agree on a name meaningfully different from HubSpot, flag rather than silently keeping stale name.</td>
+        <td><span class="badge b-fill">Fill empty only</span><br><span class="note">Should match the linked HubSpot company object name</span></td>
+        <td>CSV is lowest trust here — the opposite of email. Raw company strings are the messiest input in the pipeline.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">Company domain</span></td>
+        <td>ZoomInfo (companyDomain) → ziCompanyWebsite → AI → HubSpot<br><span class="note">companyDomain is top-level on EnrichedContact from AI resolution — verify in types.ts</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-flag">Flag</span> if ZoomInfo and HubSpot differ — record identity logic same as company table. Also: domain is the key used for contact-to-company association lookup. Resolve conflicts before association.</td>
+        <td><span class="badge b-fill">Fill empty only</span></td>
+        <td>Primary key for company association lookup. Both companyDomain and ziCompanyWebsite should be checked — confirm field availability at push time in types.ts.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">Company industry</span></td>
+        <td>ZoomInfo → HubSpot → AI</td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span></td>
+        <td><span class="badge b-fill">Fill empty only</span></td>
+        <td>Same logic as company table.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">Company employee count</span></td>
+        <td>ZoomInfo → HubSpot<br><span class="disq">AI disqualified</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span></td>
+        <td><span class="badge b-overwrite">Overwrite</span></td>
+        <td>Fast-aging. Same logic as company table.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">Job level</span></td>
+        <td>ZoomInfo → HubSpot<br><span class="note">Structured taxonomy — only ZoomInfo provides reliably</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span></td>
+        <td><span class="badge b-fill">Fill empty only</span></td>
+        <td>Silent ZoomInfo field. Maps to HubSpot job_level. Not shown prominently in review UI.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">Job function</span></td>
+        <td>ZoomInfo → HubSpot<br><span class="note">Structured taxonomy — only ZoomInfo provides reliably</span></td>
+        <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
+        <td><span class="badge b-silent">ZoomInfo wins</span></td>
+        <td><span class="badge b-fill">Fill empty only</span></td>
+        <td>Silent ZoomInfo field. Maps to HubSpot job_function.</td>
+      </tr>
+
+      <tr class="group-header"><td colspan="6">Event-specific fields — operator-set, never from enrichment sources</td></tr>
+
+      <tr>
+        <td><span class="field-name">Lead source</span></td>
+        <td><span class="badge b-operator">Operator-set</span></td>
+        <td>N/A</td>
+        <td>N/A</td>
+        <td><span class="badge b-fill">Fill from CSV/operator</span><br><span class="note">Never overwrite with enrichment data</span></td>
+        <td>Requires operator judgment before the run.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">Lead source description</span></td>
+        <td><span class="badge b-operator">Operator-set</span></td>
+        <td>N/A</td>
+        <td>N/A</td>
+        <td><span class="badge b-fill">Fill from CSV/operator</span><br><span class="note">Never overwrite</span></td>
+        <td>Event-specific context. Cannot be automated.</td>
+      </tr>
+
+      <tr>
+        <td><span class="field-name">Membership notes</span></td>
+        <td><span class="badge b-operator">Operator-set</span></td>
+        <td>N/A</td>
+        <td>N/A</td>
+        <td><span class="badge b-fill">Fill from CSV/operator</span><br><span class="note">Never overwrite</span></td>
+        <td>Combined from event organizer notes + operator context. Human-only field.</td>
+      </tr>
+
+      <tr class="group-header"><td colspan="6">Internal signal fields — used for confidence logic, never pushed to HubSpot</td></tr>
+
+      <tr>
+        <td><span class="field-name">ZoomInfo contact accuracy score</span></td>
+        <td><span class="badge b-internal">ZoomInfo only</span><br>Internal signal — not a display or push field</td>
+        <td>N/A</td>
+        <td>N/A — no conflict possible</td>
+        <td><span class="badge b-never">Never pushed</span><br><span class="note">Input to confidence bucket logic only</span></td>
+        <td>85+ = corroborates high confidence. 50–84 = neutral. Below 50 = flag as needs review regardless of other signals. Below 25 = treat as failed match, discard ZoomInfo enrichment data for this contact.</td>
+      </tr>
+
+    </tbody>
+  </table>
+</div>

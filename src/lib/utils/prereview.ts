@@ -1,5 +1,4 @@
-import { isFullContact, isPersonalEmail } from "@/lib/utils/contacts";
-import { sanitizeCompanyName } from "@/lib/utils/sanitize";
+import { isPersonalEmail } from "@/lib/utils/contacts";
 import type {
   EnrichedCompany,
   EnrichedContact,
@@ -113,6 +112,11 @@ const GOV_NAME_PATTERNS = [
   "school district", "unified school", "public school",
   "port authority", "transit authority", "housing authority",
   "united states courts", "judicial circuit",
+  // Higher education — substring matches; may theoretically hit company names containing these
+  // phrases, but frequency is low and manual override is available.
+  "university of ",
+  "community college",
+  "state college",
 ] as const;
 
 function normalizeHost(domain: string): string {
@@ -308,92 +312,164 @@ export function applyConfidenceFilter<T extends EnrichedCompany | EnrichedContac
 
 export type ComputeReviewBucketOptions = { importMode?: "event" | "bulk" };
 
+/** Normalize a company name for conflict detection — strips punctuation, legal suffixes, extra whitespace. */
+function normalizeNameForConflict(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\b(inc|llc|corp|ltd|co|company|incorporated|limited|the)\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Returns true when two company names represent meaningfully different entities after
+ * stripping legal suffixes and punctuation. False if either name is empty.
+ */
+function namesConflict(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const na = normalizeNameForConflict(a);
+  const nb = normalizeNameForConflict(b);
+  if (!na || !nb) return false;
+  return na !== nb;
+}
+
+function normalizeD(domain: string): string {
+  return domain
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0] ?? "";
+}
+
 export function computeReviewBucket(
   row: EnrichedCompany | EnrichedContact,
   listType: "companies" | "contacts",
-  options?: ComputeReviewBucketOptions,
+  _options?: ComputeReviewBucketOptions,
 ): { bucket: ReviewBucket; exclusionReason?: ExclusionReason } {
   if (listType === "companies") {
     const company = row as EnrichedCompany;
-    if (isInternationalCompany(company)) {
+    const ic = company.identityConfidence ?? company.confidenceScore;
+    const ex = company.existingData as Record<string, string> | undefined;
+
+    // --- 7a: Excluded ---
+    // Rule 1: International AND ZoomInfo returned no US state
+    if (isInternationalCompany(company) && !company.state?.trim()) {
       return { bucket: "excluded", exclusionReason: "international" };
     }
+    // Rule 2: Government
     if (isGovernmentCompany(company)) {
       return { bucket: "excluded", exclusionReason: "government" };
     }
+    // Rule 3: Total non-resolution — no name AND no domain after all enrichment
+    if (!company.resolvedName?.trim() && !company.domain?.trim()) {
+      return { bucket: "excluded", exclusionReason: "unresolved" };
+    }
+    // Rule 4: No ZoomInfo enrichment AND AI confidence is low or unresolved
+    if (!company.enrichedByZoomInfo && (ic === "low" || ic === "unresolved")) {
+      return { bucket: "excluded", exclusionReason: ic === "low" ? "low_confidence" : "unresolved" };
+    }
+
+    // Compute conflict flags used by both Trusted checks and Needs Review fallback
+    const ziDomain = company.domainSource === "zoominfo_verified" ? normalizeD(company.domain) : null;
+    const hsDomain = ex?.domain ? normalizeD(ex.domain) : null;
+    const domainConflict = Boolean(ziDomain && hsDomain && ziDomain !== hsDomain);
+
+    const hsName = ex?.name?.trim();
+    const nameConflict = Boolean(
+      hsName && company.resolvedName?.trim() && namesConflict(company.resolvedName, hsName),
+    );
+
+    // --- 7e: Trusted Path A (ZoomInfo verified) ---
+    if (
+      company.enrichedByZoomInfo &&
+      !domainConflict &&
+      !nameConflict &&
+      company.domain?.trim() &&
+      company.state?.trim() &&
+      company.numberOfEmployees != null &&
+      ic !== "low"
+    ) {
+      return { bucket: "trusted" };
+    }
+
+    // --- 7e: Trusted Path B (HubSpot verified) ---
+    if (
+      company.hubspotId &&
+      ex?.domain?.trim() &&
+      ex?.state?.trim() &&
+      ex?.numberofemployees?.trim() &&
+      !domainConflict
+    ) {
+      return { bucket: "trusted" };
+    }
+
+    // --- 7c: Needs Review (everything that passed Excluded but missed Trusted) ---
+    return { bucket: "needs_review" };
   }
 
   if (listType === "contacts") {
     const contact = row as EnrichedContact;
-    if (!isFullContact(contact)) {
-      const email = contact.resolvedEmail ?? "";
-      const reason = !email.trim()
-        ? ("no_email" as const)
-        : isPersonalEmail(email)
-          ? ("personal_email" as const)
-          : ("missing_required_fields" as const);
-      return { bucket: "excluded", exclusionReason: reason };
+    const resolvedEmail = contact.resolvedEmail?.trim() ?? "";
+    const ic = contact.identityConfidence ?? contact.confidenceScore;
+    const ex = contact.existingData as Record<string, string> | undefined;
+
+    // --- 7b: Excluded ---
+    // Rule 1: Personal email AND ZoomInfo didn't find a work email
+    if (resolvedEmail && isPersonalEmail(resolvedEmail) && contact.emailSource !== "zoominfo") {
+      return { bucket: "excluded", exclusionReason: "personal_email" };
     }
-  }
-
-  if (row.identityConfidence === "low" || row.identityConfidence === "unresolved") {
-    return {
-      bucket: "excluded",
-      exclusionReason:
-        row.identityConfidence === "low" ? "low_confidence" : "unresolved",
-    };
-  }
-
-  if (row.enrichedByAI === false) {
-    if (listType === "contacts") {
-      const contact = row as EnrichedContact;
-      if (options?.importMode === "event" && !contact.linkedinUrl?.trim()) {
-        return { bucket: "needs_review" };
-      }
+    // Rule 2: No name at all
+    if (!contact.firstName?.trim() && !contact.lastName?.trim()) {
+      return { bucket: "excluded", exclusionReason: "missing_required_fields" };
     }
-    return { bucket: "trusted" };
-  }
-
-  if (listType === "contacts") {
-    const contact = row as EnrichedContact;
-    if (!sanitizeCompanyName(contact.resolvedCompany)) {
-      return { bucket: "needs_review" };
+    // Rule 3: Total non-resolution AND ZoomInfo found nothing
+    if (ic === "unresolved" && !contact.enrichedByZoomInfo) {
+      return { bucket: "excluded", exclusionReason: "unresolved" };
     }
-    if (options?.importMode === "event") {
-      if (!contact.title?.trim() || !contact.linkedinUrl?.trim()) {
-        return { bucket: "needs_review" };
-      }
+
+    const workEmail = Boolean(resolvedEmail) && !isPersonalEmail(resolvedEmail);
+    const hasEmailConflict = Boolean(
+      contact.rawEmail?.trim() &&
+        ex?.email?.trim() &&
+        contact.rawEmail.trim().toLowerCase() !== ex.email.trim().toLowerCase(),
+    );
+
+    // --- 7f: Trusted Path A (ZoomInfo verified) ---
+    if (
+      workEmail &&
+      !hasEmailConflict &&
+      contact.resolvedCompany?.trim() &&
+      contact.companyDomain?.trim() &&
+      contact.enrichedByZoomInfo &&
+      (contact.ziContactAccuracyScore == null || contact.ziContactAccuracyScore >= 50) &&
+      contact.title?.trim() &&
+      contact.linkedinUrl?.trim()
+    ) {
+      return { bucket: "trusted" };
     }
-  } else {
-    const companyNeedsDomain = row as EnrichedCompany;
-    if (!companyNeedsDomain.domain?.trim()) {
-      return { bucket: "needs_review" };
+
+    // --- 7f: Trusted Path B (HubSpot or Common Room verified) ---
+    const hsComplete = Boolean(
+      contact.hubspotId &&
+        ex?.email?.trim() &&
+        ex?.jobtitle?.trim() &&
+        ex?.company?.trim(),
+    );
+    if (
+      workEmail &&
+      !hasEmailConflict &&
+      (hsComplete || contact.enrichedByCommonRoom) &&
+      contact.resolvedCompany?.trim() &&
+      contact.companyDomain?.trim() &&
+      contact.linkedinUrl?.trim()
+    ) {
+      return { bucket: "trusted" };
     }
-  }
 
-  const company = row as EnrichedCompany;
-  const verifiedByTrustedSource =
-    row.hubspotId != null ||
-    row.enrichedByZoomInfo === true ||
-    row.enrichedByCommonRoom === true ||
-    (listType === "companies" &&
-      (company.domainSource === "zoominfo_verified" ||
-        company.domainSource === "hubspot_verified"));
-
-  if (
-    (row.identityConfidence === "high" || row.identityConfidence === "medium") &&
-    verifiedByTrustedSource
-  ) {
-    return { bucket: "trusted" };
-  }
-
-  if (
-    listType === "companies" &&
-    row.identityConfidence === "high" &&
-    company.domainSource === "ai_guess" &&
-    company.domain?.trim()
-  ) {
-    return { bucket: "trusted" };
+    // --- 7d: Needs Review ---
+    return { bucket: "needs_review" };
   }
 
   return { bucket: "needs_review" };
@@ -429,10 +505,16 @@ export function finalizeRowsForReview<T extends EnrichedCompany[] | EnrichedCont
           } as EnrichedCompany | EnrichedContact)
         : withManualEdits;
     const { bucket, exclusionReason } = computeReviewBucket(patched, listType, options);
+    const linkedinAmberFlag =
+      bucket === "trusted" && patched.linkedinSource === "ai_search" ? true : undefined;
+    const trustedSortTier =
+      bucket === "trusted" ? (linkedinAmberFlag ? 1 : 2) : undefined;
     return {
       ...patched,
       reviewBucket: bucket,
       exclusionReason,
+      ...(linkedinAmberFlag !== undefined ? { linkedinAmberFlag } : {}),
+      ...(trustedSortTier !== undefined ? { trustedSortTier } : {}),
     };
   }) as T;
 }

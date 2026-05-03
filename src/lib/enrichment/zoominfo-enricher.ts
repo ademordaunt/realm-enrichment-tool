@@ -3,6 +3,7 @@ import {
   setCachedCompany,
   setCachedContact,
 } from "@/lib/cache/enrichment-cache";
+import { isPersonalEmail } from "@/lib/utils/contacts";
 import type { EnrichedCompany, EnrichedContact, LinkedInSource } from "@/lib/utils/types";
 import { getZoomInfoToken, invalidateZoomInfoToken } from "@/lib/zoominfo/auth";
 
@@ -829,6 +830,23 @@ export async function enrichContactWithZoomInfo(
 
   // Field names must match EnrichedContact type exactly
   const out: Partial<EnrichedContact> = {};
+
+  // When the original email was personal or missing, capture ZoomInfo's work email as resolvedEmail.
+  const ziEmail = typeof attrs.email === "string" ? attrs.email.trim() : null;
+  const originalEmailWasPersonalOrMissing = contact.isPersonalEmail || !contact.rawEmail?.trim();
+  if (ziEmail && !isPersonalEmail(ziEmail) && originalEmailWasPersonalOrMissing) {
+    out.resolvedEmail = ziEmail;
+    out.emailSource = "zoominfo";
+    if (contact.rawEmail?.trim()) {
+      out.personalEmail = contact.rawEmail.trim();
+    }
+  }
+
+  // ZoomInfo contact accuracy score — stored for confidence bucket logic (Section 7/9)
+  const accuracyScore =
+    typeof attrs.contactAccuracyScore === "number" ? attrs.contactAccuracyScore : null;
+  if (accuracyScore != null) out.ziContactAccuracyScore = accuracyScore;
+
   const t = pickStr(ziTitle, contact.title);
   if (t) out.title = t;
   const li = pickStr(ziLinkedin, contact.linkedinUrl);
@@ -1041,6 +1059,23 @@ export async function enrichContactsWithZoomInfo(
       return null;
     };
     const result: Partial<EnrichedContact> = {};
+
+    // When the original email was personal or missing, capture ZoomInfo's work email as resolvedEmail.
+    const ziEmail = typeof attrs.email === "string" ? attrs.email.trim() : null;
+    const originalEmailWasPersonalOrMissing = contact.isPersonalEmail || !contact.rawEmail?.trim();
+    if (ziEmail && !isPersonalEmail(ziEmail) && originalEmailWasPersonalOrMissing) {
+      result.resolvedEmail = ziEmail;
+      result.emailSource = "zoominfo";
+      if (contact.rawEmail?.trim()) {
+        result.personalEmail = contact.rawEmail.trim();
+      }
+    }
+
+    // ZoomInfo contact accuracy score — stored for confidence bucket logic (Section 7/9)
+    const accuracyScore =
+      typeof attrs.contactAccuracyScore === "number" ? attrs.contactAccuracyScore : null;
+    if (accuracyScore != null) result.ziContactAccuracyScore = accuracyScore;
+
     if (typeof attrs.jobTitle === "string" && attrs.jobTitle.trim()) result.title = attrs.jobTitle.trim();
     if (typeof linkedinUrl === "string" && linkedinUrl.trim()) {
       result.linkedinUrl = linkedinUrl.trim();
