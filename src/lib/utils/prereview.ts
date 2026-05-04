@@ -353,6 +353,11 @@ export function computeReviewBucket(
     const ic = company.identityConfidence ?? company.confidenceScore;
     const ex = company.existingData as Record<string, string> | undefined;
 
+    // Manual override from Excluded(international) -> Needs Review.
+    if (company.manuallyIncluded === true) {
+      return { bucket: "needs_review" };
+    }
+
     // --- 7a: Excluded ---
     // Rule 1: International AND ZoomInfo returned no US state
     if (isInternationalCompany(company) && !company.state?.trim()) {
@@ -429,6 +434,11 @@ export function computeReviewBucket(
       return { bucket: "excluded", exclusionReason: "unresolved" };
     }
 
+    // Rule 4: Very low ZoomInfo accuracy always requires manual review
+    if (typeof contact.ziContactAccuracyScore === "number" && contact.ziContactAccuracyScore < 25) {
+      return { bucket: "needs_review" };
+    }
+
     const workEmail = Boolean(resolvedEmail) && !isPersonalEmail(resolvedEmail);
     const hasEmailConflict = Boolean(
       contact.rawEmail?.trim() &&
@@ -460,6 +470,7 @@ export function computeReviewBucket(
     if (
       workEmail &&
       !hasEmailConflict &&
+      (contact.ziContactAccuracyScore == null || contact.ziContactAccuracyScore >= 50) &&
       (hsComplete || contact.enrichedByCommonRoom) &&
       contact.resolvedCompany?.trim() &&
       contact.companyDomain?.trim() &&

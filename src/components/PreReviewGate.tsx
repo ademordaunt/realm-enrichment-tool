@@ -24,6 +24,7 @@ export interface PreReviewGateProps {
     creditsUsed: number;
     linkedInFound: number;
     elapsedMinutes: number;
+    commonRoomFound?: number;
   } | null;
   onContinue: (updatedRows: EnrichedCompany[] | EnrichedContact[]) => void;
 }
@@ -163,6 +164,9 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
               <p>Found in HubSpot:       {enrichmentSummary.hubspotFound}</p>
               <p>ZoomInfo credits used:   {enrichmentSummary.creditsUsed}</p>
               <p>LinkedIn URLs found from AI: {enrichmentSummary.linkedInFound}</p>
+              {enrichmentSummary.commonRoomFound != null && enrichmentSummary.commonRoomFound > 0 ? (
+                <p>Common Room matches:   {enrichmentSummary.commonRoomFound}</p>
+              ) : null}
               <p>Total time:             {enrichmentSummary.elapsedMinutes} min</p>
             </div>
             <hr className="my-3 border-emerald-300/60 dark:border-emerald-700/60" />

@@ -46,7 +46,7 @@ const MACRO_REGION_OPTIONS = [
   "Mountain West",
   "Pacific West",
 ] as const;
-const REGION_PICKER_OPTIONS = [...MACRO_REGION_OPTIONS, "National"] as const;
+const REGION_PICKER_OPTIONS = [...MACRO_REGION_OPTIONS] as const;
 const REGION_VALUES = [
   "Midwest",
   "Northeast",
@@ -54,7 +54,6 @@ const REGION_VALUES = [
   "Southwest",
   "Pacific West",
   "Mountain West",
-  "National",
 ] as const;
 
 const ROOT_PICK_STATE = "__pick_state__";
@@ -277,9 +276,8 @@ const CITY_TO_STATE: Record<string, string> = {
   southwest: "Southwest",
   pacific: "Pacific West",
   mountain: "Mountain West",
-  national: "National",
-  virtual: "National",
-  online: "National",
+  virtual: "Pacific West",
+  online: "Pacific West",
   rsa: "California",
 };
 
@@ -450,8 +448,9 @@ export function EventContextForm({
   const [monthName, setMonthName] = useState<string>("");
   const [year, setYear] = useState<string>(new Date().getFullYear().toString());
   const [region, setRegion] = useState("");
+  const [nonUsRegion, setNonUsRegion] = useState("");
   /** True when user chose "No State / Region" (valid submit with empty `region`). */
-  const [noStateRegionSelected, setNoStateRegionSelected] = useState(false);
+  const [noStateRegionSelected, setNoStateRegionSelected] = useState(true);
   const [locationView, setLocationView] = useState<LocationPickerView>("root");
   const [autoDetectedRegion, setAutoDetectedRegion] = useState(false);
   const [audienceLevel, setAudienceLevel] = useState(DEFAULT_AUDIENCE);
@@ -474,10 +473,23 @@ export function EventContextForm({
     if (!initialValues) return;
     setEventName(initialValues.eventName);
     const r = initialValues.region;
-    setRegion(r);
+    const normalized = String(r ?? "").trim();
+    if (
+      US_STATE_OPTIONS.includes(normalized) ||
+      REGION_VALUES.includes(normalized as (typeof REGION_VALUES)[number])
+    ) {
+      setRegion(normalized);
+      setNonUsRegion("");
+    } else if (normalized) {
+      setRegion("");
+      setNonUsRegion(normalized);
+    } else {
+      setRegion("");
+      setNonUsRegion("");
+    }
     setAutoDetectedRegion(false);
-    regionManuallySelected.current = Boolean(String(r ?? "").trim());
-    setNoStateRegionSelected(!String(r ?? "").trim());
+    regionManuallySelected.current = Boolean(normalized);
+    setNoStateRegionSelected(!normalized);
     setLocationView("root");
     setAudienceLevel(initialValues.audienceLevel || DEFAULT_AUDIENCE);
     const parsed = parseMonthYearString(initialValues.eventDate);
@@ -494,37 +506,9 @@ export function EventContextForm({
   }, [initialValues, sourceFileName]);
 
   useEffect(() => {
-    if (importMode === "bulk") return;
-    if (regionManuallySelected.current) return;
-    const detected = detectRegionFromEventName(eventName);
-    if (
-      !detected ||
-      (!STATE_REGION_OPTIONS.includes(detected) &&
-        !REGION_VALUES.includes(detected as (typeof REGION_VALUES)[number]))
-    ) {
-      return;
-    }
-    if (region === detected && !noStateRegionSelected) {
-      setAutoDetectedRegion(true);
-      return;
-    }
-    const isDetectedRegion = REGION_PICKER_OPTIONS.includes(
-      detected as (typeof REGION_PICKER_OPTIONS)[number],
-    );
-    if (isDetectedRegion) {
-      console.log(`[EventContext] Auto-detected region: ${detected}`);
-      setLocationView("region");
-      setRegion(detected);
-    } else if (US_STATE_OPTIONS.includes(detected)) {
-      console.log(`[EventContext] Auto-detected state: ${detected}`);
-      setLocationView("state");
-      setRegion(detected);
-    } else {
-      setRegion(detected);
-    }
-    setNoStateRegionSelected(false);
-    setAutoDetectedRegion(true);
-  }, [importMode, eventName, region, noStateRegionSelected]);
+    // SPEC 2 section 6: do not auto-select location.
+    setAutoDetectedRegion(false);
+  }, [eventName]);
 
   useEffect(() => {
     if (importMode === "bulk") return;
@@ -585,16 +569,17 @@ export function EventContextForm({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!eventName.trim()) return;
+    const effectiveRegion = nonUsRegion.trim() || region.trim();
     if (importMode === "event") {
       if (!monthYearForPrompt.trim()) return;
-      if (!region.trim() && !noStateRegionSelected) return;
+      if (!effectiveRegion && !noStateRegionSelected) return;
     }
     const eventDateForSubmit =
       importMode === "bulk" && !monthYearForPrompt.trim() ? "" : monthYearForPrompt.trim();
     onSubmit({
       eventName: eventName.trim(),
       eventDate: eventDateForSubmit,
-      region: region.trim(),
+      region: effectiveRegion,
       audienceLevel: listType === "contacts" ? audienceLevel.trim() : "",
       listType,
       importMode,
@@ -755,11 +740,7 @@ export function EventContextForm({
                 <select
                   className={selectClass}
                   value={
-                    importMode === "bulk" && !region
-                      ? ""
-                      : noStateRegionSelected
-                        ? ROOT_NO_STATE_REGION
-                        : ""
+                    noStateRegionSelected ? ROOT_NO_STATE_REGION : ""
                   }
                   onChange={(e) => {
                     regionManuallySelected.current = true;
@@ -785,16 +766,10 @@ export function EventContextForm({
                     if (v === ROOT_PICK_STATE) setLocationView("state");
                     else if (v === ROOT_PICK_REGION) setLocationView("region");
                   }}
-                  disabled={disabled}
+                  disabled={disabled || nonUsRegion.trim().length > 0}
                 >
-                  {importMode === "bulk" ? (
-                    <option value="">No specific state</option>
-                  ) : (
-                    <option value="">Select State / Region</option>
-                  )}
-                  {importMode === "event" ? (
-                    <option value={ROOT_NO_STATE_REGION}>No State / Region</option>
-                  ) : null}
+                  <option value={ROOT_NO_STATE_REGION}>No specific state/region</option>
+                  <option value="">Select state/region</option>
                   <option value={ROOT_PICK_STATE}>Select a State →</option>
                   <option value={ROOT_PICK_REGION}>Select a Region →</option>
                 </select>
@@ -810,7 +785,7 @@ export function EventContextForm({
             {!region && locationView === "state" ? (
               <StateSubPicker
                 importMode={importMode}
-                disabled={disabled}
+                disabled={disabled || nonUsRegion.trim().length > 0}
                 onBack={() => setLocationView("root")}
                 onPick={(name) => {
                   regionManuallySelected.current = true;
@@ -831,7 +806,7 @@ export function EventContextForm({
 
             {!region && locationView === "region" ? (
               <RegionSubPicker
-                disabled={disabled}
+                disabled={disabled || nonUsRegion.trim().length > 0}
                 onBack={() => setLocationView("root")}
                 onPick={(name) => {
                   regionManuallySelected.current = true;
@@ -842,6 +817,25 @@ export function EventContextForm({
                 }}
               />
             ) : null}
+            <label className="mt-2 flex flex-col gap-1 text-xs text-(--text-secondary)">
+              <span className="font-medium text-(--text-primary)">Non-US region (optional)</span>
+              <input
+                className={inputWithTrailingIconClass}
+                placeholder="Quebec, Ontario, London, EMEA"
+                value={nonUsRegion}
+                onChange={(e) => {
+                  regionManuallySelected.current = true;
+                  const next = e.target.value;
+                  setNonUsRegion(next);
+                  if (next.trim()) {
+                    setRegion("");
+                    setNoStateRegionSelected(false);
+                    setLocationView("root");
+                  }
+                }}
+                disabled={disabled}
+              />
+            </label>
             {autoDetectedRegion && region ? null : null}
           </label>
 

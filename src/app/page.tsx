@@ -13,6 +13,7 @@ import { SuccessScreen } from "@/components/SuccessScreen";
 import type { HubSpotPushDonePayload } from "@/lib/hubspot/push-result";
 import type {
   BulkJobState,
+  EnrichmentSummary,
   EnrichedCompany,
   EnrichedContact,
   EventContext,
@@ -279,6 +280,46 @@ function collectKeys(rows: Array<RawCompanyRow | RawContactRow>, maxScan: number
   return Array.from(keys).sort();
 }
 
+const STANDARD_PREVIEW_FIELDS = new Set<string>([
+  "rawName",
+  "domain",
+  "state",
+  "employees",
+  "industry",
+  "firstName",
+  "lastName",
+  "email",
+  "phone",
+  "title",
+  "company",
+  "location",
+  "notes",
+  "membershipNotes",
+  "leadSource",
+  "leadSourceDescription",
+  "attended",
+  "eventFormat",
+  "companyDomain",
+]);
+
+function humanizeFieldLabel(key: string): string {
+  const special: Record<string, string> = {
+    rawName: "Company",
+    firstName: "First Name",
+    lastName: "Last Name",
+    leadSource: "Lead Source",
+    leadSourceDescription: "Lead Source Description",
+    eventFormat: "Format",
+    companyDomain: "Domain",
+    rawEmail: "Email",
+  };
+  if (special[key]) return special[key];
+  return key
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
 type NdjsonEvent =
   | { type: "progress"; start: number; end: number; total: number; detail?: string }
   | {
@@ -287,6 +328,7 @@ type NdjsonEvent =
       rows: EnrichedCompany[] | EnrichedContact[];
       enrichedCount?: number;
       cachedCount?: number;
+      commonRoomHits?: number;
       creditsUsed?: number;
     }
   | { type: "error"; message: string; zoomInfoAuthFailure?: boolean };
@@ -312,13 +354,7 @@ type ZoomInfoVerifySummary =
   | { kind: "no_matches" }
   | { kind: "credentials" };
 
-type EventEnrichmentSummary = {
-  totalRows: number;
-  hubspotFound: number;
-  creditsUsed: number;
-  linkedInFound: number;
-  elapsedMinutes: number;
-};
+type EventEnrichmentSummary = EnrichmentSummary;
 
 type HubSpotPrecheckItem = {
   id: string;
@@ -449,6 +485,7 @@ async function consumeEnrichmentNdjson(
   rawNdjson: string;
   enrichedCount: number;
   cachedCount: number;
+  commonRoomHits: number;
   creditsUsed: number;
 }> {
   const reader = res.body?.getReader();
@@ -461,6 +498,7 @@ async function consumeEnrichmentNdjson(
   let result: EnrichedCompany[] | EnrichedContact[] | null = null;
   let enrichedCount = 0;
   let cachedCount = 0;
+  let commonRoomHits = 0;
   let creditsUsed = 0;
 
   const handleLine = (line: string) => {
@@ -495,6 +533,10 @@ async function consumeEnrichmentNdjson(
         typeof msg.cachedCount === "number" && Number.isFinite(msg.cachedCount)
           ? msg.cachedCount
           : 0;
+      commonRoomHits =
+        typeof msg.commonRoomHits === "number" && Number.isFinite(msg.commonRoomHits)
+          ? msg.commonRoomHits
+          : 0;
       creditsUsed =
         typeof msg.creditsUsed === "number" && Number.isFinite(msg.creditsUsed)
           ? msg.creditsUsed
@@ -524,7 +566,7 @@ async function consumeEnrichmentNdjson(
   if (!result) {
     throw new Error("Enrichment finished without a result payload.");
   }
-  return { rows: result, rawNdjson, enrichedCount, cachedCount, creditsUsed };
+  return { rows: result, rawNdjson, enrichedCount, cachedCount, commonRoomHits, creditsUsed };
 }
 
 function linkedInLookupIdentityOk(
@@ -1355,6 +1397,35 @@ export default function Home() {
     () => workingRows.slice(0, PREVIEW_MAX_ROWS),
     [workingRows],
   );
+  const activeNormalizedHeaders = useMemo(() => {
+    if (!result) return [] as string[];
+    if (result.multiEvent?.segments?.length) {
+      return result.multiEvent.segments[segmentIndex]?.headers ?? result.headers ?? [];
+    }
+    return result.headers ?? [];
+  }, [result, segmentIndex]);
+  const activeOriginalHeaders = useMemo(() => {
+    if (!result) return [] as string[];
+    if (result.multiEvent?.segments?.length) {
+      return result.multiEvent.segments[segmentIndex]?.originalHeaders ?? result.originalHeaders ?? [];
+    }
+    return result.originalHeaders ?? [];
+  }, [result, segmentIndex]);
+  const previewColumnMeta = useMemo(
+    () =>
+      previewKeys.map((key) => {
+        const headerIdx = activeNormalizedHeaders.findIndex((h) => h === key);
+        const originalHeader = headerIdx >= 0 ? (activeOriginalHeaders[headerIdx] ?? key) : key;
+        const recognized = STANDARD_PREVIEW_FIELDS.has(key) || headerIdx < 0;
+        return {
+          key,
+          label: humanizeFieldLabel(key),
+          originalHeader,
+          recognized,
+        };
+      }),
+    [previewKeys, activeNormalizedHeaders, activeOriginalHeaders],
+  );
   const showBulkSmallListWarning =
     wizardImportMode === "bulk" &&
     effectiveRowCount > 0 &&
@@ -1377,7 +1448,11 @@ export default function Home() {
     aiRows: EnrichedCompany[] | EnrichedContact[],
     listType: "companies" | "contacts",
     signal?: AbortSignal,
-  ): Promise<{ rows: EnrichedCompany[] | EnrichedContact[]; creditsUsed: number }> => {
+  ): Promise<{
+    rows: EnrichedCompany[] | EnrichedContact[];
+    creditsUsed: number;
+    commonRoomHits: number;
+  }> => {
     setStep("verifying");
     const totalRows = aiRows.length;
     const listLabel = listType === "contacts" ? "contacts" : "companies";
@@ -1389,7 +1464,7 @@ export default function Home() {
     });
     if (totalRows === 0) {
       setZoomInfoVerifySummary({ kind: "no_matches" });
-      return { rows: [], creditsUsed: 0 };
+      return { rows: [], creditsUsed: 0, commonRoomHits: 0 };
     }
 
     const nonHighTotal = computeZoomVerifyNonHighTotal(aiRows, listType);
@@ -1401,6 +1476,7 @@ export default function Home() {
     let sumEnriched = 0;
     let sumCached = 0;
     let sumCredits = 0;
+    let sumCommonRoomHits = 0;
     const merged: (EnrichedCompany | EnrichedContact)[] = [];
 
     for (let ci = 0; ci < numChunks; ci++) {
@@ -1437,7 +1513,7 @@ export default function Home() {
           apiJsonErrorMessage(errBody) || `Verification failed (${res.status})`,
         );
       }
-      const { rows, enrichedCount, cachedCount, creditsUsed } = await consumeEnrichmentNdjson(
+      const { rows, enrichedCount, cachedCount, commonRoomHits, creditsUsed } = await consumeEnrichmentNdjson(
         res,
         (p) => {
           setProgress({
@@ -1454,6 +1530,7 @@ export default function Home() {
       merged.push(...rows);
       sumEnriched += enrichedCount;
       sumCached += cachedCount;
+      sumCommonRoomHits += commonRoomHits;
       sumCredits += creditsUsed;
     }
 
@@ -1471,6 +1548,7 @@ export default function Home() {
     return {
       rows: merged as EnrichedCompany[] | EnrichedContact[],
       creditsUsed: sumCredits,
+      commonRoomHits: sumCommonRoomHits,
     };
   };
 
@@ -1483,10 +1561,12 @@ export default function Home() {
     // Phase 2: ZoomInfo verify (runs before HubSpot precheck — uses ZoomInfo domain as match key)
     let rowsAfterVerify: EnrichedCompany[] | EnrichedContact[] = rowsAfterAi;
     let zoomCreditsUsed = 0;
+    let commonRoomFound = 0;
     try {
       const verify = await runZoomVerify(rowsAfterAi, listType, signal);
       rowsAfterVerify = verify.rows;
       zoomCreditsUsed = verify.creditsUsed;
+      commonRoomFound = verify.commonRoomHits;
     } catch (verifyErr) {
       if (verifyErr instanceof Error && verifyErr.name === "AbortError") {
         setStep("context");
@@ -1584,6 +1664,7 @@ export default function Home() {
       creditsUsed: zoomCreditsUsed,
       linkedInFound: linkedInFoundCount,
       elapsedMinutes,
+      commonRoomFound,
     });
 
     await advanceToReview(withLinkedInSourceFallback, listType);
@@ -2152,6 +2233,12 @@ export default function Home() {
     return Math.min(100, (currentBatch / totalBatches) * 100);
   }, [progress]);
 
+  const signOut = useCallback(() => {
+    void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
+      window.location.href = "/login";
+    });
+  }, []);
+
   return (
     <div className="flex min-h-screen flex-1 flex-col bg-(--bg-page)">
       {showEnrichmentCompleteBanner ? (
@@ -2202,7 +2289,15 @@ export default function Home() {
             })}
           </nav>
         ) : null}
-        <div className="hidden min-w-0 md:col-start-3 md:row-start-1 md:block" aria-hidden />
+        <div className="hidden min-w-0 md:col-start-3 md:row-start-1 md:flex md:justify-end">
+          <button
+            type="button"
+            onClick={signOut}
+            className="rounded border border-white/30 px-2.5 py-1 text-xs font-medium text-white hover:bg-white/10"
+          >
+            Sign out
+          </button>
+        </div>
       </header>
 
       <main className="mx-auto flex w-full max-w-7xl min-h-0 flex-1 flex-col gap-6 px-4 pb-8 pt-22 sm:px-6">
@@ -2374,32 +2469,6 @@ export default function Home() {
                     </span>
                   </p>
                   <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                    {result.listType === "unknown" && (
-                      <>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`}
-                          onClick={() => {
-                            if (!file) return;
-                            void parseFile(file, "companies");
-                          }}
-                        >
-                          Companies
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`}
-                          onClick={() => {
-                            if (!file) return;
-                            void parseFile(file, "contacts");
-                          }}
-                        >
-                          Contacts
-                        </button>
-                      </>
-                    )}
                     <button
                       type="button"
                       className="text-sm font-medium text-(--realm-purple) hover:text-(--realm-purple-hover) hover:underline"
@@ -2516,16 +2585,39 @@ export default function Home() {
                   </div>
                 ) : null}
 
+                <div className="space-y-2">
+                  <div className="flex items-end justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-(--text-primary)">
+                        Preview — your uploaded data as parsed
+                      </p>
+                      <p className="text-xs text-(--text-muted)">
+                        This is your raw data before any enrichment. Column headers have been mapped to standard field names where recognized.
+                      </p>
+                    </div>
+                    <p className="text-xs font-medium text-(--text-secondary)">{effectiveRowCount} records found</p>
+                  </div>
                 <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-(--border-default)">
                     <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
                       <thead className="sticky top-0 z-1 bg-(--bg-muted)">
                         <tr>
-                          {previewKeys.map((k) => (
+                          {previewColumnMeta.map((col) => (
                             <th
-                              key={k}
+                              key={col.key}
                               className="whitespace-nowrap border-b border-(--border-default) px-3 py-2 font-semibold text-(--text-secondary)"
                             >
-                              {k}
+                              <div className="flex flex-col">
+                                <span className="font-semibold text-(--text-primary)">{col.label}</span>
+                                {col.recognized ? (
+                                  <span className="text-[11px] font-normal text-(--text-muted)">
+                                    {col.originalHeader}
+                                  </span>
+                                ) : (
+                                  <span className="text-[11px] font-normal text-(--text-muted)">
+                                    {col.originalHeader} - Extra column - will be carried through.
+                                  </span>
+                                )}
+                              </div>
                             </th>
                           ))}
                         </tr>
@@ -2536,18 +2628,50 @@ export default function Home() {
                             key={ri}
                             className={ri % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)"}
                           >
-                            {previewKeys.map((k) => (
+                            {previewColumnMeta.map((col) => (
                               <td
-                                key={k}
+                                key={col.key}
                                 className="border-b border-(--border-default) px-3 py-2 text-(--text-primary)"
                               >
-                                {(row as Record<string, string | undefined>)[k] ?? ""}
+                                {(row as Record<string, string | undefined>)[col.key] ?? ""}
                               </td>
                             ))}
                           </tr>
                         ))}
                       </tbody>
                     </table>
+                </div>
+                <div className="text-xs text-(--text-muted)">
+                  {effectiveListType === "unknown"
+                    ? "Could not detect list type — please select below."
+                    : `Detected as: ${effectiveListType === "contacts" ? "Contact list" : "Company list"}`}
+                </div>
+                {effectiveListType === "unknown" ? (
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`}
+                      onClick={() => {
+                        if (!file) return;
+                        void parseFile(file, "companies");
+                      }}
+                    >
+                      Company list
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`}
+                      onClick={() => {
+                        if (!file) return;
+                        void parseFile(file, "contacts");
+                      }}
+                    >
+                      Contact list
+                    </button>
+                  </div>
+                ) : null}
                 </div>
 
                 {!showBulkSmallListWarning ? (

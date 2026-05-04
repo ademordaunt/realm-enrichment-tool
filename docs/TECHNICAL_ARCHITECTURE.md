@@ -1,10 +1,10 @@
-# Technical architecture — Realm Enrichment Tool
+# Technical Architecture — Realm Enrichment Tool
 
 This document describes how the application is structured, how enrichment and integrations work, and what operators should know about limits and configuration. It is aimed at developers onboarding to the codebase.
 
 ---
 
-## 1. Project overview
+## 1. Project Overview
 
 ### What it does
 
@@ -15,7 +15,7 @@ The app is a **Next.js** single-page workflow for enrichment of CSV/Excel upload
 
 ### Who uses it & deployment
 
-The product is built as an **internal-style tool** (no authentication on API routes — see §8). It is **intended for deployment on Vercel** (uses Upstash services for queue/cache, `maxDuration` on serverless routes, and standard Next.js App Router patterns). The repository does not pin a single customer-facing URL; configure the deployment target in Vercel (or run locally).
+The product is an internal operations tool with **shared-password access control** enforced by `src/proxy.ts` and login/auth API routes (see §8). It is **intended for deployment on Vercel** (uses Upstash services for queue/cache, `maxDuration` on serverless routes, and standard Next.js App Router patterns). The repository does not pin a single customer-facing URL; configure the deployment target in Vercel (or run locally).
 
 ### Tech stack (exact versions from `package.json`)
 
@@ -38,6 +38,9 @@ src/
     page.tsx              # Main wizard UI + orchestration (enrichment order, session persistence)
     layout.tsx
     api/
+      auth/
+        login/route.ts      # Password login -> sets realm-auth cookie
+        logout/route.ts     # Clears realm-auth cookie
       parse/route.ts      # CSV/XLSX upload → parsed segments
       enrich/
         ai/route.ts       # Anthropic batch + optional legacy NDJSON stream
@@ -57,6 +60,8 @@ src/
         [jobId]/resume/route.ts       # Resume/requeue failed bulk job
         [jobId]/cancel/route.ts       # Cancel bulk job
       zoominfo-lookup/route.ts    # Dev-only ZoomInfo diagnostic (403 in production)
+  app/login/page.tsx      # Password entry page (Suspense-wrapped search params)
+  proxy.ts                # Route protection + internal API bypass header
   components/             # UI only (ReviewTable, PrePushScreen, SuccessScreen, etc.)
     StarterScreen.tsx
     CostEstimateScreen.tsx
@@ -74,7 +79,7 @@ src/
 
 ---
 
-## 2. Architecture overview
+## 2. Architecture Overview
 
 ### Wizard flow (UI vs internal steps)
 
@@ -118,7 +123,7 @@ Mapping:
 **1) ZoomInfo verify — `POST /api/enrich/zoominfo`**
 
 - **Content-Type:** `application/x-ndjson; charset=utf-8`.
-- **Events:** `progress` (row range + optional `detail`), then `done` with `{ type: "done", listType, rows, enrichedCount, cachedCount, creditsUsed }`, or `error` (optional `zoomInfoAuthFailure`).
+- **Events:** `progress` (row range + optional `detail`), then `done` with `{ type: "done", listType, rows, enrichedCount, cachedCount, commonRoomHits, creditsUsed }`, or `error` (optional `zoomInfoAuthFailure`).
 - **Why:** Serverless **`export const maxDuration = 9`** (seconds) on this route. Streaming lets the client show progress while work is in flight; the response still completes within one invocation.
 
 **2) HubSpot push — `POST /api/hubspot/push`**
@@ -148,7 +153,7 @@ Mapping:
 - `shouldOpenPreReviewGate` in `prereview.ts` remains available but is **not** used to choose between `prereview` and `enriched` in `page.tsx` (routing is always pre-review first).
 - **International heuristics (`isInternationalCompany` in `prereview.ts`):** besides **state** text, **non‑US TLD**, **Gartner-style name suffixes**, and **raw input word** patterns (space-prefixed tokens such as ` canada`, ` uk`, …), the **original CSV/Excel cell** (`rawInput`) is also scanned for additional region tokens (e.g. Korea, Israel, Singapore, Mexico, Dubai, Japan, China, Taiwan) and **dash-suffix** forms (e.g. `-kr`, `-sg`, `-mx`). Deliberately **omitted** as ambiguous: `-il` / `-in` (Illinois / Indiana).
 
-## 3. Enrichment pipeline — companies
+## 3. Enrichment Pipeline — Companies
 
 Order on the client (`runEnrichment` in `page.tsx`, event mode):
 
@@ -232,7 +237,7 @@ Order on the client (`runEnrichment` in `page.tsx`, event mode):
 
 ---
 
-## 4. Enrichment pipeline — contacts
+## 4. Enrichment Pipeline — Contacts
 
 Order on the client (event mode):
 
@@ -242,7 +247,7 @@ Order on the client (event mode):
 
 ### Pre-populated contacts (skip main AI prompt)
 
-- **`isFullyPopulatedContactRow`:** requires non-empty `firstName`, `lastName`, `email`, `company` (or `resolvedCompany`), and `title`.
+- **`isFullyPopulatedContactRow`:** requires non-empty `firstName`, `lastName`, `email`, `company` (or `resolvedCompany`), `title`, and `companyDomain`.
 - **Behavior:** `enrichSingleContact` short-circuits to `mapPresetContactRow` with `confidenceScore: "high"`; if LinkedIn still missing, **`findLinkedInOnlyForContact`** runs (Claude JSON-only prompt — **no** `web_search` tool in that helper).
 - **Batch cache path:** `resolveContactBatchFromKv` also skips full AI for these rows (cache hit or preset mapping).
 
@@ -317,7 +322,7 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 - Finalization fallback now normalizes any row with a non-empty `linkedinUrl` and empty `linkedinSource` to `"ai_search"` before persisting/review handoff.
 - **Review bucket:** `computeReviewBucket` does **not** downgrade a row to **Needs review** solely because `linkedinSource === "ai_search"`; if other trusted criteria are met, the row can be **Trusted**. The **Review & Edit** UI still surfaces a **tooltip warning** for trusted rows whose LinkedIn came from web search, and when the **Show: Trusted** filter is active, those rows are **sorted to the top** for quick review.
 
-## 5. External API integrations
+## 5. External API Integrations
 
 ### Anthropic
 
@@ -358,22 +363,22 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 |--------|--------|
 | **Auth** | `HUBSPOT_ACCESS_TOKEN` — **Private App** token (server-only). `hubspotFetch` in `http.ts` uses `https://api.hubapi.com` + `Authorization: Bearer …`. |
 | **Companies — properties written** | `name`, `domain`, `website`, `state`, `linkedin_company_page`, `numberofemployees`, `annualrevenue`, `industry`, `description`, `city`, optional `lead_source`, `lead_source_description`, `notes` (see `companies.ts`). |
-| **Contacts — properties written** | `firstname`, `lastname`, `email`, `jobtitle`, `company`, `ds_liprofile`, `state`, `phone`, `lead_source__deal_source`, `lead_source_description`, `hs_content_membership_notes`, `job_level`, `job_function`, `numemployees`, `industry`, `website` (see `contacts.ts`). **`website`** from ZoomInfo company URL is sent only when **`companyDomain`** is empty (avoids overwriting a known company domain). |
-| **Contact pre-check (search)** | `batchCheckContactsInHubSpot` uses `POST /crm/v3/objects/contacts/search` with `IN` on normalized emails (chunks of **100**), properties `CONTACT_PRECHECK_PROPERTIES` (`email`, `jobtitle`, `company`, `ds_liprofile`, `state`, `phone`, `job_level`, `job_function`), pagination via `after`, sort `hs_lastmodifieddate` descending. **`hubspotSearchWithBackoff`** retries **429** at **1s** then **3s**. |
+| **Contacts — properties written** | `firstname`, `lastname`, `email`, `jobtitle`, `company`, `ds_liprofile`, `state`, `phone`, `lead_source__deal_source`, `lead_source_description`, `hs_content_membership_notes`, `job_level`, `job_function`, `numemployees`, `industry`, `website`, `hs_additional_emails` (see `contacts.ts`). **`website`** from ZoomInfo company URL is sent only when **`companyDomain`** is empty (avoids overwriting a known company domain). **`hs_additional_emails`** is fill-empty-only when `personalEmail` differs from canonical `resolvedEmail`. |
+| **Contact pre-check (search)** | `batchCheckContactsInHubSpot` uses `POST /crm/v3/objects/contacts/search` with `IN` on normalized emails (chunks of **100**), properties `CONTACT_PRECHECK_PROPERTIES` (`email`, `jobtitle`, `company`, `ds_liprofile`, `state`, `phone`, `job_level`, `job_function`, `hs_additional_emails`), pagination via `after`, sort `hs_lastmodifieddate` descending. **`hubspotSearchWithBackoff`** retries **429** at **1s** then **3s**. |
 | **Push — approved deduplication** | Before create/update, `deduplicateApproved` in `push-handler.ts`: **contacts** — one row per normalized **resolved email**; **companies** — one per normalized **domain**, then a second pass drops duplicate **`resolvedName` + `state`** pairs (case-insensitive). |
 | **Push — contact CRM match** | Rows without `hubspotId`: **`batchFindContactsByEmail`** (same search as precheck, **100** emails per chunk, **200 ms** between chunks) maps email → id. Remaining unknowns: sequential **`findContactByNameAndCompany`** (exact `firstname` + `lastname` + `company`, `limit: 2` → require exactly one result), **100 ms** delay between attempts. Then **batch update** known matches, **batch create** the rest. |
 | **Push — company CRM match** | **`batchFindCompaniesByDomain`** on unknowns without `hubspotId`; known `hubspotId` and domain matches go to update; remainder to create. |
 | **Lists** | Create: `POST /crm/v3/lists` with `name`, `objectTypeId` (`0-2` companies, `0-1` contacts), `processingType: "MANUAL"`, optional `folderId` (numeric string sent as number when it parses cleanly). If create fails with **“already exist”**, **`GET /crm/v3/lists/object-type-id/{objectTypeId}/name/{name}`** resolves the existing list id and push reuses it. Membership: `PUT /crm/v3/lists/{listId}/memberships/add` with JSON array of **HubSpot record IDs** from create/update (not import row UUIDs). |
 | **Batch create — duplicates** | **HTTP-level:** If `POST .../batch/create` fails with body/error text matching **`already exists`**, contacts path **retries each row** with single `POST /crm/v3/objects/contacts`; duplicates parsed via **`parseHubSpotDuplicateExistingId`** (`Contact|Company already exists. Existing ID: …`) feed **`batchUpdateContacts`** (deduped by HubSpot id). **Batch JSON 200 with gaps:** per-index results without `id` use **`errorMessageForBatchIndex`**; same **Existing ID** pattern triggers update. Companies mirror this pattern in `companies.ts`. Batch chunks use size **100** and **200 ms** cooldown between chunks (`HUBSPOT_BATCH_COOLDOWN_MS`). |
 | **Import Settings — contacts only** | Push JSON may include **`useExistingLeadSource`** and **`useExistingLeadSourceDescription`** (booleans). When true, **`contactPushExtras`** prefers each row’s CSV **`leadSource` / `leadSourceDescription`** over the global Import Settings strings (`push-handler.ts`). |
-| **Folders** | `GET /crm/v3/lists/folders` — parsed by `list-folders.ts`; UI uses folder id on list create in `push-handler` (`createStaticListForPush`). |
+| **Folders** | `list-folders.ts` calls `GET /crm/v3/lists/folders?objectTypeId=0-1` and `GET /crm/v3/lists/folders?objectTypeId=0-2`, merges and dedupes by folder id, and supports nested `folder.childNodes` response shapes. UI uses folder id on list create in `push-handler` (`createStaticListForPush`). |
 | **Import Settings folder UX** | `PrePushScreen` uses a placeholder `Select a folder` (disabled), then explicit `No Folder`, then live folders. If placeholder or `No Folder` is chosen, `folderId` is omitted in push payload. |
 | **Success screen list URL** | Uses HubSpot object-list path: `https://app.hubspot.com/contacts/{portalId}/objectLists/{listId}/filters`. |
 | **Success screen push errors** | `SuccessScreen` accepts optional `rowsById: Map<rowId, { displayName }>` from approved rows so per-row error lines show a **name** (contact: `firstName` + `lastName`; company: `resolvedName`) instead of internal UUIDs; unknown ids (e.g. synthetic `membership`) still show the raw id. |
 
 ---
 
-## 6. Cost model
+## 6. Cost Model
 
 ### ZoomInfo
 
@@ -417,16 +422,13 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
   - **Contacts:** similar exclusions (e.g. incomplete / personal email paths); empty sanitized company on an otherwise passable contact → **needs_review**; trusted paths mirror verification + identity rules.
 - **Review & Edit header counts** (Needs Review / Trusted / Excluded) follow **`row.status`** (`pending` / `approved` / `skipped`), not `reviewBucket`, so they reflect the operator’s current checkbox selections. Unchecking a **needs_review** row restores `status` to `pending` (not `skipped`); unchecking **trusted** or **excluded** sets `skipped`.
 - **Select All / Deselect All** only change status for rows **visible** under the current **Show** filter; rows outside the filter are unchanged. **Select All** never sets **`reviewBucket === "excluded"`** rows to **approved** — their `status` stays as-is.
-- **Trusted filter order:** with **Show: Trusted**, rows with `linkedinSource === "ai_search"` are listed **first** (stable sort); other filter tabs keep the default display order.
-- Review tooltip in `ReviewTable` uses a simplified four-state template:
-  - Trusted
-  - Trusted but missing data
-  - Needs Review
-  - Excluded
-- LinkedIn column legend is shown via header hover tooltip (`?` trigger) instead of a persistent legend row.
+- **Trusted filter order:** with **Show: Trusted**, rows are sorted by `trustedSortTier` (amber-flag tier first, then clean trusted rows), with stable display-index ordering within each tier.
+- **Row order lock during review:** `ReviewTable` snapshots row id order and keeps it stable during active editing. Row order refreshes on Show filter changes (and naturally on a new run/reload), preventing in-place jumps when editing fields or toggling approval.
+- Review tooltip content in `ReviewTable` is reason-priority based (one primary reason per row) and includes targeted copy for trusted/needs-review/excluded states.
+- LinkedIn column header `?` tooltip shows the full source-dot legend (HubSpot, ZoomInfo, Common Room, AI web search, manual) plus a final web-search verification note.
 - **`ReasoningTooltip`** (`ReasoningTooltip.tsx`): shared **`?` / info** control with **hover** preview and **click-to-pin** (outside click dismisses); used for structured review copy and header help, with **fixed** positioning and viewport-aware above/below placement.
 
-## 7. Known limitations & active blockers
+## 7. Known Limitations & Active Blockers
 
 | Item | Notes |
 |------|--------|
@@ -438,7 +440,7 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 
 ---
 
-## 8. Security & configuration
+## 8. Security & Configuration
 
 ### Environment variables (server unless noted)
 
@@ -452,6 +454,8 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 | `QSTASH_TOKEN` | Upstash QStash publish token for background job queueing. **Server only.** |
 | `QSTASH_CURRENT_SIGNING_KEY` / `QSTASH_NEXT_SIGNING_KEY` | Upstash signature verification keys for `/api/jobs/process`. **Server only.** |
 | `NEXT_PUBLIC_APP_URL` | Base URL used when publishing QStash callback URL (`/api/jobs/process`). Public env. |
+| `APP_PASSWORD` | Shared app password used by `POST /api/auth/login`; cookie hash checked in `src/proxy.ts`. **Server only.** |
+| `INTERNAL_API_SECRET` | Secret for server-to-server internal route calls through middleware (`x-realm-internal-auth`). **Server only.** |
 
 Cache client initialization uses Upstash Redis with:
 
@@ -466,7 +470,12 @@ Both are required for cache read/write paths (`enrichment-cache.ts`, `linkedin-s
 
 ### Authentication
 
-- **No user/session auth** on API routes — acceptable only for **trusted internal** deployment; do not expose raw to the public internet without a gateway.
+- Shared-password login is implemented via:
+  - `POST /api/auth/login` (sets `realm-auth` httpOnly cookie on successful password check),
+  - `POST /api/auth/logout` (clears cookie),
+  - `src/proxy.ts` (redirects unauthenticated requests to `/login`, preserves `next` path).
+- `src/proxy.ts` also supports server-to-server bypass with header `x-realm-internal-auth` matching `INTERNAL_API_SECRET` for internal calls that would otherwise be redirected by auth middleware.
+- Public paths are limited to `/login` and `/api/auth/login`; all other app/API routes are protected by the proxy matcher except static/image/favicon paths.
 
 ### PII & logging (post–Batch 3)
 
@@ -474,7 +483,7 @@ Both are required for cache read/write paths (`enrichment-cache.ts`, `linkedin-s
 
 ---
 
-## 9. Development setup
+## 9. Development Setup
 
 ### Run locally
 
@@ -499,7 +508,7 @@ At minimum for a full path: `ANTHROPIC_API_KEY`, ZoomInfo pair, `HUBSPOT_ACCESS_
 
 ---
 
-## Appendix — example NDJSON lines (ZoomInfo verify)
+## Appendix — Example NDJSON Lines (ZoomInfo Verify)
 
 ```text
 {"type":"progress","start":1,"end":1,"total":57,"detail":"ZoomInfo enriching 1 of 40 companies…"}

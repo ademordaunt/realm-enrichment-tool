@@ -1,68 +1,70 @@
-Realm Enrichment Tool — Current State & Health Snapshot (v2)
-What works reliably
+# Realm Enrichment Tool — Current State & Health Snapshot (Post-SPEC 3)
+
+## What Works Reliably
 End-to-end pipeline runs successfully for both list types (company names, contacts with full name + work email + company)
 AI identity resolution handles ambiguous company names correctly when event context is provided
 ZoomInfo enrichment returns accurate structured data when a match is found
 30-day KV cache prevents duplicate ZoomInfo credit usage on re-runs of the same list within the cache window
 HubSpot push creates static lists and writes enriched fields to new records reliably
-Confidence bucket logic (Trusted / Needs Review / Excluded) runs end to end — buckets are assigned, just not correctly defined (see below)
 www. stripping is implemented correctly in normalizeDomain — both normalized and www.-prefixed domains are included in HubSpot search queries
+Selective overwrite logic is fully wired in: field-specific write rules are applied on every update. State, employees, revenue, and city overwrite existing HubSpot values; name, domain, industry, description, LinkedIn, phone, and operator-set fields are fill-empty-only. Batch updates no longer overwrite indiscriminately.
+Contact-to-company association is written on every contact push. After contacts are created or updated, the tool looks up company HubSpot IDs by domain (companyDomain first, falling back to ziCompanyWebsite) and writes a structural CRM association using association type 279. Post-push success screen surfaces counts for associated, domain-not-found, and no-domain contacts.
+Confidence buckets (Trusted / Needs Review / Excluded) are correctly defined. Trusted means zero operator action required. Excluded logic is precise. Needs Review surfaces only records with a real reason to look at. Both companies and contacts have Path A (ZoomInfo verified) and Path B (HubSpot verified) Trusted routes.
+Three-phase pipeline architecture is implemented: AI → ZoomInfo → HubSpot pre-check, in that order, for both event mode and bulk mode. HubSpot pre-check now runs after ZoomInfo and uses the ZoomInfo-resolved domain as the primary match key, making company matching substantially more reliable.
+Company name fallback matching is implemented: for companies with no domain that were not matched by domain lookup, the tool normalizes the resolved name and runs a CONTAINS_TOKEN search in HubSpot. Requires exactly one result to accept the match, logged in push summary.
+Government detection is comprehensive: domain ends in .gov or .mil, plus name patterns covering military, federal agencies, state/local government, higher education (university of, community college, state college), school districts, courts, transit authorities. Substring matches with a code comment noting the low false-positive rate.
+Column recognition is comprehensive: company column aliases include Company, Organization, Org, Account, Account Name, Employer. Contact column aliases cover all common event organizer formats including givenname, fname, surname, lname, position, role, emailaddress, businessemail, workemail, liurl, mobile, cell, mobilephone, repnotes, realmnotes, johnsnotes, comments, attended, attendance, format, eventformat, and pre-enriched columns domain, companydomain, website, state, region, employees, numberofemployees, industry, sector, vertical. Location fields in "City, ST" format are parsed and split.
+CSV pre-enriched fields are treated as a Phase 1 data source: domain, state, employees, and industry from CSV columns are captured as csvDomain, csvState, csvEmployees, csvIndustry and fed into merge. ZoomInfo wins on conflict; CSV fills when ZoomInfo returns nothing. For contacts, csvTitle is highest trust — CSV title is never overwritten by ZoomInfo.
+Personal email contacts are handled via ZoomInfo name+company lookup. When a contact's email is personal (gmail, yahoo, etc.) or missing, ZoomInfo is searched by name + company. If a work email is found, it becomes the canonical resolvedEmail; the personal email is stored in personalEmail for manual reference. Contact proceeds through the pipeline rather than being immediately excluded.
+ZoomInfo contactAccuracyScore is captured and used in bucket logic. Scores below 50 flag the contact as Needs Review. Scores below 25 discard all ZoomInfo field values for that contact (ziMatchDiscarded: true), and the contact proceeds with AI + CSV + HubSpot data only.
+KV health check false failure has been fixed: a bug where the KV health check endpoint could report an unhealthy status on the first call was resolved in the recent cache-stability work.
 
-What works but is fragile
+## What Works but Is Fragile
 HubSpot contact matching: Contacts are matched by email only at pre-check. If a contact exists in HubSpot under a different email format, slightly different address, or personal vs. work email, the tool will not find them and will create a duplicate instead. Name + company fallback exists at push time but not at pre-check — so the pre-check result is less reliable than the push result.
-HubSpot pre-check runs before ZoomInfo: Currently, HubSpot lookup uses the AI-resolved domain, not the ZoomInfo domain. ZoomInfo hasn't run yet at pre-check time. This means the match key going into HubSpot is only as good as AI's resolution — which is weaker than ZoomInfo's. This is a sequencing problem, not a matching logic problem.
-Company matching — no name fallback: If a company has no domain after AI resolution and ZoomInfo also misses it, the tool will never find the existing HubSpot record. There is no normalized name match as a last-resort fallback.
-Row reordering in Review & Edit: When a field like LinkedIn URL or state/region is edited manually, the row can visually disappear and reorder based on LinkedIn tier sorting. Technically correct behavior but disorienting in practice.
-State/region picker: Auto-selects a state that is often wrong. Correcting it requires multiple back-navigation steps. "National" as an option is confusing since all US states are shown anyway. No free-text input for non-US regions (e.g. "Quebec") for large global companies the operator wants to include.
-HubSpot folder picker: Hardcoded list of folders. If HubSpot folders change, this breaks silently and shows stale options.
+Duplicate HubSpot records can still occur for edge cases: email mismatch, contacts with personal-only emails where ZoomInfo finds no work email, and contacts with no email at all. Recent sequencing, name-fallback, and domain tie-break improvements reduce this substantially, but do not eliminate it.
+HubSpot folder API response shape can vary by portal (flat arrays vs nested `folder.childNodes`). Parser now handles both, but this remains a watch area when HubSpot changes list APIs.
+Large runs remain operationally long and expensive. The architecture is stable, but throughput still scales roughly linearly with row count and API latency.
+Stale cache can cause incorrect bucket results: if KV entries were written during older broken runs, cached records may carry fields or bucket assignments from the old blunt-overwrite behavior. Clearing KV and re-enriching the affected list resolves this.
 
-What is broken or incomplete
-Selective overwrite logic is not wired in: Two versions of the HubSpot update function exist in the codebase. Version A (careful): reads existing HubSpot record first, fills only empty fields. Version B (blunt): sends all enriched data and overwrites whatever is there. Version A exists but nothing calls it. Version B runs on every update. This means existing HubSpot data is being overwritten in cases where it should be preserved. This is a confirmed bug — highest priority Tier 1 fix.
-Contact-to-company association does not exist: When a contact is pushed to HubSpot, the "company" field is written as a plain text string. No structural association is created between the contact record and a company object in the CRM. Contacts land in HubSpot unassociated, which breaks owner assignment workflows and leads to dirty data. The batchFindCompaniesByDomain function exists for company list pushes but is never called during contact pushes.
-Confidence bucket definitions are incorrect: Trusted does not currently mean "zero review needed." Operators must eyeball Trusted records because the bucket rules don't reliably separate clean records from records that need attention. Bucket definitions for both companies and contacts are being fully reworked in the current sprint.
-Pipeline architecture conflates collection and merging: Currently, sources run sequentially and each source overwrites the previous one. There are no explicit field-level trust rules governing what happens when sources conflict. This is the root cause of the data trust uncertainty. Three-phase architecture (collect, merge, push) is the Tier 1 architectural fix.
-Duplicate HubSpot records created on most runs: Root causes: email mismatch, company name variation, domain format differences, and pre-check running before ZoomInfo (weaker match key). Deduplication runs before push but can't catch records it doesn't know exist.
-Owner assignment post-push: Tool has no role. HubSpot workflows assign owners by state/region for companies, and by company owner for contacts. Fails when: contact's company is not in HubSpot, contact is not associated to a company, or contact works at an international company. Currently requires up to 30 minutes of manual cleanup after every push.
-Government detection misses state universities: "university of " is not in the government detection pattern list. State universities currently pass through as valid records rather than being auto-excluded.
-Column recognition is narrow: Company lists only recognize "company" and "companyname" as the company column header. Contact lists have a limited alias set that misses many real-world formats used by event organizers (e.g. "Organization," "Account Name," "companyname" on a contact list, domain/state/employees/ industry columns entirely, "Attended," "Format," etc.). Pre-enriched CSV columns (domain, state, employees, industry) are not captured as a data source — they are ignored or passed through without being used in enrichment.
-No contact-level error messaging for unrecognized formats: When a list doesn't match supported formats, behavior is unpredictable rather than a clear, actionable error message.
-Pre-Review screen missing Common Room stats: The enrichment summary shows ZoomInfo credits used and LinkedIn URLs from AI, but has no count for records enriched or verified via Common Room.
-HubSpot push preview missing: Before pushing to HubSpot, the operator cannot see exactly which fields are being written for each record. There is no pre-push field preview table.
-No test suite: Validation is entirely manual — operator runs real lists and reviews output. No automated way to verify that a code change hasn't broken expected behavior.
+## What Is Broken or Incomplete
+Owner assignment post-push: Tool still does not directly assign owners. HubSpot workflows assign owners by state/region for companies and by associated company for contacts. Manual post-push verification is still required for no-association and international edge cases.
+No test suite: Validation is still primarily manual with live-run checks.
+No robust per-row parse error UX for heavily non-standard input files: detection is better, but some malformed formats still degrade into weak enrichment results rather than hard-stop actionable errors.
 
-Known edge cases
-Contact with personal email only: currently excluded entirely. Should attempt ZoomInfo lookup by name + company and use work email as canonical if found.
-Contact with no email: currently produces unpredictable results. Should be handled gracefully with ZoomInfo lookup and clear flagging.
-Contact whose company is not in HubSpot: contact lands cleanly, company is not created, no association is made, owner workflow fails. This is the most common cause of post-push owner cleanup time.
-Large global companies with US operations (e.g. Fresenius, Sumitomo): auto-excluded as international even when they have significant US presence. Operator must manually override in Review & Edit.
-Company names that are abbreviations or acronyms ("HCSC," "RUSH"): resolve correctly only when event context is provided. Without context, AI confidence drops.
+## Known Edge Cases
+isFullyPopulatedContactRow now requires companyDomain: A contact row with all other fields populated (firstName, lastName, email, company, title) but no companyDomain will not be treated as pre-populated and will go through AI enrichment rather than bypassing it. This is intentional — a domain is required for the contact trusted bucket and for association — but operators uploading pre-enriched contact lists without a domain column should be aware that AI will still run for those rows.
+Contact with personal email only: ZoomInfo lookup by name + company now runs. Work email is used as canonical if found. Contact is only excluded if ZoomInfo also finds no work email.
+Contact with no email: ZoomInfo lookup by name + company runs. Contact is flagged as Needs Review if no email resolves from any source, not excluded.
+Contact whose company is not in HubSpot: Contact lands cleanly, no association is made, owner workflow may not fire. Success screen surfaces the count. Consider running a company list first to backfill company records.
+Large global companies with US operations (e.g. Fresenius, Sumitomo): Auto-excluded as international if ZoomInfo returns no US state. Operator can flip excluded international records to Needs Review using the "Include anyway" override in Review & Edit.
+Company names that are abbreviations or acronyms ("HCSC," "RUSH"): Resolve correctly only when event context is provided. Without context, AI confidence drops.
 Re-running the same list after 30-day cache expiry uses full ZoomInfo credits again with no warning.
-Domain conflict between ZoomInfo and HubSpot: currently not flagged. Will silently use one or the other depending on pipeline order.
-Two HubSpot company records with the same domain: no tie-breaking logic exists. Behavior is undefined.
+Two HubSpot company records with the same domain: Tie-broken automatically by most recent hs_lastmodifieddate. The chosen record ID is logged; skipped duplicates are logged but not surfaced in push summary.
+Stale KV cache from earlier runs: records cached before overwrite fixes may carry stale data. Clear cache and re-run to force fresh enrichment.
 
-HubSpot integration health
-LOW. The integration functions but is not fully trustworthy.
-Selective overwrite logic not wired in — updates overwrite indiscriminately
-Duplicates created on most runs for a subset of records
-Pre-check misses known contacts (email-only matching, runs before ZoomInfo)
-No contact-to-company association written on push
-Folder picker is hardcoded and will silently break if HubSpot folders change
-Owner assignment entirely post-tool, requires manual cleanup after every push
-Data trust rules implemented but not field-specific — global overwrite behavior rather than per-field rules
+## HubSpot Integration Health
+MEDIUM-HIGH. Core list creation, create/update, selective overwrite, and association behavior are reliable in day-to-day runs, with remaining edge-case risk concentrated in identity matching.
+Selective overwrite logic is wired in — fields are written per defined rules
+Contact-to-company associations are written on every contact push
+HubSpot pre-check runs after ZoomInfo with ZoomInfo domain as match key (AI domain fallback)
+Domain tie-breaking for duplicate HubSpot company records is implemented
+Company name fallback matching exists for no-domain companies
+Live folder picker now calls HubSpot directly (contacts + companies object types), parses nested folder trees, and supports retry/no-folder fallback
+Duplicates are still possible for email-mismatch and no-email contact edge cases
+Owner assignment remains post-tool (workflow-driven in HubSpot)
 
-What requires the operator's brain right now
+## What Still Requires Operator Judgment
 Writing Membership Notes: requires combining event organizer notes with rep knowledge — cannot be automated
 Writing Lead Source Description: requires judgment call per record/event — cannot be automated
-Deciding which international companies to include vs. exclude
-Reviewing every LinkedIn URL from AI web search (~2/10 are wrong and need manual correction for contacts)
-Post-push duplicate cleanup in HubSpot
-Post-push owner assignment verification and manual fixes
+Deciding which international companies to include vs. exclude (override is available in Review & Edit)
+Reviewing every LinkedIn URL from AI web search (amber flag rows at top of Trusted — ~2/10 are wrong and need manual correction for contacts)
+Post-push owner assignment verification and manual fixes for contacts with no company association
+Verifying push summary for name-matched companies (low-confidence matches logged in push summary)
 
-Biggest risks for a new operator
-Not knowing to check for and clean duplicates after every push
+## Biggest Risks for a New Operator
 Not knowing to prep Membership Notes and Lead Source Description before running the tool
+Trusting the HubSpot pre-check result as complete for contact email matching — it will miss records matched only by name
 Not knowing which records in Review & Edit actually need attention vs. which are safe to approve
-Trusting the HubSpot pre-check result as complete (it will miss records)
 Not knowing the tool only reliably handles specific input formats — other formats produce unpredictable results
 Not knowing that post-push owner assignment requires manual verification and cleanup every time
-
+Running a list that depends on old cached rows without first clearing KV cache — stale cache entries can produce incorrect bucket assignments

@@ -16,6 +16,7 @@ const CONTACT_PRECHECK_PROPERTIES = [
   "phone",
   "job_level",
   "job_function",
+  "hs_additional_emails",
 ] as const;
 
 function normalizeEmail(email: string): string {
@@ -136,11 +137,16 @@ function contactProperties(
     props.website = contact.ziCompanyWebsite.trim();
   }
 
-  // personalEmail — not pushed to HubSpot (additional emails API not implemented); log for reference
-  if (contact.personalEmail?.trim()) {
-    console.log(
-      `[HubSpot Push] personalEmail not pushed (requires HubSpot additional emails API): ${contact.personalEmail}`,
-    );
+  // hs_additional_emails — Fill empty only (preserve existing additional emails)
+  const personalEmail = contact.personalEmail?.trim() ?? "";
+  const resolvedEmail = contact.resolvedEmail?.trim() ?? "";
+  if (
+    personalEmail &&
+    resolvedEmail &&
+    personalEmail.toLowerCase() !== resolvedEmail.toLowerCase() &&
+    isEmpty(ex.hs_additional_emails)
+  ) {
+    props.hs_additional_emails = personalEmail;
   }
 
   return props;
@@ -582,7 +588,7 @@ export async function updateContact(
   extras?: HubSpotCompanyPushExtras,
 ): Promise<string> {
   const res = await hubspotFetch(
-    `/crm/v3/objects/contacts/${encodeURIComponent(id)}?properties=firstname,lastname,email,jobtitle,company,ds_liprofile,state,phone,lead_source__deal_source,lead_source_description,hs_content_membership_notes,job_level,job_function,numemployees,industry,website`,
+    `/crm/v3/objects/contacts/${encodeURIComponent(id)}?properties=firstname,lastname,email,jobtitle,company,ds_liprofile,state,phone,lead_source__deal_source,lead_source_description,hs_content_membership_notes,job_level,job_function,numemployees,industry,website,hs_additional_emails`,
   );
 
   if (!res.ok) {
@@ -666,6 +672,14 @@ export async function updateContact(
     isEmpty(ex.website)
   ) {
     updates.website = contact.ziCompanyWebsite.trim();
+  }
+  if (
+    contact.personalEmail?.trim() &&
+    contact.resolvedEmail?.trim() &&
+    contact.personalEmail.trim().toLowerCase() !== contact.resolvedEmail.trim().toLowerCase() &&
+    isEmpty(ex.hs_additional_emails)
+  ) {
+    updates.hs_additional_emails = contact.personalEmail.trim();
   }
 
   if (Object.keys(updates).length === 0) {

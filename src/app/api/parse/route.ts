@@ -108,6 +108,8 @@ export async function POST(request: Request): Promise<Response> {
               headerLine: parsedSegments[idx].headerLine,
               listType: m.listType,
               rows: m.rows,
+              headers: m.headers,
+              originalHeaders: parsedSegments[idx].headerRow.map((h) => h.trim()),
             })),
           }
         : undefined;
@@ -118,6 +120,7 @@ export async function POST(request: Request): Promise<Response> {
       totalRows: primary.rows.length,
       warnings,
       headers: primary.headers,
+      originalHeaders: primarySegment.headerRow.map((h) => h.trim()),
       multiEvent,
     };
 

@@ -14,6 +14,7 @@ export const maxDuration = 9;
 const ZOOM_INFO_VERIFY_COMPANY_CHUNK_SIZE = 15;
 /** Contacts run Common Room + prospector + ZoomInfo per row — smaller chunks reduce timeouts. */
 const ZOOM_INFO_VERIFY_CONTACT_CHUNK_SIZE = 8;
+const INTERNAL_AUTH_HEADER = "x-realm-internal-auth";
 
 void checkKvConnectivity();
 
@@ -87,10 +88,13 @@ export async function POST(request: Request): Promise<Response> {
         const mergedRows: (EnrichedCompany | EnrichedContact)[] = [];
         let enrichedCount = 0;
         let cachedCount = 0;
+        let commonRoomHits = 0;
+        let warnedMissingInternalSecret = false;
         const prospectorEndpoint = new URL(
           "/api/enrich/prospector",
           request.url,
         ).href;
+        const internalApiSecret = process.env.INTERNAL_API_SECRET?.trim() ?? "";
 
         const emitProgress = (globalRowIndex: number, detail?: string) => {
           controller.enqueue(
@@ -160,54 +164,72 @@ export async function POST(request: Request): Promise<Response> {
               `ZoomInfo & Common Room enriching ${nonHighIndex} of ${nonHighTotal} contacts…`,
             );
             const crResult = await enrichContactWithCommonRoom(contact);
+            const commonRoomUseful = Boolean(
+              crResult.linkedinUrl?.trim() ||
+                crResult.title?.trim() ||
+                crResult.resolvedCompany?.trim(),
+            );
+            if (commonRoomUseful) commonRoomHits += 1;
 
             let prospectorPartial: Partial<EnrichedContact> = {};
             let prospectorFound = false;
             try {
-              const prospectorRes = await fetch(prospectorEndpoint, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  contacts: [
-                    {
-                      id: contact.id,
-                      firstName: contact.firstName,
-                      lastName: contact.lastName,
-                      rawEmail: contact.rawEmail,
-                      resolvedCompany: contact.resolvedCompany,
-                      companyDomain: contact.companyDomain,
-                    },
-                  ],
-                }),
-              });
-              if (prospectorRes.ok) {
-                const prospectorJson = (await prospectorRes.json()) as {
-                  results?: Array<{
-                    id: string;
-                    title?: string;
-                    linkedInUrl?: string;
-                    location?: string;
-                    seniority?: string;
-                    found: boolean;
-                  }>;
-                };
-                const pr =
-                  prospectorJson.results?.find((r) => r.id === contact.id) ??
-                  prospectorJson.results?.[0];
-                prospectorFound = pr?.found === true;
-                if (pr?.found) {
-                  prospectorPartial = {
-                    title: pr.title,
-                    linkedinUrl: pr.linkedInUrl,
-                    linkedinSource: "zoominfo",
-                    location: pr.location,
-                  };
+              if (!internalApiSecret) {
+                if (!warnedMissingInternalSecret) {
+                  console.error(
+                    "[ZoomInfo] INTERNAL_API_SECRET is missing; skipping internal prospector call.",
+                  );
+                  warnedMissingInternalSecret = true;
                 }
               } else {
-                console.error(
-                  "[ZoomInfo] Prospector HTTP error:",
-                  prospectorRes.status,
-                );
+                const prospectorRes = await fetch(prospectorEndpoint, {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    [INTERNAL_AUTH_HEADER]: internalApiSecret,
+                  },
+                  body: JSON.stringify({
+                    contacts: [
+                      {
+                        id: contact.id,
+                        firstName: contact.firstName,
+                        lastName: contact.lastName,
+                        rawEmail: contact.rawEmail,
+                        resolvedCompany: contact.resolvedCompany,
+                        companyDomain: contact.companyDomain,
+                      },
+                    ],
+                  }),
+                });
+                if (prospectorRes.ok) {
+                  const prospectorJson = (await prospectorRes.json()) as {
+                    results?: Array<{
+                      id: string;
+                      title?: string;
+                      linkedInUrl?: string;
+                      location?: string;
+                      seniority?: string;
+                      found: boolean;
+                    }>;
+                  };
+                  const pr =
+                    prospectorJson.results?.find((r) => r.id === contact.id) ??
+                    prospectorJson.results?.[0];
+                  prospectorFound = pr?.found === true;
+                  if (pr?.found) {
+                    prospectorPartial = {
+                      title: pr.title,
+                      linkedinUrl: pr.linkedInUrl,
+                      linkedinSource: "zoominfo",
+                      location: pr.location,
+                    };
+                  }
+                } else {
+                  console.error(
+                    "[ZoomInfo] Prospector HTTP error:",
+                    prospectorRes.status,
+                  );
+                }
               }
             } catch (e) {
               console.error("[ZoomInfo] Prospector request failed:", e);
@@ -266,6 +288,7 @@ export async function POST(request: Request): Promise<Response> {
               rows: mergedRows,
               enrichedCount,
               cachedCount,
+              commonRoomHits,
               creditsUsed: enrichedCount,
             })}\n`,
           ),

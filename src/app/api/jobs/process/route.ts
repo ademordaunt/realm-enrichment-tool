@@ -37,6 +37,7 @@ const AI_CHUNK_SIZE = 15;
 const AI_BATCH_SIZE = 3;
 const ZOOM_CHUNK_SIZE = 25;
 const LINKEDIN_CHUNK_SIZE = 10;
+const INTERNAL_AUTH_HEADER = "x-realm-internal-auth";
 
 function fallbackAiCompanyRows(rows: RawCompanyRow[], errMsg: string): EnrichedCompany[] {
   return rows.map((row) => ({
@@ -256,6 +257,13 @@ async function runLinkedInBatch(
 ): Promise<(EnrichedCompany | EnrichedContact)[]> {
   const out = rows.slice();
   const endpoint = new URL("/api/enrich/linkedin-search", request.url).href;
+  const internalApiSecret = process.env.INTERNAL_API_SECRET?.trim() ?? "";
+  if (!internalApiSecret) {
+    console.error(
+      "[Jobs/Process] INTERNAL_API_SECRET is missing; skipping internal linkedin-search batch.",
+    );
+    return out;
+  }
   for (let i = 0; i < out.length; i++) {
     const row = out[i]!;
     const missing = !(row as { linkedinUrl?: string }).linkedinUrl?.trim();
@@ -266,7 +274,10 @@ async function runLinkedInBatch(
         : { contact: row as EnrichedContact };
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        [INTERNAL_AUTH_HEADER]: internalApiSecret,
+      },
       body: JSON.stringify(body),
     });
     if (!res.ok) continue;

@@ -5,6 +5,7 @@ import type {
   EnrichedContact,
   IdentityConfidence,
 } from "@/lib/utils/types";
+import { isPersonalEmail } from "@/lib/utils/contacts";
 
 const kv = new Redis({
   url: process.env.KV_REST_API_URL,
@@ -77,6 +78,20 @@ export async function getCachedCompany(name: string): Promise<EnrichedCompany | 
         identityConfidence: migrated.confidenceScore as IdentityConfidence,
       };
     }
+    const hasLinkedInSourceAiSearch = migrated.linkedinSource === "ai_search";
+    const hasLinkedInUrlForAmber = Boolean(migrated.linkedinUrl?.trim());
+    const linkedinAmberFlag =
+      migrated.linkedinAmberFlag ??
+      (hasLinkedInSourceAiSearch && hasLinkedInUrlForAmber);
+    migrated = {
+      ...migrated,
+      linkedinAmberFlag,
+      trustedSortTier: migrated.trustedSortTier ?? 2,
+      csvDomain: migrated.csvDomain ?? "",
+      csvState: migrated.csvState ?? "",
+      csvEmployees: migrated.csvEmployees ?? "",
+      csvIndustry: migrated.csvIndustry ?? "",
+    };
     return migrated;
   } catch {
     return null; // Never let cache errors block enrichment
@@ -94,7 +109,39 @@ export async function setCachedCompany(name: string, data: EnrichedCompany): Pro
 export async function getCachedContact(email: string): Promise<EnrichedContact | null> {
   try {
     const result = await kv.get<EnrichedContact>(normalizeContactKey(email));
-    return result ?? null;
+    if (!result) return null;
+    const hasValidCompanyDomain =
+      typeof result.companyDomain === "string" && result.companyDomain.trim() !== "";
+    if (!hasValidCompanyDomain) return null;
+    const hasLinkedInSourceAiSearch = result.linkedinSource === "ai_search";
+    const hasLinkedInUrl = Boolean(result.linkedinUrl?.trim());
+    const linkedinAmberFlag =
+      result.linkedinAmberFlag ??
+      (hasLinkedInSourceAiSearch && hasLinkedInUrl);
+    const resolvedEmail = result.resolvedEmail?.trim() ?? "";
+    const migratedEmailSource =
+      result.emailSource ??
+      (resolvedEmail
+        ? (isPersonalEmail(resolvedEmail) ? "personal" : "csv")
+        : "csv");
+    return {
+      ...result,
+      ziContactAccuracyScore:
+        typeof result.ziContactAccuracyScore === "number"
+          ? result.ziContactAccuracyScore
+          : undefined,
+      ziMatchDiscarded: result.ziMatchDiscarded ?? false,
+      emailSource: migratedEmailSource,
+      personalEmail: result.personalEmail ?? undefined,
+      hubspotCompanyId: result.hubspotCompanyId ?? undefined,
+      linkedinAmberFlag,
+      trustedSortTier: result.trustedSortTier ?? (linkedinAmberFlag ? 1 : 2),
+      csvTitle: result.csvTitle ?? "",
+      csvDomain: result.csvDomain ?? "",
+      csvState: result.csvState ?? "",
+      csvEmployees: result.csvEmployees ?? "",
+      csvIndustry: result.csvIndustry ?? "",
+    };
   } catch {
     return null;
   }
@@ -142,7 +189,7 @@ export async function checkKvConnectivity(): Promise<void> {
   try {
     await kv.set("__health_check__", "1", { ex: 10 });
     const val = await kv.get("__health_check__");
-    if (val !== "1") {
+    if (String(val) !== "1") {
       console.error("[Cache] KV health check failed — reads not returning written values");
     } else {
       console.log("[Cache] KV connected and healthy");

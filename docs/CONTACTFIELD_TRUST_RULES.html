@@ -130,11 +130,11 @@
 
       <tr>
         <td><span class="field-name">Company domain</span></td>
-        <td>ZoomInfo (companyDomain) → ziCompanyWebsite → AI → HubSpot<br><span class="note">companyDomain is top-level on EnrichedContact from AI resolution — verify in types.ts</span></td>
+        <td>companyDomain (resolved from AI/CSV/ZoomInfo merge) → ziCompanyWebsite fallback → HubSpot<br><span class="note">At push time, association lookup checks companyDomain first, then ziCompanyWebsite.</span></td>
         <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
         <td><span class="badge b-flag">Flag</span> if ZoomInfo and HubSpot differ — record identity logic same as company table. Also: domain is the key used for contact-to-company association lookup. Resolve conflicts before association.</td>
         <td><span class="badge b-fill">Fill empty only</span></td>
-        <td>Primary key for company association lookup. Both companyDomain and ziCompanyWebsite should be checked — confirm field availability at push time in types.ts.</td>
+        <td>Primary key for company association lookup. If companyDomain is empty, ziCompanyWebsite is used as fallback.</td>
       </tr>
 
       <tr>

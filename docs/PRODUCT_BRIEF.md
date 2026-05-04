@@ -1,14 +1,15 @@
-Realm Enrichment Tool — Product Brief (v2)
-What it is
+# Realm Enrichment Tool — Product Brief (Post-SPEC 3)
+
+## What It Is
 A web app that transforms raw marketing event CSVs into clean, enriched lead lists and pushes them into HubSpot as static lists. Supports both company lists and contact lists across a wide variety of input formats.
-Why it exists
+## Why It Exists
 Every marketing event produces an attendee spreadsheet in a different format with varying data quality. Getting those records into HubSpot — clean, enriched, and organized — previously required 2-3 hours of manual work across ZoomInfo, Common Room, HubSpot, LinkedIn, Claude, and Google. This tool automates that pipeline end to end.
-Who uses it
+## Who Uses It
 Primary user: Tyler (marketing ops). One person. Technical level: comfortable with web tools, has Claude Code, builds websites. Can modify and extend the codebase independently. Secondary context: built and maintained by Casey (rev ops). No other users intended.
 
-Pipeline architecture — three phases
+## Pipeline Architecture — Three Phases
 The pipeline runs in three phases. This is the load-bearing design decision of the entire tool.
-Phase 1 — Collect independently
+### Phase 1 — Collect Independently
 All sources run and return their raw payloads before any merging occurs. Nothing overwrites anything in this phase.
 Collection order (companies):
 AI — identity resolution only. Returns candidate name, domain, confidence score, and one-sentence reasoning.
@@ -20,20 +21,20 @@ ZoomInfo — always runs. Returns full contact payload including contactAccuracy
 Common Room — looked up by work email, then by LinkedIn handle if email lookup returns nothing.
 HubSpot lookup — runs after ZoomInfo, using resolved work email as the match key.
 CSV fields are also treated as a data source in Phase 1. Pre-enriched columns (domain, state, employees, industry, title) are captured and fed into the merge phase rather than ignored.
-Phase 2 — Merge using field-specific trust rules
+### Phase 2 — Merge Using Field-Specific Trust Rules
 Each field has an explicit source priority, conflict rule, and write rule. See the Company Field Trust Rules and Contact Field Trust Rules documents for the complete tables.
 Key principles:
 Accuracy over efficiency. If uncertain, flag — don't guess.
 Conflicts surface as Needs Review with a tooltip reason.
 The merge produces one record per row. No source "wins overall" — each field has its own winner.
-Phase 3 — Push only what's better
+### Phase 3 — Push Only What's Better
 Use domain as the match key for company create vs. update.
 Use work email as the match key for contact create vs. update, with name + company as fallback.
 Write only fields where the merged value improves on what HubSpot already has, per field-specific write rules.
 Never overwrite email or domain.
 Before writing each contact, attempt domain-based company lookup and write a structural HubSpot association if found.
 
-Supported input formats
+## Supported Input Formats
 The tool uses fuzzy column name matching. A wide range of header labels map to the correct fields automatically.
 Company lists — recognized column aliases include: Company, Company Name, Organization, Org, Account, Account Name, Employer (and normalized variants)
 Contact lists — recognized fields include: First/Last name, Email, Title, Company, Phone, LinkedIn, Domain, State, Employees, Industry, Location, Notes, Lead Source, Lead Source Description, Attended, Format, and their common aliases across event organizer formats.
@@ -47,7 +48,7 @@ FORMAT — Contact with no email Handled: yes, gracefully. ZoomInfo, HubSpot, an
 FORMAT — Contact with combined city/state location field Handled: yes. Parsed and split on comma before processing.
 FORMAT — Contact with no company Handled: flag immediately. Cannot enrich or associate without a company name.
 
-Data accuracy hierarchy
+## Data Accuracy Hierarchy
 Accuracy is the top priority. Efficiency is second. Source trust is field-specific — see the full trust tables for companies and contacts. General principles:
 ZoomInfo wins on most structured fields (state, employees, revenue, city, industry) because it is the most current structured data source.
 CSV wins on personal fields for contacts (name, title, phone, email) because the person self-reported at registration.
@@ -61,8 +62,8 @@ ZoomInfo contactAccuracyScore is used as an internal signal for contacts:
 Below 50: flag as Needs Review
 Below 25: discard ZoomInfo enrichment data for this contact
 
-Confidence buckets
-Companies
+## Confidence Buckets
+### Companies
 TRUSTED — requires zero operator action. A company is Trusted if it passes Excluded and meets Path A or Path B:
 Path A (ZoomInfo verified):
 AI resolved identity successfully
@@ -86,22 +87,22 @@ Empty state/region after full enrichment
 Empty employee count after full enrichment
 EXCLUDED — auto-excluded if any of these are true:
 International AND ZoomInfo returned no US state/region
-Government entity (domain ends in .gov or .mil, or name matches known government patterns including "university of ")
+Government entity (domain ends in .gov or .mil, or name matches known government patterns including "university of ", "community college", "state college")
 AI total non-resolution (no domain, no resolved name, complete failure)
 ZoomInfo returned nothing AND AI confidence is low
 International override: operator can flip excluded records to Needs Review manually in Review & Edit.
-Contacts
+### Contacts
 TRUSTED — requires zero operator action. A contact is Trusted if it passes Excluded and meets Path A or Path B:
 Path A (ZoomInfo verified):
 Work email resolved, no conflict
 Company name and domain both present
 ZoomInfo returned a payload
-ZoomInfo contactAccuracyScore 50 or above
+ZoomInfo contactAccuracyScore 50 or above (or null/undefined — score missing is not a disqualifier, only low score is)
 Job title populated
 LinkedIn present (verified or AI-sourced with amber flag)
 Path B (HubSpot or Common Room verified):
 Work email resolved, no conflict
-HubSpot or Common Room record exists and is complete (email, title, company, state all populated)
+HubSpot or Common Room record exists and is complete (email, title, and company populated)
 Company name and domain both present
 LinkedIn present (verified or AI-sourced with amber flag)
 Display order within Trusted:
@@ -121,7 +122,7 @@ Personal email AND ZoomInfo found no work email
 No name at all
 AI total non-resolution AND ZoomInfo found nothing
 
-HubSpot write rules
+## HubSpot Write Rules
 Write rules are field-specific. The full rules are in the Company Field Trust Rules and Contact Field Trust Rules documents. General principles:
 Always fill empty fields regardless of source.
 Only overwrite existing fields per the field-specific write rule for that field.
@@ -130,9 +131,8 @@ LinkedIn is never overwritten pre-review. Post-review, operator-approved value i
 Fast-aging fields (state, employees, revenue, city) are overwritten with ZoomInfo values.
 Stable or curated fields (industry, description, LinkedIn, phone) are fill-empty-only.
 Operator-set fields (lead source, lead source description, membership notes) are never touched by enrichment.
-The selective overwrite logic (fill-empty vs overwrite per field) must be wired into the batch update path. Currently batch updates overwrite indiscriminately — this is a known bug and a Tier 1 fix.
 
-Contact-to-company association
+## Contact-to-Company Association
 During a contact push, the tool always attempts a domain-based company lookup before writing the contact.
 Logic:
 Use companyDomain (top-level field, from AI resolution) as primary key. Fall back to ziCompanyWebsite if companyDomain is empty.
@@ -145,7 +145,7 @@ Post-push report surfaces two counters:
 "X contacts: no company domain available — association not possible"
 Auto-creating company records during contact pushes is deferred to V2.
 
-Record ownership
+## Record Ownership
 The tool does not directly assign HubSpot owners. HubSpot workflows handle owner assignment by state/region.
 The tool's role:
 Ensure state/region is populated on every record (new pipeline makes this much more reliable).
@@ -155,24 +155,25 @@ Pre-push and success screens show:
 "X companies have no state/region — will not get an owner assigned automatically"
 "X contacts have no company association in HubSpot — will not get an owner assigned automatically"
 
-What success looks like
+## What Success Looks Like
 Upload list → pipeline runs unattended → operator returns to a clean Review & Edit table → Trusted bucket requires zero manual review → Needs Review bucket is small and each record has a specific, actionable reason → operator checks amber LinkedIn dots at top of Trusted → push to HubSpot → pre-push ownership failure count is low → no duplicates created → owners auto-assigned via HubSpot workflows → list is ready to hand to sales.
-What it is NOT
-Not for enriching incomplete existing HubSpot records (V1)
+## What It Is Not
+Not for enriching incomplete existing HubSpot records (V2)
 Not for auto-creating company records during contact pushes (V2)
 Not a replacement for manual judgment on membership notes and lead source description — those require operator brain
-Not currently authenticated — anyone with the URL can access it and consume ZoomInfo credits / access the CRM. Basic auth is a near-term priority before wider sharing.
-Non-negotiables
+Not per-user authentication — this is a shared-password app, not an SSO or user-account system.
+## Non-Negotiables
 Data accuracy over speed — never guess when you can flag
 Never create duplicates in HubSpot
 Trusted bucket must mean zero review needed
 Domain and email are never overwritten
 Operator-set fields are never touched by enrichment
 Tool must be operable by a non-technical marketing ops person without reading documentation
-Deployment
+## Deployment
 Hosted on Vercel
 Codebase shared with Tyler via GitHub
 ZoomInfo credits and Anthropic costs tied to Casey's accounts — transfer to shared/team accounts before full handoff
-Current maturity
-V1.5 — pipeline runs end to end. Three-phase architecture, field-specific trust rules, contact-to-company association, and confidence bucket rework are the focus of the current build sprint. HubSpot integration has known duplicate and matching issues being addressed. Not yet suitable for an untrained operator without supervision.
+## Current Maturity
+Post-SPEC 3. SPEC 1/2/3 scope is implemented in the live codebase: cache migration defaults, amber-flag trusted sorting, international "Include anyway" override, Common Room match count in Pre-Review, row-order lock during active review, upgraded state/region context picker (including non-US override), live HubSpot folder loading, parsed-table clarity improvements, personal->work email visibility + additional-email HubSpot write, and shared-password route protection with login/logout.
 
+HubSpot integration health is now MEDIUM-HIGH for intended event-list workflows. Remaining risk is concentrated in contact identity edge cases (email mismatches, no-email rows, ambiguous existing CRM records) rather than core pipeline reliability.

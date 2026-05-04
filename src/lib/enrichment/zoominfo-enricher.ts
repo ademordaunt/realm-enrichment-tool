@@ -790,7 +790,12 @@ export async function enrichContactWithZoomInfo(
     found: !!attrs.id,
     hasTitle: Boolean(result.title),
     linkedInFound: Boolean(result.linkedinUrl),
-    hasCompany: Boolean(result.resolvedCompany),
+    hasCompany: Boolean(
+      (typeof attrs.companyName === "string" && attrs.companyName.trim()) ||
+        (typeof attrs.companyWebsite === "string" && attrs.companyWebsite.trim()) ||
+        (typeof attrs.companyId === "string" && attrs.companyId.trim()) ||
+        (typeof attrs.companyId === "number" && Number.isFinite(attrs.companyId)),
+    ),
     accuracyScore: result.contactAccuracyScore,
   });
 
@@ -901,6 +906,7 @@ export async function enrichContactWithZoomInfo(
   const web = ziAttrStr(attrs.companyWebsite);
   if (!(contact.companyDomain ?? "").trim() && web) {
     out.ziCompanyWebsite = web;
+    out.companyDomain = web;
   }
 
   out.enrichedByZoomInfo = true;

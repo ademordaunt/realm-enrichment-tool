@@ -50,6 +50,37 @@ function linkedinSourceLegendLabel(s: LinkedInSource | undefined): string {
   }
 }
 
+function linkedInHeaderLegendContent(): ReactNode {
+  return (
+    <div className="space-y-1.5">
+      <p className="font-medium">LinkedIn source legend:</p>
+      <p className="flex items-center gap-1.5">
+        <span className="inline-block h-2 w-2 rounded-full bg-violet-600" aria-hidden />
+        HubSpot verified
+      </p>
+      <p className="flex items-center gap-1.5">
+        <span className="inline-block h-2 w-2 rounded-full bg-blue-600" aria-hidden />
+        ZoomInfo verified
+      </p>
+      <p className="flex items-center gap-1.5">
+        <span className="inline-block h-2 w-2 rounded-full bg-teal-600" aria-hidden />
+        Common Room verified
+      </p>
+      <p className="flex items-center gap-1.5">
+        <span className="inline-block h-2 w-2 rounded-full bg-amber-500" aria-hidden />
+        AI web search (verify before trusting)
+      </p>
+      <p className="flex items-center gap-1.5">
+        <span className="inline-block h-2 w-2 rounded-full bg-zinc-800 dark:bg-black" aria-hidden />
+        Manually entered
+      </p>
+      <p className="pt-1 text-xs text-zinc-600">
+        Web search note: amber rows should be spot-checked before push.
+      </p>
+    </div>
+  );
+}
+
 function exclusionReasonBadgeLabel(reason: ExclusionReason | undefined): string {
   switch (reason) {
     case "international":
@@ -75,157 +106,79 @@ function exclusionReasonBadgeLabel(reason: ExclusionReason | undefined): string 
   }
 }
 
-function dataSourceLine(row: EnrichedCompany | EnrichedContact): string {
-  const parts: string[] = [];
-  if (row.hubspotId) parts.push("HubSpot ✓");
-  if (row.enrichedByZoomInfo) parts.push("ZoomInfo ✓");
-  if (parts.length === 0) return "AI only";
-  return parts.join(" / ");
-}
-
 function buildReasoningTooltipContent(
   row: EnrichedCompany | EnrichedContact,
   listType: "companies" | "contacts",
 ): ReactNode {
-  const identity = row.identityConfidence ?? row.confidenceScore;
-  const confidenceText = `${identityLabel(identity)} confidence`;
   const bucket = row.reviewBucket ?? "needs_review";
-  const linkedInValue = row.linkedinUrl?.trim() ?? "";
-  const linkedInLabel = linkedInValue ? linkedinSourceLegendLabel(row.linkedinSource) : "Not found ⚠️";
-  const identitySource = row.hubspotId ? "HubSpot ✓" : row.enrichedByZoomInfo ? "ZoomInfo ✓" : "Unknown";
-  const otherData = dataSourceLine(row);
-
   const company = listType === "companies" ? (row as EnrichedCompany) : null;
   const contact = listType === "contacts" ? (row as EnrichedContact) : null;
-  const companyMissingDomain = Boolean(company && !company.domain?.trim());
-  const contactMissingCompany = Boolean(contact && !sanitizeCompanyName(contact.resolvedCompany));
-
-  const displayName =
-    listType === "companies"
-      ? sanitizeUnknown(company?.resolvedName || company?.rawInput) || "Record"
-      : formatContactFullName(contact as EnrichedContact) || "Record";
-
-  const identityTarget =
-    listType === "companies"
-      ? company?.domain?.trim() || "—"
-      : sanitizeCompanyName(contact?.resolvedCompany) || "—";
-  const identityLine =
-    identity === "high"
-      ? `Verified as ${displayName} (${identityTarget})`
-      : `Identified as ${displayName} (${identityTarget}) — ${confidenceText}`;
-
-  const sourceBlock = (
-    <div>
-      <p className="font-semibold">Sources:</p>
-      <p>Identity    {identitySource}</p>
-      <p>LinkedIn    {linkedInLabel}</p>
-      <p>Other data  {otherData}</p>
-    </div>
-  );
-
-  const missingLines: string[] = [];
-  if (contactMissingCompany) missingLines.push("⚠️ Company name — search LinkedIn or Google");
-  if (companyMissingDomain) missingLines.push("⚠️ Domain — needed for HubSpot matching");
-
-  const needsReviewLines: string[] = [];
-  if (row.linkedinSource === "ai_search") {
-    needsReviewLines.push("⚠️ LinkedIn — came from web search, verify before trusting");
-  }
-  if (!row.hubspotId && !row.enrichedByZoomInfo) {
-    needsReviewLines.push("⚠️ Not verified by HubSpot or ZoomInfo");
-  }
-
-  const excludedLines: string[] = [];
-  if (row.exclusionReason === "personal_email" && contact) {
-    const email = (contact.resolvedEmail ?? "").trim();
-    const domain = email.includes("@") ? email.split("@")[1]?.toLowerCase() ?? "" : "";
-    const kind = classifyContactEmailDomain(email);
-    excludedLines.push(
-      kind === "ISP"
-        ? `⚠️ Personal email — flagged as ISP address, ${domain || "unknown domain"}`
-        : `⚠️ Personal email — flagged as personal address, ${domain || "unknown domain"}`,
-    );
-  }
-  if (row.exclusionReason === "international") {
-    excludedLines.push("⚠️ International company — outside ICP");
-  }
-  if (row.exclusionReason === "government") {
-    excludedLines.push("⚠️ Government entity — outside ICP");
-  }
-  if (row.exclusionReason === "low_confidence") {
-    excludedLines.push("⚠️ Low confidence");
-  }
-  if (row.exclusionReason === "unresolved") {
-    excludedLines.push("⚠️ Unresolved — AI could not identify this record");
-  }
-  if (row.exclusionReason === "missing_required_fields") {
-    const missing: string[] = [];
-    if (contact) {
-      if (!sanitizeCompanyName(contact.resolvedCompany)) missing.push("company");
-      if (!sanitizeUnknown(contact.title)) missing.push("title");
-      if (!sanitizeUnknown(contact.linkedinUrl)) missing.push("LinkedIn profile");
-    } else if (company) {
-      if (!sanitizeUnknown(company.resolvedName)) missing.push("company name");
-      if (!sanitizeUnknown(company.domain)) missing.push("domain");
+  const trustedSource = row.enrichedByZoomInfo && row.hubspotId
+    ? "ZoomInfo and your CRM"
+    : row.enrichedByZoomInfo
+      ? "ZoomInfo"
+      : row.hubspotId
+        ? "your CRM"
+        : "ZoomInfo";
+  if (bucket === "trusted") {
+    if (row.linkedinAmberFlag === true) {
+      return "Data verified. LinkedIn was sourced from web search — click to confirm it's correct.";
     }
-    excludedLines.push(`⚠️ Missing required fields — ${missing.join(", ") || "required fields"}`);
-  }
-  if (row.linkedinSource === "ai_search") {
-    excludedLines.push("⚠️ LinkedIn — came from web search, verify before trusting");
+    return `Data verified by ${trustedSource}. No action needed.`;
   }
 
   if (bucket === "excluded") {
-    return (
-      <div className="space-y-2">
-        <p className="font-semibold">✗ {displayName} — Excluded</p>
-        <p>{identityLine}</p>
-        {excludedLines.map((line, idx) => (
-          <p key={idx}>{line}</p>
-        ))}
-        {sourceBlock}
-      </div>
-    );
+    if (row.exclusionReason === "international") {
+      return "International company. Click 'Include anyway' if they have significant US operations.";
+    }
+    if (row.exclusionReason === "government") {
+      return "Government or public institution. Excluded by default.";
+    }
+    return "Could not identify this company. Too little information to enrich reliably.";
   }
 
-  if (bucket === "needs_review") {
-    return (
-      <div className="space-y-2">
-        <p className="font-semibold">⚠️ {displayName} — Needs Review</p>
-        <p>{identityLine}</p>
-        {needsReviewLines.map((line, idx) => (
-          <p key={idx}>{line}</p>
-        ))}
-        {sourceBlock}
-      </div>
-    );
-  }
-
-  if (missingLines.length > 0) {
-    return (
-      <div className="space-y-2">
-        <p className="font-semibold">~ {displayName} — Trusted but missing data</p>
-        <p>{identityLine}</p>
-        {row.linkedinSource === "ai_search" && (
-          <p>⚠️ LinkedIn came from web search — worth a quick check</p>
-        )}
-        {missingLines.map((line, idx) => (
-          <p key={idx}>{line}</p>
-        ))}
-        {sourceBlock}
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-2">
-      <p className="font-semibold">✓ {displayName} — Trusted</p>
-      <p>{identityLine}</p>
-      {row.linkedinSource === "ai_search" && (
-        <p>⚠️ LinkedIn came from web search — worth a quick check</p>
-      )}
-      {sourceBlock}
-    </div>
+  const companyDomainConflict = Boolean(
+    company &&
+      company.domainSource === "zoominfo_verified" &&
+      company.domain?.trim() &&
+      company.existingData?.domain?.trim() &&
+      company.domain.trim().toLowerCase() !== company.existingData.domain.trim().toLowerCase(),
   );
+  const contactEmailConflict = Boolean(
+    contact &&
+      contact.rawEmail?.trim() &&
+      contact.existingData?.email?.trim() &&
+      contact.rawEmail.trim().toLowerCase() !== contact.existingData.email.trim().toLowerCase(),
+  );
+
+  if (companyDomainConflict) {
+    return "Domain conflict with your CRM. Verify this is the right company before pushing.";
+  }
+  if ((company && !company.domain?.trim()) || (contact && !contact.companyDomain?.trim())) {
+    return "No domain found. Search for their website and enter it here.";
+  }
+  if (!row.enrichedByZoomInfo) {
+    return "Not found in ZoomInfo. Review and fill in missing fields manually.";
+  }
+  if (contact && typeof contact.ziContactAccuracyScore === "number" && contact.ziContactAccuracyScore < 50) {
+    return "ZoomInfo match confidence is low. Verify the data looks correct.";
+  }
+  if (contactEmailConflict) {
+    return "Email differs from your CRM record. Confirm which is correct.";
+  }
+  if (!row.linkedinUrl?.trim()) {
+    return "No LinkedIn found. Add it manually if you have it.";
+  }
+  if ((company && !company.state?.trim()) || (contact && !contact.location?.trim())) {
+    return "No state/region found. Add it to ensure correct owner assignment.";
+  }
+  if (contact && !contact.title?.trim()) {
+    return "No job title found. Add it manually if you have it.";
+  }
+  if (company && company.numberOfEmployees == null) {
+    return "No employee count found. ZoomInfo may not have this company.";
+  }
+  return "Review this record and confirm the core fields before pushing.";
 }
 
 function websiteFromDomain(domain: string): string {
@@ -606,16 +559,21 @@ function EmployeesCell(props: {
   );
 }
 
-function LinkedInSourceDot(props: { source: LinkedInSource }) {
-  const { source } = props;
+function LinkedInSourceDot(props: {
+  source: LinkedInSource;
+  showAmberFlag?: boolean;
+  amberTooltip?: string;
+}) {
+  const { source, showAmberFlag = false, amberTooltip } = props;
   if (!source) return null;
   const map: Record<string, { className: string; title: string }> = {
     hubspot: { className: "bg-violet-600", title: "From HubSpot" },
     zoominfo: { className: "bg-blue-600", title: "From ZoomInfo" },
     commonroom: { className: "bg-teal-600", title: "From Common Room" },
-    ai_search: { className: "bg-amber-500", title: "From web search — verify" },
+    ai_search: { className: "bg-amber-500", title: amberTooltip ?? "From web search — verify" },
     manual: { className: "bg-zinc-800 dark:bg-black", title: "Manually edited" },
   };
+  if (source === "ai_search" && !showAmberFlag) return null;
   const cfg = map[source];
   if (!cfg) return null;
   return (
@@ -633,9 +591,11 @@ function LinkedInProfileCell(props: {
   muted?: boolean;
   breakAll?: boolean;
   linkedinSource?: LinkedInSource;
+  linkedinAmberFlag?: boolean;
+  amberTooltip?: string;
   onSave: (next: string) => void;
 }) {
-  const { value, edited, muted, breakAll, linkedinSource, onSave } = props;
+  const { value, edited, muted, breakAll, linkedinSource, linkedinAmberFlag, amberTooltip, onSave } = props;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => (value == null ? "" : String(value)));
 
@@ -714,7 +674,13 @@ function LinkedInProfileCell(props: {
 
   return (
     <div className={`relative flex min-w-0 max-w-full items-center gap-1 ${wrap}`}>
-      {linkedinSource ? <LinkedInSourceDot source={linkedinSource} /> : null}
+      {linkedinSource ? (
+        <LinkedInSourceDot
+          source={linkedinSource}
+          showAmberFlag={linkedinAmberFlag === true}
+          amberTooltip={amberTooltip}
+        />
+      ) : null}
       <a
         href={href}
         target="_blank"
@@ -799,6 +765,31 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     [listType],
   );
 
+  const includeInternationalAnyway = useCallback(
+    (rowId: string) => {
+      if (listType !== "companies") return;
+      const current = rows as EnrichedCompany[];
+      const target = current.find((r) => r.id === rowId);
+      if (!target) return;
+      setRows(
+        current.map((r) =>
+          r.id === rowId
+            ? {
+                ...r,
+                reviewBucket: "needs_review" as const,
+                exclusionReason: undefined,
+                status: "pending" as const,
+                manuallyIncluded: true,
+              }
+            : r,
+        ),
+      );
+      const stableKey = target.domain?.trim().toLowerCase() ?? "";
+      persistManualEdit(stableKey, "manuallyIncluded", true);
+    },
+    [listType, rows, persistManualEdit, setRows],
+  );
+
   const sortedRows = useMemo(() => {
     if (listType === "companies") {
       return [...(rows as EnrichedCompany[])].sort((a, b) => {
@@ -861,6 +852,10 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     });
   }, [rows, sortedRows, listType]);
 
+  useEffect(() => {
+    setStableRowOrder(sortedRows.map((r) => r.id));
+  }, [filter]);
+
   const displayRows = useMemo(() => {
     if (stableRowOrder.length === 0) return sortedRows;
     const out: (EnrichedCompany | EnrichedContact)[] = [];
@@ -872,11 +867,8 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
   }, [stableRowOrder, rowsById, sortedRows]);
 
   const filteredByShowFilter = useMemo(() => {
-    const linkedInTier = (r: EnrichedCompany | EnrichedContact) => {
-      if (!r.linkedinUrl?.trim()) return 0;
-      if (r.linkedinSource === "ai_search") return 1;
-      return 2;
-    };
+    const trustedTier = (r: EnrichedCompany | EnrichedContact) =>
+      r.trustedSortTier ?? (r.linkedinAmberFlag ? 1 : 2);
     const bucketRank = (r: EnrichedCompany | EnrichedContact) => {
       const b = r.reviewBucket ?? "needs_review";
       if (b === "needs_review") return 0;
@@ -890,16 +882,23 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         const aBucket = bucketRank(a);
         const bBucket = bucketRank(b);
         if (aBucket !== bBucket) return aBucket - bBucket;
-        const aTier = linkedInTier(a);
-        const bTier = linkedInTier(b);
-        if (aTier !== bTier) return aTier - bTier;
+        if ((a.reviewBucket ?? "needs_review") === "trusted" && (b.reviewBucket ?? "needs_review") === "trusted") {
+          const aTier = trustedTier(a);
+          const bTier = trustedTier(b);
+          if (aTier !== bTier) return aTier - bTier;
+        }
         return (displayIndexById.get(a.id) ?? 0) - (displayIndexById.get(b.id) ?? 0);
       });
     }
 
     const list = displayRows.filter((r) => (r.reviewBucket ?? "needs_review") === filter);
-    if (filter === "trusted" || filter === "excluded") {
-      return [...list].sort((a, b) => linkedInTier(a) - linkedInTier(b));
+    if (filter === "trusted") {
+      return [...list].sort((a, b) => {
+        const aTier = trustedTier(a);
+        const bTier = trustedTier(b);
+        if (aTier !== bTier) return aTier - bTier;
+        return (displayIndexById.get(a.id) ?? 0) - (displayIndexById.get(b.id) ?? 0);
+      });
     }
     return list;
   }, [displayRows, filter]);
@@ -1152,30 +1151,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   <span className="inline-flex items-center gap-1">
                     LinkedIn Profile
                     <ReasoningTooltip
-                      content={
-                        <div className="space-y-1.5 text-xs font-normal">
-                          <p>
-                            <span className="inline-block h-2 w-2 rounded-full bg-violet-600" /> HubSpot — verified, your
-                            source of truth
-                          </p>
-                          <p>
-                            <span className="inline-block h-2 w-2 rounded-full bg-blue-600" /> ZoomInfo — verified third-party
-                            data
-                          </p>
-                          <p>
-                            <span className="inline-block h-2 w-2 rounded-full bg-teal-600" /> Common Room — verified
-                            third-party data
-                          </p>
-                          <p>
-                            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> Web search — searched but
-                            unverified, review recommended
-                          </p>
-                          <p>
-                            <span className="inline-block h-2 w-2 rounded-full bg-zinc-800 dark:bg-black" /> Manual entry —
-                            added by you during review
-                          </p>
-                        </div>
-                      }
+                      content={linkedInHeaderLegendContent()}
                       trigger={
                         <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-gray-400 text-[9px] text-gray-500 cursor-help">
                           ?
@@ -1205,30 +1181,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   <span className="inline-flex items-center gap-1">
                     LinkedIn Profile
                     <ReasoningTooltip
-                      content={
-                        <div className="space-y-1.5 text-xs font-normal">
-                          <p>
-                            <span className="inline-block h-2 w-2 rounded-full bg-violet-600" /> HubSpot — verified, your
-                            source of truth
-                          </p>
-                          <p>
-                            <span className="inline-block h-2 w-2 rounded-full bg-blue-600" /> ZoomInfo — verified third-party
-                            data
-                          </p>
-                          <p>
-                            <span className="inline-block h-2 w-2 rounded-full bg-teal-600" /> Common Room — verified
-                            third-party data
-                          </p>
-                          <p>
-                            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> Web search — searched but
-                            unverified, review recommended
-                          </p>
-                          <p>
-                            <span className="inline-block h-2 w-2 rounded-full bg-zinc-800 dark:bg-black" /> Manual entry —
-                            added by you during review
-                          </p>
-                        </div>
-                      }
+                      content={linkedInHeaderLegendContent()}
                       trigger={
                         <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-gray-400 text-[9px] text-gray-500 cursor-help">
                           ?
@@ -1363,6 +1316,8 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           muted={muted}
                           breakAll
                           linkedinSource={row.linkedinSource}
+                          linkedinAmberFlag={row.linkedinAmberFlag}
+                          amberTooltip="LinkedIn sourced from web search. Verify before trusting."
                           onSave={(v) => {
                             markEdited(row.id, "linkedinUrl");
                             setRows(
@@ -1390,6 +1345,15 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[0.65rem] font-medium text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
                               {exclusionReasonBadgeLabel(row.exclusionReason)}
                             </span>
+                          ) : null}
+                          {filter === "excluded" && row.exclusionReason === "international" ? (
+                            <button
+                              type="button"
+                              onClick={() => includeInternationalAnyway(row.id)}
+                              className="rounded border border-zinc-300 px-2 py-0.5 text-[0.65rem] font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                            >
+                              Include anyway
+                            </button>
                           ) : null}
                         </div>
                       </td>
@@ -1450,27 +1414,42 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         />
                       </td>
                       <td className="min-w-0 max-w-48 break-all px-2 py-1.5 align-middle">
-                        <EditableCell
-                          value={sanitizeUnknown(row.rawEmail)}
-                          edited={editedKeys.has(rowKey(row.id, "rawEmail"))}
-                          muted={muted}
-                          breakAll
-                          pencilOnHover
-                          onSave={(v) => {
-                            markEdited(row.id, "rawEmail");
-                            const next = sanitizeUnknown(v);
-                            setRows(
-                              (rows as EnrichedContact[]).map((r) =>
-                                r.id === row.id ? { ...r, rawEmail: next, resolvedEmail: next } : r,
-                              ),
-                            );
-                            persistManualEdit(
-                              (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? "",
-                              "rawEmail",
-                              next,
-                            );
-                          }}
-                        />
+                        <div className="flex items-center gap-1.5">
+                          <EditableCell
+                            value={sanitizeUnknown(row.rawEmail)}
+                            edited={editedKeys.has(rowKey(row.id, "rawEmail"))}
+                            muted={muted}
+                            breakAll
+                            pencilOnHover
+                            onSave={(v) => {
+                              markEdited(row.id, "rawEmail");
+                              const next = sanitizeUnknown(v);
+                              setRows(
+                                (rows as EnrichedContact[]).map((r) =>
+                                  r.id === row.id ? { ...r, rawEmail: next, resolvedEmail: next } : r,
+                                ),
+                              );
+                              persistManualEdit(
+                                (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? "",
+                                "rawEmail",
+                                next,
+                              );
+                            }}
+                          />
+                          {row.personalEmail?.trim() &&
+                          row.resolvedEmail?.trim() &&
+                          row.personalEmail.trim().toLowerCase() !== row.resolvedEmail.trim().toLowerCase() ? (
+                            <ReasoningTooltip
+                              text={`Work email found by ZoomInfo. Original email: ${row.personalEmail.trim()}`}
+                              trigger={
+                                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-zinc-400 px-1 text-[10px] text-zinc-500">
+                                  i
+                                </span>
+                              }
+                              triggerAriaLabel="Personal email converted to work email"
+                            />
+                          ) : null}
+                        </div>
                       </td>
                       <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
                         <EditableCell
@@ -1523,6 +1502,8 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           muted={muted}
                           breakAll
                           linkedinSource={row.linkedinSource}
+                          linkedinAmberFlag={row.linkedinAmberFlag}
+                          amberTooltip="All data verified, but LinkedIn was sourced from AI web search — do a quick check to confirm it's correct."
                           onSave={(v) => {
                             markEdited(row.id, "linkedinUrl");
                             const next = sanitizeUnknown(v);

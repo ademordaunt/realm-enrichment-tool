@@ -114,6 +114,8 @@ export interface EnrichedCompany {
   trustedSortTier?: number;
   /** True when row was matched by company name only (no domain). Low-confidence match. */
   matchedByName?: boolean;
+  /** Manual override from Excluded international -> Needs Review. */
+  manuallyIncluded?: boolean;
 }
 
 /** Enriched Contact Record */
@@ -162,8 +164,8 @@ export interface EnrichedContact {
   ziMatchDiscarded?: boolean;
   /** Personal email captured from CSV when ZoomInfo returned a work email. */
   personalEmail?: string;
-  /** Source of resolvedEmail: "csv" | "zoominfo". */
-  emailSource?: "csv" | "zoominfo";
+  /** Source of resolvedEmail: "csv" | "zoominfo" | "personal". */
+  emailSource?: "csv" | "zoominfo" | "personal";
   /** HubSpot company id resolved via domain lookup for association. */
   hubspotCompanyId?: string;
   /** CSV-sourced title (highest trust for contacts). */
@@ -232,6 +234,10 @@ export interface ParseMultiEventSegment {
   headerLine: number;
   listType: ListType;
   rows: Array<RawCompanyRow | RawContactRow>;
+  /** Normalized header keys used by parser mapping. */
+  headers?: string[];
+  /** Original uploaded header labels for this segment. */
+  originalHeaders?: string[];
 }
 
 /** JSON body from GET /api/hubspot/folders */
@@ -248,8 +254,19 @@ export interface ParseResponse {
   warnings: string[];
   /** Normalized header strings from the primary (first) segment */
   headers?: string[];
+  /** Original uploaded header labels from the primary (first) segment. */
+  originalHeaders?: string[];
   /** Present when a second header row splits the file */
   multiEvent?: {
     segments: ParseMultiEventSegment[];
   };
+}
+
+export interface EnrichmentSummary {
+  totalRows: number;
+  hubspotFound: number;
+  creditsUsed: number;
+  linkedInFound: number;
+  elapsedMinutes: number;
+  commonRoomFound?: number;
 }

@@ -29,7 +29,7 @@ const TABLE_HEAD_CELL =
   "border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700";
 
 const TABLE_ROW = "border-b border-zinc-100 dark:border-zinc-800";
-const FOLDER_PLACEHOLDER_VALUE = "__select_folder__";
+const FOLDER_SELECTION_SESSION_KEY = "realm-selected-hubspot-folder";
 
 /** Mirrors `EditableCell` in ReviewTable — click to edit, Enter/blur saves. */
 function PrePushEditableCell(props: {
@@ -258,8 +258,7 @@ export function PrePushScreen({
   const [folders, setFolders] = useState<{ id: string; name: string }[] | null>(null);
   const [foldersLoading, setFoldersLoading] = useState(true);
   const [foldersError, setFoldersError] = useState(false);
-  const [folderId, setFolderId] = useState(FOLDER_PLACEHOLDER_VALUE);
-  const [folderManual, setFolderManual] = useState("");
+  const [folderId, setFolderId] = useState("");
 
   const [contactEditRows, setContactEditRows] = useState<EnrichedContact[] | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -281,7 +280,7 @@ export function PrePushScreen({
     setContactEditRows((approvedRows as EnrichedContact[]).map((r) => ({ ...r })));
   }, [listType, approvedRows]);
 
-  useEffect(() => {
+  const loadFolders = useCallback(() => {
     let cancelled = false;
     setFoldersLoading(true);
     setFoldersError(false);
@@ -289,7 +288,13 @@ export function PrePushScreen({
       .then(async (res) => {
         const data = (await res.json()) as HubSpotFoldersApiResponse;
         if (!res.ok) throw new Error(data.error ?? "Failed to load folders");
-        if (!cancelled) setFolders(data.folders ?? []);
+        const liveFolders = Array.isArray(data.folders)
+          ? [...data.folders].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+          : [];
+        if (!cancelled) {
+          setFolders(liveFolders);
+          setFoldersError(liveFolders.length === 0);
+        }
       })
       .catch(() => {
         if (!cancelled) {
@@ -304,6 +309,22 @@ export function PrePushScreen({
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const cleanup = loadFolders();
+    return cleanup;
+  }, [loadFolders]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.sessionStorage.getItem(FOLDER_SELECTION_SESSION_KEY);
+    if (saved) setFolderId(saved);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem(FOLDER_SELECTION_SESSION_KEY, folderId);
+  }, [folderId]);
 
   const contactRowsForTable = contactEditRows ?? (approvedRows as EnrichedContact[]);
   const hasExistingLeadSourceValues =
@@ -353,13 +374,7 @@ export function PrePushScreen({
     if (!canPush) return;
     onPush({
       listName: listName.trim(),
-      folderId: (() => {
-        const raw =
-          foldersError || folderId === FOLDER_PLACEHOLDER_VALUE
-            ? folderManual.trim()
-            : folderId.trim();
-        return raw ? raw : undefined;
-      })(),
+      folderId: folderId.trim() || undefined,
       leadSource: listType === "contacts" ? leadSource.trim() : "",
       leadSourceDescription: listType === "contacts" ? leadSourceDescription.trim() : "",
       useExistingLeadSource: listType === "contacts" ? useExistingLeadSource : false,
@@ -373,8 +388,6 @@ export function PrePushScreen({
     canPush,
     listName,
     folderId,
-    folderManual,
-    foldersError,
     leadSource,
     leadSourceDescription,
     useExistingLeadSource,
@@ -447,18 +460,19 @@ export function PrePushScreen({
           <label className="flex flex-col gap-1 text-sm sm:col-span-2">
             <span className="font-medium text-zinc-800 dark:text-zinc-200">HubSpot Folder</span>
             {foldersLoading ? (
-              <span className="text-sm text-zinc-500">Loading folders…</span>
+              <span className="text-sm text-zinc-500">Loading folders...</span>
             ) : foldersError ? (
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 dark:border-amber-800 dark:bg-amber-950/30">
                 <p className="text-xs text-amber-800 dark:text-amber-200">
-                  Could not load folders — enter manually
+                  Could not load folders from HubSpot. You can push without a folder and organize in HubSpot after.
                 </p>
-                <input
-                  className={FIELD_CONTROL}
-                  value={folderManual}
-                  onChange={(e) => setFolderManual(e.target.value)}
-                  placeholder="Folder ID or name per HubSpot"
-                />
+                <button
+                  type="button"
+                  onClick={loadFolders}
+                  className="self-start rounded border border-amber-300 px-2.5 py-1 text-xs font-medium text-amber-900 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-100 dark:hover:bg-amber-900/50"
+                >
+                  Retry
+                </button>
               </div>
             ) : (
               <SelectCaretWrap>
@@ -467,10 +481,7 @@ export function PrePushScreen({
                   value={folderId}
                   onChange={(e) => setFolderId(e.target.value)}
                 >
-                  <option value={FOLDER_PLACEHOLDER_VALUE} disabled>
-                    Select a folder
-                  </option>
-                  <option value="">No Folder</option>
+                  <option value="">No folder</option>
                   {(folders ?? []).map((f) => (
                     <option key={f.id} value={f.id}>
                       {f.name}
