@@ -183,9 +183,12 @@ export async function runClaudeWithWebSearch(
 /** Location/date clause for company prompts — avoids a blank region when none was provided. */
 function companyEventLocationClause(context: EventContext): string {
   const r = String(context.region ?? "").trim();
-  const d = context.eventDate;
-  if (r) return `held in ${r} (${d})`;
-  return `(${d}). This is a virtual/national event with no specific region`;
+  const d = String(context.eventDate ?? "").trim();
+  const dateSuffix = d ? ` (${d})` : "";
+  if (r) return `held in ${r}${dateSuffix}`;
+  return d
+    ? `(${d}). This is a virtual/national event with no specific region`
+    : "This is a virtual/national event with no specific region";
 }
 
 /** Region line for contact prompts — explicit copy when region is omitted. */
@@ -218,8 +221,10 @@ export function buildCompanyUserPrompt(batch: RawCompanyRow[]): string {
 }
 
 export function buildContactSystemPrompt(context: EventContext): string {
+  const d = String(context.eventDate ?? "").trim();
+  const dateLine = d ? ` Event date: ${d}.` : "";
   return `You resolve B2B contact identity from list data. Contacts attended ${context.eventName}, a ${context.audienceLevel} cybersecurity event.
-${contactRegionContextLine(context)} Event date: ${context.eventDate}.
+${contactRegionContextLine(context)}${dateLine}
 
 For each contact, do ONLY the following:
 - Confirm or correct first name, last name, and company name as they apply to the same person implied by the input.

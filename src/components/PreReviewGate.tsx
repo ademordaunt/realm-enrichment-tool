@@ -159,17 +159,22 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
         {enrichmentSummary ? (
           <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100">
             <p className="font-semibold">Enrichment Complete ✓</p>
-            <div className="mt-2 space-y-1 font-mono text-[0.8rem]">
+            <div className="mt-3 space-y-1 font-mono text-[0.8rem]">
               <p>Records processed:      {enrichmentSummary.totalRows}</p>
               <p>Found in HubSpot:       {enrichmentSummary.hubspotFound}</p>
-              <p>ZoomInfo credits used:   {enrichmentSummary.creditsUsed}</p>
-              <p>LinkedIn URLs found from AI: {enrichmentSummary.linkedInFound}</p>
               {enrichmentSummary.commonRoomFound != null && enrichmentSummary.commonRoomFound > 0 ? (
                 <p>Common Room matches:   {enrichmentSummary.commonRoomFound}</p>
               ) : null}
+            </div>
+            <div className="my-2 border-t border-emerald-200/70 dark:border-emerald-700/40" />
+            <div className="space-y-1 font-mono text-[0.8rem]">
+              <p>ZoomInfo credits used:   {enrichmentSummary.creditsUsed}</p>
+              <p>LinkedIn URLs from AI:   {enrichmentSummary.linkedInFound}</p>
+            </div>
+            <div className="my-2 border-t border-emerald-200/70 dark:border-emerald-700/40" />
+            <div className="space-y-1 font-mono text-[0.8rem]">
               <p>Total time:             {enrichmentSummary.elapsedMinutes} min</p>
             </div>
-            <hr className="my-3 border-emerald-300/60 dark:border-emerald-700/60" />
           </div>
         ) : null}
 

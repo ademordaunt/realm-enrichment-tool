@@ -3,7 +3,8 @@
 import { CostEstimateScreen } from "@/components/CostEstimateScreen";
 import { BulkProgressScreen } from "@/components/BulkProgressScreen";
 import { EventContextForm } from "@/components/EventContextForm";
-import { EnrichmentProgress } from "@/components/EnrichmentProgress";
+import { EnrichmentProgressBars } from "@/components/EnrichmentProgressBars";
+import type { Phase } from "@/components/EnrichmentProgressBars";
 import { StarterScreen } from "@/components/StarterScreen";
 import type { PrePushSettings } from "@/components/PrePushScreen";
 import { PrePushScreen } from "@/components/PrePushScreen";
@@ -2233,6 +2234,50 @@ export default function Home() {
     return Math.min(100, (currentBatch / totalBatches) * 100);
   }, [progress]);
 
+  const eventPhases = useMemo((): Phase[] | null => {
+    if (!progress) return null;
+    const isEnriching = step === "enriching";
+    const isVerifying = step === "verifying";
+    const isVerifyingHubspot = isVerifying && Boolean(progress.detail?.includes("HubSpot"));
+    const isVerifyingLinkedIn = isVerifying && Boolean(progress.detail?.includes("LinkedIn"));
+    const isVerifyingZoom = isVerifying && !isVerifyingHubspot && !isVerifyingLinkedIn;
+    const zoomPct = isVerifyingZoom && progress.totalRows > 0
+      ? Math.min(100, Math.round((progress.endRow / progress.totalRows) * 100))
+      : 0;
+    const linkedInPct = isVerifyingLinkedIn && progress.totalRows > 0
+      ? Math.min(100, Math.round((progress.endRow / progress.totalRows) * 100))
+      : 0;
+    return [
+      {
+        label: "AI Analysis",
+        status: isEnriching ? "active" : "complete",
+        progress: isEnriching ? enrichmentBatchPercent : 100,
+        detail: isEnriching
+          ? (progress.fromCache
+              ? `From cache: rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}`
+              : `Analyzing rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}`)
+          : undefined,
+      },
+      {
+        label: resolvedListType === "contacts" ? "ZoomInfo & Common Room" : "ZoomInfo Verify",
+        status: isEnriching ? "waiting" : isVerifyingZoom ? "active" : "complete",
+        progress: isVerifyingZoom ? zoomPct : isEnriching ? 0 : 100,
+        detail: isVerifyingZoom ? progress.detail : undefined,
+      },
+      {
+        label: "HubSpot Check",
+        status: isEnriching || isVerifyingZoom ? "waiting" : isVerifyingHubspot ? "active" : "complete",
+        progress: isVerifyingHubspot ? 50 : 0,
+      },
+      {
+        label: "LinkedIn Search",
+        status: isVerifyingLinkedIn ? "active" : isEnriching || isVerifyingZoom || isVerifyingHubspot ? "waiting" : "complete",
+        progress: linkedInPct,
+        detail: isVerifyingLinkedIn ? progress.detail : undefined,
+      },
+    ];
+  }, [step, progress, enrichmentBatchPercent, resolvedListType]);
+
   const signOut = useCallback(() => {
     void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
       window.location.href = "/login";
@@ -2295,7 +2340,7 @@ export default function Home() {
             onClick={signOut}
             className="rounded border border-white/30 px-2.5 py-1 text-xs font-medium text-white hover:bg-white/10"
           >
-            Sign out
+            Sign Out
           </button>
         </div>
       </header>
@@ -2329,10 +2374,13 @@ export default function Home() {
         {step === "prereview" ? (
           <button
             type="button"
-            onClick={() => resetToUpload(true)}
+            onClick={() => {
+              if (enriched && enriched.length > 0 && !window.confirm("This will discard your enrichment results and return to the start. Continue?")) return;
+              resetToUpload(true);
+            }}
             className="self-start text-sm text-(--text-muted) hover:text-(--text-primary)"
           >
-            ← Start Over
+            ← Back to Upload
           </button>
         ) : null}
 
@@ -2442,7 +2490,7 @@ export default function Home() {
                       className="rounded-lg border border-amber-800/25 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/50 dark:text-amber-50 dark:hover:bg-amber-900/80"
                       onClick={() => resetToUpload(false)}
                     >
-                      Go Back to Start
+                      ← Back
                     </button>
                     <button
                       type="button"
@@ -2717,6 +2765,7 @@ export default function Home() {
               sourceFileName={file?.name ?? null}
               initialValues={eventContext}
               importMode={wizardImportMode}
+              onBackToUpload={() => setStep("upload")}
               onSubmit={(ctx) =>
                 wizardImportMode === "bulk"
                   ? void startBulkJob(ctx)
@@ -2737,57 +2786,26 @@ export default function Home() {
           />
         ) : null}
 
-        {step === "enriching" && wizardImportMode === "event" && progress && (
+        {(step === "enriching" || step === "verifying") && wizardImportMode === "event" && eventPhases ? (
           <div className="flex flex-col gap-4">
-            <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
-              <p
-                className="mb-2 text-center text-base font-semibold text-(--realm-navy)"
-                role="status"
-              >
-                {progress.fromCache
-                  ? `Loaded from cache: rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}...`
-                  : `AI analyzing rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}...`}
-              </p>
-              <div
-                className="h-2 w-full overflow-hidden rounded-full bg-(--bg-muted)"
-                aria-hidden
-              >
-                <div
-                  className="h-full max-w-full rounded-full bg-(--realm-purple) transition-all duration-400 ease-out"
-                  style={{ width: `${enrichmentBatchPercent}%` }}
-                />
-              </div>
-              <p className="mt-3 text-center text-sm text-(--text-muted)">
-                You can leave this tab. We&apos;ll notify you when enrichment is complete.
-              </p>
-            </div>
-            <button
-              type="button"
-              className="self-center rounded-lg border border-(--border-default) bg-white px-4 py-2 text-sm font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
-              onClick={cancelEnrichmentToContext}
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-
-        {step === "verifying" && progress && (
-          <div className="flex flex-col gap-3">
-            <EnrichmentProgress
-              endRow={progress.endRow}
-              totalRows={progress.totalRows}
-              verifyDetail={progress.detail}
+            <EnrichmentProgressBars
+              title={`Enriching ${workingRows.length} record${workingRows.length === 1 ? "" : "s"}…`}
+              phases={eventPhases}
             />
-            {wizardImportMode === "event" &&
-            precheckHubspotSkipCount != null &&
-            precheckHubspotSkipCount > 0 ? (
-              <p className="text-center text-xs text-(--text-muted)" role="status">
-                {precheckHubspotSkipCount} record{precheckHubspotSkipCount === 1 ? "" : "s"} found in
-                HubSpot ✓
-              </p>
+            <p className="text-center text-sm text-(--text-muted)">
+              You can leave this tab. We&apos;ll notify you when enrichment is complete.
+            </p>
+            {step === "enriching" ? (
+              <button
+                type="button"
+                className="self-center rounded-lg border border-(--border-default) bg-white px-4 py-2 text-sm font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
+                onClick={cancelEnrichmentToContext}
+              >
+                Cancel
+              </button>
             ) : null}
           </div>
-        )}
+        ) : null}
 
         {step === "pushing" && pushProgress && (
           <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">

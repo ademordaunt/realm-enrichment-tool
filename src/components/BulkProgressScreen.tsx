@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { BulkJobState } from "@/lib/utils/types";
+import { EnrichmentProgressBars } from "@/components/EnrichmentProgressBars";
+import type { Phase } from "@/components/EnrichmentProgressBars";
 
 interface BulkProgressScreenProps {
   jobState: BulkJobState | null;
@@ -37,12 +39,6 @@ function formatTotalDurationMs(startedAt: string, endMs: number): string {
 }
 
 type PhaseState = "done" | "active" | "waiting";
-
-function phaseIcon(state: PhaseState): string {
-  if (state === "done") return "✅";
-  if (state === "active") return "⏳";
-  return "⬜";
-}
 
 export function BulkProgressScreen({
   jobState,
@@ -219,16 +215,13 @@ export function BulkProgressScreen({
 
   return (
     <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
-      <p className="text-base font-semibold text-(--realm-navy)">
-        {jobState.eventContext.eventName || "Bulk import"}
-      </p>
-      <p className="mt-1 text-sm text-(--text-muted)">
+      <p className="text-sm text-(--text-muted)">
         {estimatedCompleteTime
           ? `Running in background — check back around ${estimatedCompleteTime}.`
           : "Running in background — this may take a while."}
       </p>
 
-      <div className="mt-4">
+      <div className="mt-3">
         <div className="h-2 w-full overflow-hidden rounded-full bg-(--bg-muted)" aria-hidden>
           <div
             className="h-full max-w-full rounded-full bg-(--realm-purple) transition-all duration-400 ease-out"
@@ -238,39 +231,41 @@ export function BulkProgressScreen({
         <p className="mt-2 text-right text-xs text-(--text-muted)">{pct}%</p>
       </div>
 
-      <div className="mt-4 space-y-2 text-sm text-(--text-primary)">
-        <p>
-          {phaseIcon(aiState)} AI cleaning{" "}
-          <span className="text-(--text-muted)">
-            {aiState === "active" ? `${jobState.processedRows} / ${jobState.totalRows}` : `${jobState.totalRows} / ${jobState.totalRows}`}
-          </span>{" "}
-          <span className="text-(--text-muted)">{aiState === "done" ? "complete" : aiState === "active" ? "in progress..." : "waiting"}</span>
-        </p>
-        <p>
-          {phaseIcon(precheckState)} HubSpot check{" "}
-          <span className="text-(--text-muted)">—</span>{" "}
-          <span className="text-(--text-muted)">
-            {precheckState === "done" ? "complete" : precheckState === "active" ? "in progress..." : "waiting"}
-          </span>
-        </p>
-        <p>
-          {phaseIcon(zoomState)} ZoomInfo enrichment{" "}
-          <span className="text-(--text-muted)">
-            {zoomState === "done"
-              ? `${jobState.enrichedCount} enriched, ${jobState.hubspotSkippedCount} skipped`
-              : "—"}
-          </span>{" "}
-          <span className="text-(--text-muted)">
-            {zoomState === "done" ? "complete" : zoomState === "active" ? "in progress..." : "waiting"}
-          </span>
-        </p>
-        <p>
-          {phaseIcon(linkedInState)} LinkedIn search{" "}
-          <span className="text-(--text-muted)">—</span>{" "}
-          <span className="text-(--text-muted)">
-            {linkedInState === "done" ? "complete" : linkedInState === "active" ? "in progress..." : "waiting"}
-          </span>
-        </p>
+      <div className="mt-4">
+        {(() => {
+          const aiPct = aiState === "active" && jobState.totalRows > 0
+            ? Math.round((jobState.processedRows / jobState.totalRows) * 100)
+            : 0;
+          const bulkPhases: Phase[] = [
+            {
+              label: "AI Analysis",
+              status: aiState === "done" ? "complete" : aiState === "active" ? "active" : "waiting",
+              progress: aiPct,
+              detail: aiState === "active" ? `${jobState.processedRows} / ${jobState.totalRows} records` : undefined,
+            },
+            {
+              label: "ZoomInfo Enrichment",
+              status: zoomState === "done" ? "complete" : zoomState === "active" ? "active" : "waiting",
+              progress: 0,
+            },
+            {
+              label: "HubSpot Check",
+              status: precheckState === "done" ? "complete" : precheckState === "active" ? "active" : "waiting",
+              progress: 0,
+            },
+            {
+              label: "LinkedIn Search",
+              status: linkedInState === "done" ? "complete" : linkedInState === "active" ? "active" : "waiting",
+              progress: 0,
+            },
+          ];
+          return (
+            <EnrichmentProgressBars
+              title={`${jobState.eventContext.eventName || "Bulk import"} — ${jobState.totalRows} records`}
+              phases={bulkPhases}
+            />
+          );
+        })()}
       </div>
 
       <p className="mt-4 text-xs text-(--text-muted)">
@@ -279,10 +274,13 @@ export function BulkProgressScreen({
 
       <button
         type="button"
-        onClick={onCancel}
+        onClick={() => {
+          if (!window.confirm("This will discard your enrichment results and return to the start. Continue?")) return;
+          onCancel();
+        }}
         className="mt-4 rounded-lg border border-(--border-default) bg-white px-4 py-2 text-sm font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
       >
-        Cancel Import
+        Cancel &amp; Start Over
       </button>
     </div>
   );
