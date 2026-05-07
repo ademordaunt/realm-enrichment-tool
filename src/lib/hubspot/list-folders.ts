@@ -60,13 +60,6 @@ export async function fetchHubSpotListFolders(): Promise<HubSpotFolderRow[]> {
       hubspotFetch("/crm/v3/lists/folders?objectTypeId=0-1"),
       hubspotFetch("/crm/v3/lists/folders?objectTypeId=0-2"),
     ]);
-    const contactsRawBody = await contactsRes.clone().text();
-    const companiesRawBody = await companiesRes.clone().text();
-    console.log("[HubSpot Folders] contacts status:", contactsRes.status);
-    console.log("[HubSpot Folders] contacts raw body:", contactsRawBody);
-    console.log("[HubSpot Folders] companies status:", companiesRes.status);
-    console.log("[HubSpot Folders] companies raw body:", companiesRawBody);
-
     const combined: HubSpotFolderRow[] = [];
     if (contactsRes.ok) {
       const contactsJson: unknown = await contactsRes.json();

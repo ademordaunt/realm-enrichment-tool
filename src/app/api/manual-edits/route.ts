@@ -2,6 +2,22 @@ import { getManualEdits, setManualEdit } from "@/lib/cache/enrichment-cache";
 
 type ListType = "companies" | "contacts";
 
+const MAX_KEY_LENGTH = 500;
+const MAX_VALUE_LENGTH = 2000;
+
+const VALID_FIELDS = new Set([
+  "resolvedName",
+  "domain",
+  "state",
+  "numberOfEmployees",
+  "linkedinUrl",
+  "name",
+  "rawEmail",
+  "resolvedCompany",
+  "title",
+  "manuallyIncluded",
+]);
+
 function asListType(value: string): ListType | null {
   if (value === "companies" || value === "contacts") return value;
   return null;
@@ -28,10 +44,19 @@ export async function POST(request: Request): Promise<Response> {
   const listType = asListType(listTypeRaw);
 
   if (!stableKey || !listType || !field || payload.value === undefined) {
-    return Response.json(
-      { error: "Missing required fields: stableKey, listType, field, value" },
-      { status: 400 },
-    );
+    return Response.json({ error: "Bad request." }, { status: 400 });
+  }
+
+  if (stableKey.length > MAX_KEY_LENGTH) {
+    return Response.json({ error: "Bad request." }, { status: 400 });
+  }
+
+  if (!VALID_FIELDS.has(field)) {
+    return Response.json({ error: "Bad request." }, { status: 400 });
+  }
+
+  if (typeof payload.value === "string" && payload.value.length > MAX_VALUE_LENGTH) {
+    return Response.json({ error: "Bad request." }, { status: 400 });
   }
 
   await setManualEdit(stableKey, listType, field, payload.value);

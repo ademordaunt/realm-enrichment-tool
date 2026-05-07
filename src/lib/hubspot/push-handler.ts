@@ -4,8 +4,9 @@ import {
   batchFindCompaniesByDomain,
   batchUpdateCompanies,
   findCompanyByName,
-  normalizeDomain,
 } from "@/lib/hubspot/companies";
+import { normalizeDomain } from "@/lib/utils/domain";
+import { isRecord } from "@/lib/utils/guards";
 import {
   batchAssociateContactsToCompanies,
   batchCreateContacts,
@@ -17,10 +18,6 @@ import { getHubSpotAccessToken, hubspotFetch, readHubSpotError } from "@/lib/hub
 import { addRecordsToList } from "@/lib/hubspot/lists";
 import type { HubSpotPushDonePayload } from "@/lib/hubspot/push-result";
 import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 function deduplicateApproved(
   approved: Array<EnrichedCompany | EnrichedContact>,
@@ -145,12 +142,10 @@ async function createStaticListForPush(
     if (!existingId) {
       throw new Error(createErr);
     }
-    console.log("[HubSpot] createStaticListForPush reusing existing list:", existingId);
     return existingId;
   }
 
   const json = (await res.json()) as Parameters<typeof parseListIdFromHubSpotListsJson>[0];
-  console.log("[HubSpot] createStaticListForPush raw response:", json);
   const listId = parseListIdFromHubSpotListsJson(json);
   if (!listId) {
     throw new Error("HubSpot did not return listId when creating a list.");

@@ -1,20 +1,13 @@
 import type { EnrichedCompany } from "@/lib/utils/types";
 import { hubspotFetch, readHubSpotError } from "@/lib/hubspot/http";
+import { normalizeDomain } from "@/lib/utils/domain";
+export { normalizeDomain };
 
 export type HubSpotCompanyPushExtras = {
   leadSource?: string;
   leadSourceDescription?: string;
   notes?: string;
 };
-
-export function normalizeDomain(domain: string): string {
-  return domain
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "")
-    .split("/")[0]!;
-}
 
 type HubSpotCompanyPrecheckResult = {
   hubspotId: string;
@@ -109,11 +102,6 @@ export async function batchCheckCompaniesInHubSpot(
         const props = row.properties ?? {};
         const normalized = normalizeDomain(String(props.domain ?? ""));
         if (!normalized || results.has(normalized)) {
-          if (normalized && results.has(normalized)) {
-            console.log(
-              `[HubSpot] batchCheckCompaniesInHubSpot: duplicate domain "${normalized}" — keeping most recent record, skipping id ${row.id}`,
-            );
-          }
           continue;
         }
         const existingData: Record<string, string> = {};
@@ -199,6 +187,7 @@ function companyProperties(
 
   // industry — Fill empty only
   if (company.industry?.trim() && isEmpty(ex.industry)) {
+    // WRITE RULE: fill-empty-only — never overwrite a manually curated industry value. ZoomInfo industry is lower trust than an existing HubSpot value for this field.
     props.industry = company.industry.trim();
   }
 
@@ -213,6 +202,7 @@ function companyProperties(
   }
 
   // state — Overwrite (send whenever we have a value)
+  // WRITE RULE: always overwrite — ZoomInfo state is more current than HubSpot. Accurate state is required for owner assignment workflows to fire correctly.
   if (company.state?.trim()) props.state = company.state.trim();
 
   // numberofemployees — Overwrite
@@ -271,17 +261,11 @@ export async function findCompanyByName(resolvedName: string): Promise<string | 
   const json = (await res.json()) as { results?: Array<{ id?: string | number }> };
   const results = json.results ?? [];
   if (results.length !== 1) {
-    if (results.length > 1) {
-      console.log(
-        `[HubSpot] findCompanyByName: ambiguous match for "${base}" (${results.length} results) — skipping`,
-      );
-    }
     return null;
   }
 
   const id = results[0]?.id;
   if (id == null || String(id).trim() === "") return null;
-  console.log(`[HubSpot] findCompanyByName: matched "${base}" → HubSpot id ${id}`);
   return String(id);
 }
 
@@ -363,8 +347,9 @@ export async function updateCompany(
   if (isEmpty(ex.website)) {
     updates.website = websiteFromDomain(company.domain);
   }
-  if (isEmpty(ex.state)) {
-    updates.state = company.state?.trim() ?? "";
+  if (company.state?.trim()) {
+    // WRITE RULE: always overwrite — ZoomInfo state is more current than HubSpot. Accurate state is required for owner assignment workflows to fire correctly.
+    updates.state = company.state.trim();
   }
   if (isEmptyOrZeroEmployees(ex.numberofemployees)) {
     if (company.numberOfEmployees != null && !Number.isNaN(company.numberOfEmployees)) {
@@ -380,6 +365,7 @@ export async function updateCompany(
     }
   }
   if (isEmpty(ex.industry) && company.industry?.trim()) {
+    // WRITE RULE: fill-empty-only — never overwrite a manually curated industry value. ZoomInfo industry is lower trust than an existing HubSpot value for this field.
     updates.industry = company.industry.trim();
   }
   if (isEmpty(ex.description) && company.description?.trim()) {

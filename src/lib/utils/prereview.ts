@@ -1,4 +1,5 @@
 import { isPersonalEmail } from "@/lib/utils/contacts";
+import { normalizeDomain } from "@/lib/utils/domain";
 import type {
   EnrichedCompany,
   EnrichedContact,
@@ -119,6 +120,8 @@ const GOV_NAME_PATTERNS = [
   "state college",
 ] as const;
 
+// Also strips port numbers (`:port`); the shared util in @/lib/utils/domain does not.
+// Left separate to preserve duplicate-detection matching behavior.
 function normalizeHost(domain: string): string {
   let d = domain.trim().toLowerCase();
   d = d.replace(/^https?:\/\//, "");
@@ -334,20 +337,12 @@ function namesConflict(a: string, b: string): boolean {
   return na !== nb;
 }
 
-function normalizeD(domain: string): string {
-  return domain
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "")
-    .split("/")[0] ?? "";
-}
-
 export function computeReviewBucket(
   row: EnrichedCompany | EnrichedContact,
   listType: "companies" | "contacts",
-  _options?: ComputeReviewBucketOptions,
+  options?: ComputeReviewBucketOptions,
 ): { bucket: ReviewBucket; exclusionReason?: ExclusionReason } {
+  void options;
   if (listType === "companies") {
     const company = row as EnrichedCompany;
     const ic = company.identityConfidence ?? company.confidenceScore;
@@ -377,8 +372,8 @@ export function computeReviewBucket(
     }
 
     // Compute conflict flags used by both Trusted checks and Needs Review fallback
-    const ziDomain = company.domainSource === "zoominfo_verified" ? normalizeD(company.domain) : null;
-    const hsDomain = ex?.domain ? normalizeD(ex.domain) : null;
+    const ziDomain = company.domainSource === "zoominfo_verified" ? normalizeDomain(company.domain) : null;
+    const hsDomain = ex?.domain ? normalizeDomain(ex.domain) : null;
     const domainConflict = Boolean(ziDomain && hsDomain && ziDomain !== hsDomain);
 
     const hsName = ex?.name?.trim();

@@ -12,17 +12,19 @@ export interface Phase {
 }
 
 interface EnrichmentProgressBarsProps {
-  title: string;
+  title?: string;
   phases: Phase[];
 }
 
 export function EnrichmentProgressBars({ title, phases }: EnrichmentProgressBarsProps) {
   return (
     <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
-      <p className="mb-4 text-center text-base font-semibold text-(--realm-navy)" role="status">
-        {title}
-      </p>
-      <div className="space-y-3">
+      {title ? (
+        <p className="mb-4 text-center text-base font-semibold text-(--realm-navy)" role="status">
+          {title}
+        </p>
+      ) : null}
+      <div className="mx-auto w-full max-w-2xl space-y-4">
         {phases.map((phase) => (
           <PhaseBar key={phase.label} phase={phase} />
         ))}
@@ -56,7 +58,7 @@ function PhaseBar({ phase }: { phase: Phase }) {
           <span className="text-xs tabular-nums text-(--text-muted)">{Math.round(pct)}%</span>
         ) : null}
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-(--bg-muted)" aria-hidden>
+      <div className="h-3 w-full overflow-hidden rounded-full bg-(--bg-muted)" aria-hidden>
         <div
           className={`h-full max-w-full rounded-full transition-all duration-400 ease-out ${
             status === "complete"

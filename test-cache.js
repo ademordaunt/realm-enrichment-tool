@@ -6,9 +6,10 @@
  * root, then writes a value, reads it back, and deletes it.
  */
 
-const fs = require("fs");
-const https = require("https");
-const path = require("path");
+import fs from "node:fs";
+import https from "node:https";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // ---------------------------------------------------------------------------
 // Parse .env.local (no dotenv dependency needed)
@@ -34,6 +35,8 @@ function loadEnvFile(filePath) {
   return env;
 }
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const envPath = path.join(__dirname, ".env.local");
 const env = loadEnvFile(envPath);
 

@@ -114,10 +114,11 @@ export async function POST(request: Request): Promise<Response> {
 
     return Response.json({ results });
   } catch (error) {
+    console.error("[hubspot/precheck] unexpected error:", error);
     return Response.json(
       {
         error: "Internal server error",
-        detail: error instanceof Error ? error.message : String(error),
+        detail: "HubSpot pre-check failed. Check your HubSpot connection.",
       },
       { status: 500 },
     );

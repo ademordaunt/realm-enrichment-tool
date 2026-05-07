@@ -10,7 +10,7 @@ import {
 import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 
 const PRIMARY_ACTION_BUTTON =
-  "rounded-lg bg-[#7B35C1] px-4 py-2 text-sm font-medium text-white hover:bg-[#6A2AAD] disabled:cursor-not-allowed disabled:opacity-50";
+  "rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-50";
 
 const cardClass =
   "rounded-xl border border-(--border-default) bg-(--bg-card) p-6 shadow-(--shadow-card) sm:p-8";
@@ -95,10 +95,10 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
     };
   }, [listType, working]);
 
-  const needGate = summary.showIntlGov || summary.showDup;
-
   useLayoutEffect(() => {
-    setWorking(rows);
+    queueMicrotask(() => {
+      setWorking(rows);
+    });
   }, [rows]);
 
   const onRemoveAllFlagged = useCallback(() => {
@@ -128,7 +128,7 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
     onContinue(working);
   };
 
-  const intlGovRowsUnique = (() => {
+  const intlGovRowsUnique = useMemo(() => {
     if (listType !== "companies") return [] as { row: EnrichedCompany; tags: string }[];
     const w = working as EnrichedCompany[];
     return w
@@ -145,12 +145,16 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
               ? "Government"
               : "",
       }));
-  })();
+  }, [working, listType]);
 
-  const companyDupMap =
-    listType === "companies" ? detectDuplicateGroups(working as EnrichedCompany[]) : null;
-  const contactDupMap =
-    listType === "contacts" ? detectDuplicateContactGroups(working as EnrichedContact[]) : null;
+  const companyDupMap = useMemo(
+    () => (listType === "companies" ? detectDuplicateGroups(working as EnrichedCompany[]) : null),
+    [working, listType],
+  );
+  const contactDupMap = useMemo(
+    () => (listType === "contacts" ? detectDuplicateContactGroups(working as EnrichedContact[]) : null),
+    [working, listType],
+  );
 
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col gap-6 py-10">
@@ -159,7 +163,7 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
         {enrichmentSummary ? (
           <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100">
             <p className="font-semibold">Enrichment Complete ✓</p>
-            <div className="mt-3 space-y-1 font-mono text-[0.8rem]">
+            <div className="mt-3 space-y-1 font-mono text-xs">
               <p>Records processed:      {enrichmentSummary.totalRows}</p>
               <p>Found in HubSpot:       {enrichmentSummary.hubspotFound}</p>
               {enrichmentSummary.commonRoomFound != null && enrichmentSummary.commonRoomFound > 0 ? (
@@ -167,12 +171,12 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
               ) : null}
             </div>
             <div className="my-2 border-t border-emerald-200/70 dark:border-emerald-700/40" />
-            <div className="space-y-1 font-mono text-[0.8rem]">
+            <div className="space-y-1 font-mono text-xs">
               <p>ZoomInfo credits used:   {enrichmentSummary.creditsUsed}</p>
               <p>LinkedIn URLs from AI:   {enrichmentSummary.linkedInFound}</p>
             </div>
             <div className="my-2 border-t border-emerald-200/70 dark:border-emerald-700/40" />
-            <div className="space-y-1 font-mono text-[0.8rem]">
+            <div className="space-y-1 font-mono text-xs">
               <p>Total time:             {enrichmentSummary.elapsedMinutes} min</p>
             </div>
           </div>
@@ -315,6 +319,12 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
                     })()
                   : null
               : null}
+          </div>
+        ) : null}
+
+        {!summary.showIntlGov && !summary.showDup ? (
+          <div className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100">
+            ✓ No duplicate or flagged records found. Ready to review.
           </div>
         ) : null}
 

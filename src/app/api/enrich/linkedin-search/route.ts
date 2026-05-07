@@ -1,4 +1,5 @@
 import { Redis } from "@upstash/redis";
+import { isRecord } from "@/lib/utils/guards";
 
 const kv = new Redis({
   url: process.env.KV_REST_API_URL,
@@ -26,10 +27,6 @@ type LinkedInSearchCompany = {
   domain?: string;
   linkedinUrl?: string;
 };
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 function normalizeEmailKey(contact: LinkedInSearchContact): string {
   const email =
@@ -161,10 +158,6 @@ async function handleCompanyLinkedInSearch(
   const linkedInUrl = text ? parseLinkedInCompanyUrl(text) : null;
 
   if (linkedInUrl) {
-    console.log(
-      "[LinkedIn Search] company URL resolved | status ok | cache write:",
-      cacheKey !== "linkedin:company:|",
-    );
     if (cacheKey !== "linkedin:company:|") {
       try {
         await kv.set(cacheKey, linkedInUrl, { ex: 60 * 60 * 24 * 30 });
@@ -279,10 +272,6 @@ export async function POST(request: Request): Promise<Response> {
   const linkedInUrl = text ? parseLinkedInUrl(text) : null;
 
   if (linkedInUrl) {
-    console.log(
-      "[LinkedIn Search] contact URL resolved | will cache:",
-      Boolean(emailKey),
-    );
     if (emailKey) {
       try {
         await kv.set(getCachedKey(emailKey), linkedInUrl, { ex: 60 * 60 * 24 * 30 });
@@ -294,8 +283,9 @@ export async function POST(request: Request): Promise<Response> {
 
   return Response.json({ linkedInUrl, linkedinSource: "ai_search" as const });
   } catch (err) {
+    console.error("[enrich/linkedin-search] unexpected error:", err);
     return Response.json(
-      { error: "Internal server error", detail: String(err) },
+      { error: "Internal server error", detail: "LinkedIn search failed. Please try again." },
       { status: 500 },
     );
   }

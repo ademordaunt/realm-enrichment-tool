@@ -12,6 +12,8 @@ interface BulkProgressScreenProps {
   onContinueToReview?: () => void | Promise<void>;
   /** True while fetching completed rows after the user clicks continue. */
   continueLoading?: boolean;
+  /** Number of consecutive poll failures; used to surface connectivity warnings. */
+  consecutivePollingErrors?: number;
 }
 
 function formatStartedAt(ts: string): string {
@@ -45,6 +47,7 @@ export function BulkProgressScreen({
   onCancel,
   onContinueToReview,
   continueLoading = false,
+  consecutivePollingErrors = 0,
 }: BulkProgressScreenProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [resumeBusy, setResumeBusy] = useState(false);
@@ -63,32 +66,71 @@ export function BulkProgressScreen({
     if (!jobState) return null;
     const needsWork = Math.max(0, jobState.totalRows - (jobState.hubspotSkippedCount ?? 0));
     const estimatedSeconds = needsWork * 5;
-    const completionDate = new Date(Date.now() + estimatedSeconds * 1000);
+    const completionDate = new Date(nowMs + estimatedSeconds * 1000);
     return completionDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  }, [jobState?.totalRows, jobState?.hubspotSkippedCount]);
+  }, [jobState, nowMs]);
+
+  const aiState: PhaseState = !jobState
+    ? "waiting"
+    : jobState.aiComplete
+      ? "done"
+      : jobState.currentPhase === "ai"
+        ? "active"
+        : "waiting";
+  const precheckState: PhaseState = !jobState
+    ? "waiting"
+    : jobState.precheckComplete
+      ? "done"
+      : jobState.currentPhase === "precheck"
+        ? "active"
+        : "waiting";
+  const zoomState: PhaseState = !jobState
+    ? "waiting"
+    : jobState.zoomInfoComplete
+      ? "done"
+      : jobState.currentPhase === "zoominfo"
+        ? "active"
+        : "waiting";
+  const linkedInState: PhaseState = !jobState
+    ? "waiting"
+    : jobState.linkedInComplete
+      ? "done"
+      : jobState.currentPhase === "linkedin"
+        ? "active"
+        : "waiting";
+
+  const bulkPhases = useMemo<Phase[]>(() => {
+    if (!jobState) return [];
+    const aiPct =
+      aiState === "active" && jobState.totalRows > 0
+        ? Math.round((jobState.processedRows / jobState.totalRows) * 100)
+        : 0;
+    return [
+      {
+        label: "AI Analysis",
+        status: aiState === "done" ? "complete" : aiState === "active" ? "active" : "waiting",
+        progress: aiPct,
+        detail: aiState === "active" ? `${jobState.processedRows} / ${jobState.totalRows} records` : undefined,
+      },
+      {
+        label: "ZoomInfo Enrichment",
+        status: zoomState === "done" ? "complete" : zoomState === "active" ? "active" : "waiting",
+        progress: 0,
+      },
+      {
+        label: "HubSpot Check",
+        status: precheckState === "done" ? "complete" : precheckState === "active" ? "active" : "waiting",
+        progress: 0,
+      },
+      {
+        label: "LinkedIn Search",
+        status: linkedInState === "done" ? "complete" : linkedInState === "active" ? "active" : "waiting",
+        progress: 0,
+      },
+    ];
+  }, [aiState, zoomState, precheckState, linkedInState, jobState]);
 
   if (!jobState) return null;
-
-  const aiState: PhaseState = jobState.aiComplete
-    ? "done"
-    : jobState.currentPhase === "ai"
-      ? "active"
-      : "waiting";
-  const precheckState: PhaseState = jobState.precheckComplete
-    ? "done"
-    : jobState.currentPhase === "precheck"
-      ? "active"
-      : "waiting";
-  const zoomState: PhaseState = jobState.zoomInfoComplete
-    ? "done"
-    : jobState.currentPhase === "zoominfo"
-      ? "active"
-      : "waiting";
-  const linkedInState: PhaseState = jobState.linkedInComplete
-    ? "done"
-    : jobState.currentPhase === "linkedin"
-      ? "active"
-      : "waiting";
 
   const startedAt = formatStartedAt(jobState.startedAt);
   const runningFor = formatRunningFor(jobState.startedAt, nowMs);
@@ -129,7 +171,7 @@ export function BulkProgressScreen({
             type="button"
             disabled={resumeBusy}
             onClick={() => void handleResume()}
-            className="rounded-lg bg-[#7B35C1] px-4 py-2 text-sm font-medium text-white hover:bg-[#6A2AAD] disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-50"
           >
             {resumeBusy ? "Trying..." : "Try Again"}
           </button>
@@ -163,7 +205,7 @@ export function BulkProgressScreen({
   if (jobState.status === "complete" && onContinueToReview) {
     const endMs = jobState.completedAt
       ? new Date(jobState.completedAt).getTime()
-      : Date.now();
+      : nowMs;
     const totalTime = formatTotalDurationMs(jobState.startedAt, endMs);
     const name = jobState.eventContext.eventName || "Bulk import";
     return (
@@ -205,7 +247,7 @@ export function BulkProgressScreen({
           type="button"
           disabled={continueLoading}
           onClick={() => void onContinueToReview()}
-          className="mt-6 rounded-lg bg-[#7B35C1] px-4 py-2 text-sm font-medium text-white hover:bg-[#6A2AAD] disabled:cursor-not-allowed disabled:opacity-50"
+          className="mt-6 rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-50"
         >
           {continueLoading ? "Loading…" : "Continue to Review & Edit →"}
         </button>
@@ -232,45 +274,28 @@ export function BulkProgressScreen({
       </div>
 
       <div className="mt-4">
-        {(() => {
-          const aiPct = aiState === "active" && jobState.totalRows > 0
-            ? Math.round((jobState.processedRows / jobState.totalRows) * 100)
-            : 0;
-          const bulkPhases: Phase[] = [
-            {
-              label: "AI Analysis",
-              status: aiState === "done" ? "complete" : aiState === "active" ? "active" : "waiting",
-              progress: aiPct,
-              detail: aiState === "active" ? `${jobState.processedRows} / ${jobState.totalRows} records` : undefined,
-            },
-            {
-              label: "ZoomInfo Enrichment",
-              status: zoomState === "done" ? "complete" : zoomState === "active" ? "active" : "waiting",
-              progress: 0,
-            },
-            {
-              label: "HubSpot Check",
-              status: precheckState === "done" ? "complete" : precheckState === "active" ? "active" : "waiting",
-              progress: 0,
-            },
-            {
-              label: "LinkedIn Search",
-              status: linkedInState === "done" ? "complete" : linkedInState === "active" ? "active" : "waiting",
-              progress: 0,
-            },
-          ];
-          return (
-            <EnrichmentProgressBars
-              title={`${jobState.eventContext.eventName || "Bulk import"} — ${jobState.totalRows} records`}
-              phases={bulkPhases}
-            />
-          );
-        })()}
+        <EnrichmentProgressBars
+          title={`${jobState.eventContext.eventName || "Bulk import"} — ${jobState.totalRows} records`}
+          phases={bulkPhases}
+        />
       </div>
 
       <p className="mt-4 text-xs text-(--text-muted)">
         Started: {startedAt} · Running for: {runningFor}
       </p>
+
+      {consecutivePollingErrors >= 3 ? (
+        <div
+          className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
+          role="alert"
+        >
+          Unable to reach the server. Your job is still running — refresh the page to check progress, or wait and it will reconnect automatically.
+        </div>
+      ) : consecutivePollingErrors >= 1 ? (
+        <p className="mt-3 text-xs text-amber-700 dark:text-amber-400" role="status">
+          Having trouble reaching the server — retrying…
+        </p>
+      ) : null}
 
       <button
         type="button"
@@ -278,7 +303,7 @@ export function BulkProgressScreen({
           if (!window.confirm("This will discard your enrichment results and return to the start. Continue?")) return;
           onCancel();
         }}
-        className="mt-4 rounded-lg border border-(--border-default) bg-white px-4 py-2 text-sm font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
+        className="mt-4 rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-medium text-red-700 transition-colors hover:bg-red-50 dark:border-red-700 dark:bg-transparent dark:text-red-400 dark:hover:bg-red-950/30"
       >
         Cancel &amp; Start Over
       </button>

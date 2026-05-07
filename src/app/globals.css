@@ -47,7 +47,7 @@
 }
 
 body {
-  font-family: "Golos Text", sans-serif;
+  font-family: var(--font-golos-text), sans-serif;
   background: var(--bg-page);
   color: var(--text-primary);
 }
@@ -58,6 +58,6 @@ h3,
 h4,
 h5,
 h6 {
-  font-family: "Onest", sans-serif;
+  font-family: var(--font-onest), sans-serif;
   letter-spacing: -0.03em;
 }

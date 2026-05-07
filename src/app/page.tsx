@@ -89,7 +89,7 @@ function formatContactDefaultLeadSourceDescription(ctx: EventContext): string {
 }
 
 const PRIMARY_ACTION_BUTTON =
-  "rounded-lg bg-[#7B35C1] px-4 py-2 text-sm font-medium text-white hover:bg-[#6A2AAD] disabled:cursor-not-allowed disabled:opacity-50";
+  "rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-50";
 
 const UPLOAD_FADE_IN = "animate-[fadeIn_0.3s_ease-in]";
 
@@ -453,7 +453,6 @@ function mergeHubSpotExistingIntoContact(
 
 function computeZoomVerifyNonHighTotal(
   allRows: (EnrichedCompany | EnrichedContact)[],
-  _listType: "companies" | "contacts",
 ): number {
   return allRows.filter((r) => r.hubspotComplete !== true).length;
 }
@@ -461,7 +460,6 @@ function computeZoomVerifyNonHighTotal(
 /** Count of rows before `beforeIndex` that take the ZoomInfo enrich path (same as server `nonHighIndex` steps). */
 function countZoomVerifyNonHighPrefix(
   allRows: (EnrichedCompany | EnrichedContact)[],
-  _listType: "companies" | "contacts",
   beforeIndex: number,
 ): number {
   let n = 0;
@@ -842,11 +840,14 @@ export default function Home() {
     totalRows: number;
     hubspotCompleteCount: number;
   } | null>(null);
-  const [precheckHubspotSkipCount, setPrecheckHubspotSkipCount] = useState<number | null>(null);
   const [bulkJobId, setBulkJobId] = useState<string | null>(null);
   const [bulkJobState, setBulkJobState] = useState<BulkJobState | null>(null);
+  const [consecutivePollingErrors, setConsecutivePollingErrors] = useState(0);
   const bulkPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bulkCompleteNotifiedRef = useRef(false);
+  const stepContentRef = useRef<HTMLDivElement>(null);
+  const pollingInFlightRef = useRef(false);
+  const parseRequestIdRef = useRef(0);
   const [bulkRowsContinueLoading, setBulkRowsContinueLoading] = useState(false);
   const bulkContinueRef = useRef<{
     rows: EnrichedCompany[] | EnrichedContact[];
@@ -936,23 +937,27 @@ export default function Home() {
   }, [approvedRowsForPush]);
   useLayoutEffect(() => {
     if (!enriched?.length || !enrichedListType) {
-      setReviewRows([]);
+      queueMicrotask(() => setReviewRows([]));
       return;
     }
     restoredManualEditsRef.current = false;
     const seeded = applyInitialReviewStatus(enriched);
     const approvedIds = restoredApprovedIdsRef.current;
     if (!approvedIds || approvedIds.size === 0) {
-      setReviewRows(seeded);
+      queueMicrotask(() => setReviewRows(seeded));
       return;
     }
     const withRestoredApproval = seeded.map((row) => ({
       ...row,
       status: approvedIds.has(row.id) ? ("approved" as const) : row.status,
     })) as EnrichedCompany[] | EnrichedContact[];
-    setReviewRows(withRestoredApproval);
+    queueMicrotask(() => setReviewRows(withRestoredApproval));
     restoredApprovedIdsRef.current = null;
   }, [enriched, enrichedListType]);
+
+  useEffect(() => {
+    stepContentRef.current?.focus();
+  }, [step]);
 
   useEffect(() => {
     if (step !== "enriched" || reviewRows.length === 0 || restoredManualEditsRef.current) return;
@@ -989,7 +994,7 @@ export default function Home() {
         return { ...row, linkedinUrl: savedLinkedIn };
       }) as EnrichedCompany[] | EnrichedContact[];
       restoredManualEditsRef.current = true;
-      setReviewRows(merged);
+      queueMicrotask(() => setReviewRows(merged));
       window.sessionStorage.removeItem(MANUAL_EDITS_SESSION_KEY);
     } catch {
       // Ignore malformed payloads and leave current rows untouched.
@@ -1029,43 +1034,45 @@ export default function Home() {
     if (!raw) return;
     try {
       const saved = JSON.parse(raw) as PersistedSession;
-      if (saved.parseResult) {
-        setResult(saved.parseResult);
-      }
-      if (saved.eventContext) {
-        const ec = saved.eventContext as EventContext;
-        setEventContext({
-          ...ec,
-          importMode: ec.importMode ?? saved.wizardImportMode ?? "event",
-          region: saved.wizardImportMode === "bulk" ? "" : (ec.region ?? ""),
-        });
-      }
-      if (saved.wizardImportMode === "bulk" || saved.wizardImportMode === "event") {
-        setWizardImportMode(saved.wizardImportMode);
-      } else if (saved.eventContext) {
-        const im = (saved.eventContext as EventContext).importMode;
-        if (im === "bulk" || im === "event") setWizardImportMode(im);
-      }
-      if (saved.enrichedData) {
-        setEnriched(saved.enrichedData);
-      }
-      if (saved.listType) {
-        setEnrichedListType(saved.listType);
-        setListOverride(saved.listType);
-      }
+      queueMicrotask(() => {
+        if (saved.parseResult) {
+          setResult(saved.parseResult);
+        }
+        if (saved.eventContext) {
+          const ec = saved.eventContext as EventContext;
+          setEventContext({
+            ...ec,
+            importMode: ec.importMode ?? saved.wizardImportMode ?? "event",
+            region: saved.wizardImportMode === "bulk" ? "" : (ec.region ?? ""),
+          });
+        }
+        if (saved.wizardImportMode === "bulk" || saved.wizardImportMode === "event") {
+          setWizardImportMode(saved.wizardImportMode);
+        } else if (saved.eventContext) {
+          const im = (saved.eventContext as EventContext).importMode;
+          if (im === "bulk" || im === "event") setWizardImportMode(im);
+        }
+        if (saved.enrichedData) {
+          setEnriched(saved.enrichedData);
+        }
+        if (saved.listType) {
+          setEnrichedListType(saved.listType);
+          setListOverride(saved.listType);
+        }
+      });
       if (Array.isArray(saved.approvedRows)) {
         restoredApprovedIdsRef.current = new Set(saved.approvedRows.map((r) => r.id));
       }
       let nextStep = (saved.step ?? "starter") as Step;
       if (nextStep === "enriching" || nextStep === "verifying") {
         nextStep = "context";
-        setShowEnrichmentInterruptedBanner(true);
+        queueMicrotask(() => setShowEnrichmentInterruptedBanner(true));
       }
-      setStep(nextStep);
+      queueMicrotask(() => setStep(nextStep));
       if (typeof window !== "undefined") {
         const savedBulkJobId = window.sessionStorage.getItem(BULK_JOB_SESSION_KEY);
         if (savedBulkJobId) {
-          setBulkJobId(savedBulkJobId);
+          queueMicrotask(() => setBulkJobId(savedBulkJobId));
         }
       }
     } catch {
@@ -1185,13 +1192,19 @@ export default function Home() {
     (jobId: string) => {
       stopJobPolling();
       const tick = async () => {
+        if (pollingInFlightRef.current) return;
+        pollingInFlightRef.current = true;
         try {
           const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/status`, {
             method: "GET",
             cache: "no-store",
           });
-          if (!res.ok) return;
+          if (!res.ok) {
+            setConsecutivePollingErrors((n) => n + 1);
+            return;
+          }
           const state = (await res.json()) as BulkJobState;
+          setConsecutivePollingErrors(0);
           setBulkJobState(state);
           setProgress({
             startRow: 1,
@@ -1214,6 +1227,9 @@ export default function Home() {
           }
         } catch (err) {
           console.error("[bulk-job] polling failed", err);
+          setConsecutivePollingErrors((n) => n + 1);
+        } finally {
+          pollingInFlightRef.current = false;
         }
       };
       void tick();
@@ -1221,7 +1237,7 @@ export default function Home() {
         void tick();
       }, 5000);
     },
-    [loadCompletedBulkRows, stopJobPolling],
+    [stopJobPolling],
   );
 
   useEffect(() => {
@@ -1253,6 +1269,7 @@ export default function Home() {
 
   const parseFile = useCallback(
     async (f: File, listType?: "companies" | "contacts") => {
+      const thisRequestId = ++parseRequestIdRef.current;
       setBusy(true);
       setError(null);
       setBulkSmallListBypass(false);
@@ -1266,10 +1283,12 @@ export default function Home() {
           method: "POST",
           body,
         });
+        if (thisRequestId !== parseRequestIdRef.current) return;
         const json = (await res.json()) as ParseResponse & {
           error?: string;
           detail?: string;
         };
+        if (thisRequestId !== parseRequestIdRef.current) return;
         if (!res.ok) {
           setResult(null);
           setShowSuccessFlash(false);
@@ -1378,15 +1397,15 @@ export default function Home() {
 
   useEffect(() => {
     if (!resolvedListType) {
-      setDuplicateSessionTotal(null);
+      queueMicrotask(() => setDuplicateSessionTotal(null));
       return;
     }
     const n = listAllDuplicatePairs(workingRows, resolvedListType, duplicateExemptPairs).length;
     if (n === 0) {
-      setDuplicateSessionTotal(null);
+      queueMicrotask(() => setDuplicateSessionTotal(null));
       return;
     }
-    setDuplicateSessionTotal((prev) => (prev == null ? n : prev));
+    queueMicrotask(() => setDuplicateSessionTotal((prev) => (prev == null ? n : prev)));
   }, [workingRows, resolvedListType, duplicateExemptPairs]);
 
   const duplicatePairSerial =
@@ -1434,11 +1453,13 @@ export default function Home() {
     !bulkSmallListBypass;
 
   useEffect(() => {
-    setPreviewRowsOverride(null);
-    setDuplicateExemptPairs(new Set());
-    setDupFeedback(null);
-    setDuplicateSessionTotal(null);
-    setRemoveAllDupConfirm(null);
+    queueMicrotask(() => {
+      setPreviewRowsOverride(null);
+      setDuplicateExemptPairs(new Set());
+      setDupFeedback(null);
+      setDuplicateSessionTotal(null);
+      setRemoveAllDupConfirm(null);
+    });
     if (removeAllDupMsgTimeoutRef.current) {
       clearTimeout(removeAllDupMsgTimeoutRef.current);
       removeAllDupMsgTimeoutRef.current = null;
@@ -1468,7 +1489,7 @@ export default function Home() {
       return { rows: [], creditsUsed: 0, commonRoomHits: 0 };
     }
 
-    const nonHighTotal = computeZoomVerifyNonHighTotal(aiRows, listType);
+    const nonHighTotal = computeZoomVerifyNonHighTotal(aiRows);
     const zoomVerifyChunkSize =
       listType === "contacts"
         ? ZOOM_VERIFY_CONTACT_CHUNK_SIZE
@@ -1488,7 +1509,6 @@ export default function Home() {
       );
       const nonHighPrefixCount = countZoomVerifyNonHighPrefix(
         aiRows,
-        listType,
         chunkStart,
       );
       const res = await fetch("/api/enrich/zoominfo", {
@@ -1588,10 +1608,8 @@ export default function Home() {
     }
 
     // Phase 3: HubSpot precheck — now runs AFTER ZoomInfo so ZoomInfo domain is used as match key
-    console.log("[Pipeline] HubSpot precheck starting after ZoomInfo");
     const rowsAfterPrecheck = await runHubSpotPreCheck(rowsAfterVerify, listType, signal);
     const hubspotCompleteCount = rowsAfterPrecheck.filter((r) => r.hubspotComplete === true).length;
-    setPrecheckHubspotSkipCount(hubspotCompleteCount);
     context.hubspotFound = hubspotCompleteCount;
 
     let finalRows: EnrichedCompany[] | EnrichedContact[] = rowsAfterPrecheck;
@@ -1658,7 +1676,7 @@ export default function Home() {
     const linkedInFoundCount = withLinkedInSourceFallback.filter(
       (r) => r.linkedinSource === "ai_search",
     ).length;
-    const elapsedMinutes = Math.round((Date.now() - context.enrichmentStartTime) / 60000);
+    const elapsedMinutes = Math.round((new Date().getTime() - context.enrichmentStartTime) / 60000);
     setEventEnrichmentSummary({
       totalRows: context.totalRows,
       hubspotFound: context.hubspotFound,
@@ -1766,7 +1784,7 @@ export default function Home() {
     setEnrichError(null);
     setZoomInfoVerifySummary(null);
     if (typeof window !== "undefined" && "Notification" in window) {
-      void Notification.requestPermission();
+      void Notification.requestPermission().catch(() => {});
     }
     const ac = new AbortController();
     enrichAbortRef.current = ac;
@@ -1784,7 +1802,6 @@ export default function Home() {
     });
     let pausedForCostEstimate = false;
     try {
-      setPrecheckHubspotSkipCount(null);
       setEventEnrichmentSummary(null);
       const batchErrors: string[] = [];
       const aiRowsMerged =
@@ -2040,7 +2057,6 @@ export default function Home() {
       bulkCostGateResolveRef.current = null;
       resolveGate?.();
       setCostEstimateMeta(null);
-      setPrecheckHubspotSkipCount(null);
       setEventEnrichmentSummary(null);
       setWizardImportMode("event");
       setBulkJobId(null);
@@ -2226,6 +2242,49 @@ export default function Home() {
   );
 
   const bc = breadcrumbIndex(step);
+  const hasEnrichedRows = (enriched?.length ?? 0) > 0;
+  const isPipelineRunning =
+    (wizardImportMode === "event" && (step === "enriching" || step === "verifying")) ||
+    (wizardImportMode === "bulk" &&
+      step === "enriching" &&
+      (bulkJobState?.status === "queued" || bulkJobState?.status === "running"));
+
+  const onBreadcrumbClick = useCallback(
+    (index: number) => {
+      if (isPipelineRunning || index === bc || index === 2) return;
+      if (index === 5) {
+        if (!pushResult) return;
+        setStep("complete");
+        return;
+      }
+      if (index > bc) return;
+      if (index === 0) {
+        if (hasEnrichedRows) {
+          if (
+            !window.confirm(
+              "This will discard your enrichment results and return to upload. Continue?",
+            )
+          ) return;
+          resetToUpload(true);
+          return;
+        }
+        setStep("upload");
+        return;
+      }
+      if (index === 1) {
+        setStep("context");
+        return;
+      }
+      if (index === 3) {
+        setStep("enriched");
+        return;
+      }
+      if (index === 4) {
+        setStep("prepush");
+      }
+    },
+    [bc, hasEnrichedRows, isPipelineRunning, pushResult, resetToUpload],
+  );
 
   const enrichmentBatchPercent = useMemo(() => {
     if (!progress || progress.totalRows <= 0) return 0;
@@ -2279,9 +2338,11 @@ export default function Home() {
   }, [step, progress, enrichmentBatchPercent, resolvedListType]);
 
   const signOut = useCallback(() => {
-    void fetch("/api/auth/logout", { method: "POST" }).finally(() => {
-      window.location.href = "/login";
-    });
+    void fetch("/api/auth/logout", { method: "POST" })
+      .catch(() => {}) // network failure on logout is non-actionable
+      .finally(() => {
+        window.location.href = "/login";
+      });
   }, []);
 
   return (
@@ -2305,12 +2366,14 @@ export default function Home() {
         </div>
         {step !== "starter" ? (
           <nav
-            className="hidden max-w-[min(100vw-8rem,40rem)] flex-wrap items-center justify-center gap-x-0.5 gap-y-1 text-center text-[10px] leading-tight sm:max-w-none sm:text-xs md:col-start-2 md:row-start-1 md:flex md:text-sm"
+            className="hidden max-w-[min(100vw-8rem,40rem)] flex-wrap items-center justify-center gap-x-0.5 gap-y-1 text-center text-xs leading-tight sm:max-w-none md:col-start-2 md:row-start-1 md:flex md:text-sm"
             aria-label="Import steps"
           >
             {NAV_STEPS.map((label, i) => {
               const isCurrent = i === bc;
               const isDone = i < bc;
+              const isAllowedStep = i !== 2 && (i !== 5 || Boolean(pushResult));
+              const isClickable = !isPipelineRunning && !isCurrent && ((isDone && isAllowedStep) || (i === 5 && Boolean(pushResult)));
               return (
                 <span key={label} className="inline-flex items-center">
                   {i > 0 ? (
@@ -2318,17 +2381,31 @@ export default function Home() {
                       ·
                     </span>
                   ) : null}
-                  <span
-                    className={
-                      isCurrent
-                        ? "font-semibold text-white"
-                        : isDone
-                          ? "text-white/60"
-                          : "text-white/30"
-                    }
-                  >
-                    {label}
-                  </span>
+                  {isClickable ? (
+                    <button
+                      type="button"
+                      onClick={() => onBreadcrumbClick(i)}
+                      className={
+                        isDone
+                          ? "cursor-pointer text-white/60 hover:text-white/90"
+                          : "cursor-pointer text-white/60"
+                      }
+                    >
+                      {label}
+                    </button>
+                  ) : (
+                    <span
+                      className={
+                        isCurrent
+                          ? "font-semibold text-white"
+                          : isDone
+                            ? "text-white/60"
+                            : "text-white/30"
+                      }
+                    >
+                      {label}
+                    </span>
+                  )}
                 </span>
               );
             })}
@@ -2345,7 +2422,7 @@ export default function Home() {
         </div>
       </header>
 
-      <main className="mx-auto flex w-full max-w-7xl min-h-0 flex-1 flex-col gap-6 px-4 pb-8 pt-22 sm:px-6">
+      <main ref={stepContentRef} tabIndex={-1} className="mx-auto flex w-full max-w-7xl min-h-0 flex-1 flex-col gap-6 px-4 pb-8 pt-22 outline-none sm:px-6">
         {showEnrichmentInterruptedBanner ? (
           <div
             className="flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-amber-950 sm:flex-row sm:items-center sm:justify-between dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-100"
@@ -2362,15 +2439,6 @@ export default function Home() {
           </div>
         ) : null}
 
-        {step === "enriched" ? (
-          <button
-            type="button"
-            onClick={() => setStep("prereview")}
-            className="self-start text-sm text-(--text-muted) hover:text-(--text-primary)"
-          >
-            ← Back to Pre-Review
-          </button>
-        ) : null}
         {step === "prereview" ? (
           <button
             type="button"
@@ -2639,11 +2707,7 @@ export default function Home() {
                       <p className="text-sm font-semibold text-(--text-primary)">
                         Preview — your uploaded data as parsed
                       </p>
-                      <p className="text-xs text-(--text-muted)">
-                        This is your raw data before any enrichment. Column headers have been mapped to standard field names where recognized.
-                      </p>
                     </div>
-                    <p className="text-xs font-medium text-(--text-secondary)">{effectiveRowCount} records found</p>
                   </div>
                 <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-(--border-default)">
                     <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
@@ -2657,11 +2721,11 @@ export default function Home() {
                               <div className="flex flex-col">
                                 <span className="font-semibold text-(--text-primary)">{col.label}</span>
                                 {col.recognized ? (
-                                  <span className="text-[11px] font-normal text-(--text-muted)">
+                                  <span className="text-xs font-normal text-(--text-muted)">
                                     {col.originalHeader}
                                   </span>
                                 ) : (
-                                  <span className="text-[11px] font-normal text-(--text-muted)">
+                                  <span className="text-xs font-normal text-(--text-muted)">
                                     {col.originalHeader} - Extra column - will be carried through.
                                   </span>
                                 )}
@@ -2689,11 +2753,11 @@ export default function Home() {
                       </tbody>
                     </table>
                 </div>
-                <div className="text-xs text-(--text-muted)">
-                  {effectiveListType === "unknown"
-                    ? "Could not detect list type — please select below."
-                    : `Detected as: ${effectiveListType === "contacts" ? "Contact list" : "Company list"}`}
-                </div>
+                {effectiveListType === "unknown" ? (
+                  <div className="text-xs text-(--text-muted)">
+                    Could not detect list type — please select below.
+                  </div>
+                ) : null}
                 {effectiveListType === "unknown" ? (
                   <div className="flex gap-2">
                     <button
@@ -2742,16 +2806,6 @@ export default function Home() {
 
         {step === "context" && resolvedListType && (
           <div className="flex w-full flex-1 flex-col justify-center gap-4 py-6">
-            <button
-              type="button"
-              onClick={() => {
-                setStep("upload");
-                setEnrichError(null);
-              }}
-              className="self-start text-sm text-(--text-muted) hover:text-(--text-primary)"
-            >
-              ← Back
-            </button>
             {enrichError && (
               <div
                 className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-100"
@@ -2765,7 +2819,6 @@ export default function Home() {
               sourceFileName={file?.name ?? null}
               initialValues={eventContext}
               importMode={wizardImportMode}
-              onBackToUpload={() => setStep("upload")}
               onSubmit={(ctx) =>
                 wizardImportMode === "bulk"
                   ? void startBulkJob(ctx)
@@ -2783,19 +2836,19 @@ export default function Home() {
             }}
             onContinueToReview={() => void handleContinueToReview()}
             continueLoading={bulkRowsContinueLoading}
+            consecutivePollingErrors={consecutivePollingErrors}
           />
         ) : null}
 
         {(step === "enriching" || step === "verifying") && wizardImportMode === "event" && eventPhases ? (
           <div className="flex flex-col gap-4">
             <EnrichmentProgressBars
-              title={`Enriching ${workingRows.length} record${workingRows.length === 1 ? "" : "s"}…`}
               phases={eventPhases}
             />
             <p className="text-center text-sm text-(--text-muted)">
               You can leave this tab. We&apos;ll notify you when enrichment is complete.
             </p>
-            {step === "enriching" ? (
+            {step === "enriching" || step === "verifying" ? (
               <button
                 type="button"
                 className="self-center rounded-lg border border-(--border-default) bg-white px-4 py-2 text-sm font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
@@ -2906,7 +2959,6 @@ export default function Home() {
                 ? formatContactDefaultLeadSourceDescription(eventContext)
                 : ""
             }
-            onBack={() => setStep("enriched")}
             onPush={(settings) => void runHubSpotPush(settings)}
           />
         )}

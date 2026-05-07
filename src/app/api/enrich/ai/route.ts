@@ -4,15 +4,12 @@ import {
   enrichContactBatchWithCache,
   enrichRowsWithProgress,
 } from "@/lib/enrichment/ai-enricher";
+import { isRecord } from "@/lib/utils/guards";
 import type { EventContext, RawCompanyRow, RawContactRow } from "@/lib/utils/types";
 
 /** Per-batch ceiling (Vercel hobby ~10s); batched JSON requests should finish within this window. */
 export const maxDuration = 9;
 export const LINKEDIN_SEARCH_ROUTE = "/api/enrich/linkedin-search";
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 function badRequest(detail: string) {
   return Response.json({ error: "Bad request", detail }, { status: 400 });
@@ -177,8 +174,9 @@ export async function POST(request: Request): Promise<Response> {
       },
     });
   } catch (err) {
+    console.error("[enrich/ai] unexpected error:", err);
     return Response.json(
-      { error: "Internal server error", detail: String(err) },
+      { error: "Internal server error", detail: "AI enrichment failed. Please try again." },
       { status: 500 },
     );
   }

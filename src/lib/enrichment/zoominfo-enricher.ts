@@ -4,6 +4,7 @@ import {
   setCachedContact,
 } from "@/lib/cache/enrichment-cache";
 import { isPersonalEmail } from "@/lib/utils/contacts";
+import { isRecord } from "@/lib/utils/guards";
 import type { EnrichedCompany, EnrichedContact, LinkedInSource } from "@/lib/utils/types";
 import { getZoomInfoToken, invalidateZoomInfoToken } from "@/lib/zoominfo/auth";
 
@@ -27,15 +28,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Also strips query strings from the host segment; the shared util in @/lib/utils/domain does not.
+// Left separate to preserve ZoomInfo API matching behavior.
 function normalizeDomain(website: string): string {
   let w = website.trim().toLowerCase();
   w = w.replace(/^https?:\/\//, "");
   w = w.replace(/^www\./, "");
   return w.split("/")[0].split("?")[0];
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 function isUrlObject(u: unknown): u is { url: string } {
@@ -85,14 +84,6 @@ async function zoomInfoFetch(
   init: RequestInit,
   allowRetry: boolean,
 ): Promise<Response> {
-  if (typeof init.body === "string") {
-    console.log(
-      "[ZoomInfo] outgoing request body length (chars):",
-      init.body.length,
-    );
-  } else if (init.body != null) {
-    console.log("[ZoomInfo] outgoing request body: non-string body");
-  }
   let token = await getZoomInfoToken();
   let res = await fetch(url, {
     ...init,
@@ -241,13 +232,9 @@ export async function enrichCompanyWithZoomInfo(
     { method: "POST", body: JSON.stringify(searchBody) },
     true,
   );
-  console.log("[ZoomInfo] search response status:", res.status);
   if (res.status === 400) {
     const errorBody = await res.text();
-    console.log(
-      "[ZoomInfo] company search 400 | response chars:",
-      errorBody.length,
-    );
+    console.error("[ZoomInfo] company search 400 | response chars:", errorBody.length);
     return ziMeta({});
   }
   if (!res.ok) {
@@ -264,19 +251,6 @@ export async function enrichCompanyWithZoomInfo(
       : typeof rawCompanyId === "number"
         ? String(rawCompanyId)
         : null;
-  console.log(
-    "[ZoomInfo Search] company | row id:",
-    company.id,
-    "| matchedZoomId:",
-    companyId ?? "none",
-  );
-
-  console.log(
-    "[ZoomInfo] company search | result count:",
-    searchResults.length,
-    "| hasResource:",
-    searchResults.length > 0,
-  );
   const hit = firstCompanySearchHit(searchJson);
   if (!hasCompanySearchMatch(searchJson, hit)) {
     return ziMeta({});
@@ -312,13 +286,9 @@ export async function enrichCompanyWithZoomInfo(
     { method: "POST", body: JSON.stringify(enrichBody) },
     true,
   );
-  console.log("[ZoomInfo] enrich response status:", res.status);
   if (res.status === 400) {
     const errorBody = await res.text();
-    console.log(
-      "[ZoomInfo] company enrich 400 | response chars:",
-      errorBody.length,
-    );
+    console.error("[ZoomInfo] company enrich 400 | response chars:", errorBody.length);
     return ziMeta({});
   }
   if (!res.ok) {
@@ -360,17 +330,6 @@ export async function enrichCompanyWithZoomInfo(
   const description =
     typeof attrs.description === "string" ? attrs.description.trim() || null : null;
   const city = typeof attrs.city === "string" ? attrs.city.trim() || null : null;
-
-  console.log("[ZoomInfo Enrich] company | row id:", company.id, {
-    found: Boolean(attrs.id ?? firstEnrich?.id),
-    linkedInFound: Boolean(linkedInUrl),
-    employees: employeeCount,
-    hasState: Boolean(state),
-    revenue,
-    hasIndustry: Boolean(industry),
-    hasDescription: Boolean(description),
-    hasCity: Boolean(city),
-  });
 
   if (!attrs.id && !firstEnrich?.id) {
     return ziMeta({});
@@ -661,13 +620,9 @@ export async function enrichContactWithZoomInfo(
       { method: "POST", body: JSON.stringify(searchBody) },
       true,
     );
-    console.log("[ZoomInfo] contact search response status:", res.status);
     if (res.status === 400) {
       const errorBody = await res.text();
-      console.log(
-        "[ZoomInfo] contact search 400 | response chars:",
-        errorBody.length,
-      );
+      console.error("[ZoomInfo] contact search 400 | response chars:", errorBody.length);
       return ziMeta({});
     }
     if (!res.ok) {
@@ -684,21 +639,10 @@ export async function enrichContactWithZoomInfo(
         : typeof rawPid === "number"
           ? String(rawPid)
           : null;
-    console.log(
-      "[ZoomInfo Contact Search] row id:",
-      contact.id,
-      "| matchedZoomPersonId:",
-      personId ?? "none",
-    );
 
     if (!personId) {
       return ziMeta({});
     }
-  } else {
-    console.log(
-      "[ZoomInfo Contact Search] skipped name search (work email path) | row id:",
-      contact.id,
-    );
   }
 
   const matchInput = hasWorkEmail
@@ -745,13 +689,9 @@ export async function enrichContactWithZoomInfo(
     { method: "POST", body: JSON.stringify(enrichBody) },
     true,
   );
-  console.log("[ZoomInfo] contact enrich response status:", res.status);
   if (res.status === 400) {
     const errorBody = await res.text();
-    console.log(
-      "[ZoomInfo] contact enrich 400 | response chars:",
-      errorBody.length,
-    );
+    console.error("[ZoomInfo] contact enrich 400 | response chars:", errorBody.length);
     return ziMeta({});
   }
   if (!res.ok) {
@@ -786,18 +726,6 @@ export async function enrichContactWithZoomInfo(
     contactAccuracyScore: attrs.contactAccuracyScore ?? null,
   };
 
-  console.log("[ZoomInfo Contact Enrich] row id:", contact.id, {
-    found: !!attrs.id,
-    hasTitle: Boolean(result.title),
-    linkedInFound: Boolean(result.linkedinUrl),
-    hasCompany: Boolean(
-      (typeof attrs.companyName === "string" && attrs.companyName.trim()) ||
-        (typeof attrs.companyWebsite === "string" && attrs.companyWebsite.trim()) ||
-        (typeof attrs.companyId === "string" && attrs.companyId.trim()) ||
-        (typeof attrs.companyId === "number" && Number.isFinite(attrs.companyId)),
-    ),
-    accuracyScore: result.contactAccuracyScore,
-  });
 
   if (!attrs.id && !firstEnrich?.id) {
     return ziMeta({});

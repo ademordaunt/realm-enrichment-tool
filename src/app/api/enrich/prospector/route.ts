@@ -10,8 +10,9 @@ export async function POST(req: Request): Promise<Response> {
   try {
     return NextResponse.json({ results: [] });
   } catch (err) {
+    console.error("[enrich/prospector] unexpected error:", err);
     return Response.json(
-      { error: "Internal server error", detail: String(err) },
+      { error: "Internal server error", detail: "Prospector request failed. Please try again." },
       { status: 500 },
     );
   }

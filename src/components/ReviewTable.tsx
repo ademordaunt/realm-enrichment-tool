@@ -2,7 +2,6 @@
 
 import { ConfidenceBadge } from "@/components/ConfidenceBadge";
 import { ReasoningTooltip } from "@/components/ReasoningTooltip";
-import { classifyContactEmailDomain } from "@/lib/utils/contacts";
 import {
   sanitizeCompany,
   sanitizeCompanyName,
@@ -18,7 +17,7 @@ import type {
   LinkedInSource,
 } from "@/lib/utils/types";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
 export interface ReviewTableProps {
   rows: EnrichedCompany[] | EnrichedContact[];
@@ -26,28 +25,6 @@ export interface ReviewTableProps {
   onRowsChange: (rows: EnrichedCompany[] | EnrichedContact[]) => void;
   /** Called when the user clicks the sticky “Approve” action (does not call HubSpot). */
   onApprove?: () => void;
-}
-
-function identityLabel(ic: string): string {
-  const u = ic.charAt(0).toUpperCase() + ic.slice(1);
-  return u === "Unresolved" ? "Unresolved" : u;
-}
-
-function linkedinSourceLegendLabel(s: LinkedInSource | undefined): string {
-  switch (s) {
-    case "hubspot":
-      return "HubSpot ✓";
-    case "zoominfo":
-      return "ZoomInfo ✓";
-    case "commonroom":
-      return "Common Room ✓";
-    case "ai_search":
-      return "Web search ⚠️";
-    case "manual":
-      return "Manual edit";
-    default:
-      return "Unknown";
-  }
 }
 
 function linkedInHeaderLegendContent(): ReactNode {
@@ -68,7 +45,7 @@ function linkedInHeaderLegendContent(): ReactNode {
       </p>
       <p className="flex items-center gap-1.5">
         <span className="inline-block h-2 w-2 rounded-full bg-amber-500" aria-hidden />
-        AI web search (verify before trusting)
+        AI web search
       </p>
       <p className="flex items-center gap-1.5">
         <span className="inline-block h-2 w-2 rounded-full bg-zinc-800 dark:bg-black" aria-hidden />
@@ -297,10 +274,6 @@ function EditableCell(props: {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(normalized);
 
-  useEffect(() => {
-    if (!editing) setDraft(value == null ? "" : String(value));
-  }, [value, editing]);
-
   const wrap = breakAll ? "break-all whitespace-normal" : "wrap-break-word";
 
   if (editing) {
@@ -350,7 +323,10 @@ function EditableCell(props: {
       } rounded px-1.5 py-0.5 text-left text-xs sm:text-sm ${wrap} ${
         align === "right" ? "text-right tabular-nums" : ""
       } ${muted ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100"} hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
-      onClick={() => setEditing(true)}
+      onClick={() => {
+        setDraft(normalized);
+        setEditing(true);
+      }}
     >
       <span className={`min-w-0 flex-1 ${align === "right" ? "text-right" : ""}`}>
         {displayEmpty ? (
@@ -361,7 +337,7 @@ function EditableCell(props: {
       </span>
       {pencilOnHover ? (
         <span
-          className="shrink-0 text-[0.75rem] leading-none text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100"
+          className="shrink-0 text-xs leading-none text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100"
           aria-hidden
         >
           ✏️
@@ -450,7 +426,7 @@ function StateRegionCell(props: {
         )}
       </span>
       <span
-        className="shrink-0 text-[0.75rem] leading-none text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100"
+        className="shrink-0 text-xs leading-none text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100"
         aria-hidden
       >
         ✏️
@@ -474,10 +450,6 @@ function EmployeesCell(props: {
   const { value, edited, muted, onSave } = props;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value === null ? "" : String(value));
-
-  useEffect(() => {
-    if (!editing) setDraft(value === null ? "" : String(value));
-  }, [value, editing]);
 
   if (editing) {
     return (
@@ -534,7 +506,10 @@ function EmployeesCell(props: {
       className={`group relative inline-flex min-h-5 w-full items-center justify-end gap-1 rounded px-1.5 py-0.5 text-right text-xs tabular-nums sm:text-sm ${
         muted ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100"
       } hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
-      onClick={() => setEditing(true)}
+      onClick={() => {
+        setDraft(value === null ? "" : String(value));
+        setEditing(true);
+      }}
     >
       <span className="min-w-0 flex-1 text-right">
         {displayEmpty ? (
@@ -544,7 +519,7 @@ function EmployeesCell(props: {
         )}
       </span>
       <span
-        className="shrink-0 text-[0.75rem] leading-none text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100"
+        className="shrink-0 text-xs leading-none text-zinc-400 opacity-0 transition-opacity group-hover:opacity-100"
         aria-hidden
       >
         ✏️
@@ -599,10 +574,6 @@ function LinkedInProfileCell(props: {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(() => (value == null ? "" : String(value)));
 
-  useEffect(() => {
-    if (!editing) setDraft(value == null ? "" : String(value));
-  }, [value, editing]);
-
   const wrap = breakAll ? "break-all whitespace-normal" : "wrap-break-word";
 
   if (editing) {
@@ -655,6 +626,7 @@ function LinkedInProfileCell(props: {
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
+            setDraft(value == null ? "" : String(value));
             setEditing(true);
           }}
         >
@@ -689,7 +661,7 @@ function LinkedInProfileCell(props: {
         className="flex min-w-0 flex-1 items-center gap-0.5 truncate text-xs text-blue-600 hover:text-blue-800 dark:text-blue-400 sm:text-sm"
       >
         <span className="min-w-0 truncate">{t}</span>
-        <span className="shrink-0 text-[0.65rem] leading-none opacity-80" aria-hidden>
+        <span className="shrink-0 text-xs leading-none opacity-80" aria-hidden>
           ↗
         </span>
       </a>
@@ -700,6 +672,7 @@ function LinkedInProfileCell(props: {
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
+          setDraft(value == null ? "" : String(value));
           setEditing(true);
         }}
       >
@@ -718,27 +691,22 @@ function LinkedInProfileCell(props: {
 export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewTableProps) {
   const [editedKeys, setEditedKeys] = useState<Set<string>>(() => new Set());
   const [filter, setFilter] = useState<FilterKey>("all");
-  const [stableRowOrder, setStableRowOrder] = useState<string[]>([]);
-
-  useEffect(() => {
-    setEditedKeys(new Set());
-  }, [rows, listType]);
-
-  const rowsById = useMemo(() => {
-    const m: Record<string, EnrichedCompany | EnrichedContact> = {};
-    for (const r of rows) {
-      m[r.id] = r;
-    }
-    return m;
-  }, [rows]);
+  const editSessionKey = useMemo(
+    () => `${listType}:${rows.map((r) => r.id).join("|")}`,
+    [listType, rows],
+  );
+  const getSessionFieldKey = useCallback(
+    (id: string, field: string) => `${editSessionKey}|${rowKey(id, field)}`,
+    [editSessionKey],
+  );
 
   const markEdited = useCallback((id: string, field: string) => {
     setEditedKeys((prev) => {
       const next = new Set(prev);
-      next.add(rowKey(id, field));
+      next.add(getSessionFieldKey(id, field));
       return next;
     });
-  }, []);
+  }, [getSessionFieldKey]);
 
   const setRows = useCallback(
     (next: EnrichedCompany[] | EnrichedContact[]) => {
@@ -834,37 +802,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     });
   }, [rows, listType]);
 
-  useEffect(() => {
-    if (rows.length === 0) {
-      setStableRowOrder([]);
-      return;
-    }
-    setStableRowOrder((prev) => {
-      if (prev.length === 0) {
-        return sortedRows.map((r) => r.id);
-      }
-      const rowIdSet = new Set(rows.map((r) => r.id));
-      const stale = prev.some((id) => !rowIdSet.has(id));
-      if (stale || prev.length !== rows.length) {
-        return sortedRows.map((r) => r.id);
-      }
-      return prev;
-    });
-  }, [rows, sortedRows, listType]);
+  const isEdited = useCallback(
+    (id: string, field: string) => editedKeys.has(getSessionFieldKey(id, field)),
+    [editedKeys, getSessionFieldKey],
+  );
 
-  useEffect(() => {
-    setStableRowOrder(sortedRows.map((r) => r.id));
-  }, [filter]);
-
-  const displayRows = useMemo(() => {
-    if (stableRowOrder.length === 0) return sortedRows;
-    const out: (EnrichedCompany | EnrichedContact)[] = [];
-    for (const id of stableRowOrder) {
-      const r = rowsById[id];
-      if (r) out.push(r);
-    }
-    return out.length > 0 ? out : sortedRows;
-  }, [stableRowOrder, rowsById, sortedRows]);
+  const displayRows = useMemo(() => sortedRows, [sortedRows]);
 
   const filteredByShowFilter = useMemo(() => {
     const trustedTier = (r: EnrichedCompany | EnrichedContact) =>
@@ -1153,7 +1096,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                     <ReasoningTooltip
                       content={linkedInHeaderLegendContent()}
                       trigger={
-                        <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-gray-400 text-[9px] text-gray-500 cursor-help">
+                        <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-gray-400 text-[10px] text-gray-500 cursor-help">
                           ?
                         </span>
                       }
@@ -1183,7 +1126,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                     <ReasoningTooltip
                       content={linkedInHeaderLegendContent()}
                       trigger={
-                        <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-gray-400 text-[9px] text-gray-500 cursor-help">
+                        <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-gray-400 text-[10px] text-gray-500 cursor-help">
                           ?
                         </span>
                       }
@@ -1199,6 +1142,16 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
             )}
           </thead>
           <tbody>
+            {orderedReviewRows.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={999}
+                  className="px-6 py-10 text-center text-sm text-(--text-muted)"
+                >
+                  No records match the current filter.
+                </td>
+              </tr>
+            ) : null}
             {listType === "companies"
               ? (orderedReviewRows as EnrichedCompany[]).map((row, ri) => {
                   const muted = row.status === "skipped";
@@ -1226,7 +1179,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
                         <EditableCell
                           value={row.resolvedName}
-                          edited={editedKeys.has(rowKey(row.id, "resolvedName"))}
+                          edited={isEdited(row.id, "resolvedName")}
                           muted={muted}
                           pencilOnHover
                           onSave={(v) => {
@@ -1247,7 +1200,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
                         <EditableCell
                           value={row.domain}
-                          edited={editedKeys.has(rowKey(row.id, "domain"))}
+                          edited={isEdited(row.id, "domain")}
                           muted={muted}
                           pencilOnHover
                           onSave={(v) => {
@@ -1271,7 +1224,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       <td className="max-w-56 px-2 py-1.5 align-middle">
                         <StateRegionCell
                           value={row.state}
-                          edited={editedKeys.has(rowKey(row.id, "state"))}
+                          edited={isEdited(row.id, "state")}
                           muted={muted}
                           onSave={(v) => {
                             markEdited(row.id, "state");
@@ -1292,7 +1245,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       <td className="px-2 py-1.5 align-middle">
                         <EmployeesCell
                           value={row.numberOfEmployees}
-                          edited={editedKeys.has(rowKey(row.id, "numberOfEmployees"))}
+                          edited={isEdited(row.id, "numberOfEmployees")}
                           muted={muted}
                           onSave={(n) => {
                             markEdited(row.id, "numberOfEmployees");
@@ -1312,7 +1265,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal">
                         <LinkedInProfileCell
                           value={row.linkedinUrl}
-                          edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
+                          edited={isEdited(row.id, "linkedinUrl")}
                           muted={muted}
                           breakAll
                           linkedinSource={row.linkedinSource}
@@ -1342,7 +1295,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             <HubSpotPrecheckBadge complete={row.hubspotComplete === true} />
                           ) : null}
                           {row.reviewBucket === "excluded" && row.exclusionReason ? (
-                            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[0.65rem] font-medium text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
+                            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
                               {exclusionReasonBadgeLabel(row.exclusionReason)}
                             </span>
                           ) : null}
@@ -1350,7 +1303,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             <button
                               type="button"
                               onClick={() => includeInternationalAnyway(row.id)}
-                              className="rounded border border-zinc-300 px-2 py-0.5 text-[0.65rem] font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                              className="rounded border border-zinc-300 px-2 py-0.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
                             >
                               Include anyway
                             </button>
@@ -1391,7 +1344,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       >
                         <EditableCell
                           value={fullName}
-                          edited={editedKeys.has(rowKey(row.id, "name"))}
+                          edited={isEdited(row.id, "name")}
                           muted={muted}
                           pencilOnHover
                           onSave={(v) => {
@@ -1417,7 +1370,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         <div className="flex items-center gap-1.5">
                           <EditableCell
                             value={sanitizeUnknown(row.rawEmail)}
-                            edited={editedKeys.has(rowKey(row.id, "rawEmail"))}
+                            edited={isEdited(row.id, "rawEmail")}
                             muted={muted}
                             breakAll
                             pencilOnHover
@@ -1454,7 +1407,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
                         <EditableCell
                           value={sanitizeCompanyName(row.resolvedCompany)}
-                          edited={editedKeys.has(rowKey(row.id, "resolvedCompany"))}
+                          edited={isEdited(row.id, "resolvedCompany")}
                           muted={muted}
                           pencilOnHover
                           onSave={(v) => {
@@ -1476,7 +1429,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
                         <EditableCell
                           value={sanitizeUnknown(row.title)}
-                          edited={editedKeys.has(rowKey(row.id, "title"))}
+                          edited={isEdited(row.id, "title")}
                           muted={muted}
                           pencilOnHover
                           onSave={(v) => {
@@ -1498,7 +1451,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal">
                         <LinkedInProfileCell
                           value={sanitizeUnknown(row.linkedinUrl)}
-                          edited={editedKeys.has(rowKey(row.id, "linkedinUrl"))}
+                          edited={isEdited(row.id, "linkedinUrl")}
                           muted={muted}
                           breakAll
                           linkedinSource={row.linkedinSource}
@@ -1529,7 +1482,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             <HubSpotPrecheckBadge complete={row.hubspotComplete === true} />
                           ) : null}
                           {row.reviewBucket === "excluded" && row.exclusionReason ? (
-                            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-[0.65rem] font-medium text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
+                            <span className="rounded-full bg-zinc-200 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:bg-zinc-700 dark:text-zinc-200">
                               {exclusionReasonBadgeLabel(row.exclusionReason)}
                             </span>
                           ) : null}

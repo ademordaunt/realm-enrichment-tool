@@ -87,7 +87,6 @@ export interface EventContextFormProps {
   disabled?: boolean;
   /** When set (e.g. after cancelling enrichment), rehydrates the form. */
   initialValues?: EventContext | null;
-  onBackToUpload?: () => void;
   /** Original upload file name — used to pre-fill Event Name once. */
   sourceFileName?: string | null;
   /** From starter screen; stored on submitted EventContext. */
@@ -99,7 +98,6 @@ export function EventContextForm({
   onSubmit,
   disabled = false,
   initialValues = null,
-  onBackToUpload,
   sourceFileName = null,
   importMode = "event",
 }: EventContextFormProps) {
@@ -139,26 +137,28 @@ export function EventContextForm({
 
   useEffect(() => {
     if (!initialValues) return;
-    setEventName(initialValues.eventName);
     const r = initialValues.region;
     const normalized = String(r ?? "").trim();
-    if (
+    const validRegion =
       US_STATE_OPTIONS.includes(normalized) ||
-      REGION_VALUES.includes(normalized as (typeof REGION_VALUES)[number])
-    ) {
-      setRegion(normalized);
-      setComboInputValue(normalized);
-    } else {
-      setRegion("");
-      setComboInputValue("");
-    }
+      REGION_VALUES.includes(normalized as (typeof REGION_VALUES)[number]);
     regionManuallySelected.current = Boolean(normalized);
-    setAudienceLevel(initialValues.audienceLevel || DEFAULT_AUDIENCE);
     const parsed = parseMonthYearString(initialValues.eventDate);
-    if (parsed) {
-      setMonthName(parsed.month);
-      setYear(parsed.year.toString());
-    }
+    queueMicrotask(() => {
+      setEventName(initialValues.eventName);
+      if (validRegion) {
+        setRegion(normalized);
+        setComboInputValue(normalized);
+      } else {
+        setRegion("");
+        setComboInputValue("");
+      }
+      setAudienceLevel(initialValues.audienceLevel || DEFAULT_AUDIENCE);
+      if (parsed) {
+        setMonthName(parsed.month);
+        setYear(parsed.year.toString());
+      }
+    });
   }, [initialValues]);
 
   useEffect(() => {
@@ -203,12 +203,16 @@ export function EventContextForm({
         { token: "dec", month: "December" },
       ];
 
+      let inferredMonth: (typeof MONTH_NAMES)[number] | null = null;
       for (const { token, month } of monthTokens) {
         const monthBoundary = new RegExp(`(?<![a-z])${token}(?![a-z])`);
         if (monthBoundary.test(normalized)) {
-          setMonthName(month);
+          inferredMonth = month;
           break;
         }
+      }
+      if (inferredMonth) {
+        queueMicrotask(() => setMonthName(inferredMonth));
       }
     }
 
@@ -217,7 +221,7 @@ export function EventContextForm({
       if (yearMatch) {
         const yearNum = Number(yearMatch[1]);
         if (yearNum >= 2020 && yearNum <= 2035) {
-          setYear(String(yearNum));
+          queueMicrotask(() => setYear(String(yearNum)));
         }
       }
     }
@@ -258,18 +262,7 @@ export function EventContextForm({
   const regionOptions = filteredComboOptions.filter((o) => o.group === "Regions");
 
   return (
-    <>
-      {onBackToUpload ? (
-        <button
-          type="button"
-          onClick={onBackToUpload}
-          className="mt-6 mb-2 self-start text-sm text-(--text-muted) transition-colors hover:text-(--text-primary) hover:underline"
-        >
-          ← Back to Upload
-        </button>
-      ) : null}
-
-      <form onSubmit={handleSubmit} className={`flex flex-col ${cardClass}`}>
+    <form onSubmit={handleSubmit} className={`flex flex-col ${cardClass}`}>
         <div>
           <h2 className="text-lg font-semibold text-(--realm-navy)">
             {importMode === "bulk" ? "List Context" : "Event Context"}
@@ -277,7 +270,7 @@ export function EventContextForm({
           <p className="mt-1 text-sm text-(--text-muted)">
             {importMode === "bulk"
               ? "Describe the list so AI can resolve company names accurately."
-              : "Describe the event so AI enrichment can resolve names accurately."}
+              : "Adding event context helps the AI enrich your records with greater precision"}
           </p>
         </div>
 
@@ -306,14 +299,11 @@ export function EventContextForm({
           </label>
 
           <div className="flex flex-col gap-1 text-sm sm:col-span-2">
-            <span className="font-medium text-(--text-primary)">
-              Event Date{" "}
-              <span className="font-normal text-(--text-muted)">(optional)</span>
-            </span>
+            <span className="font-medium text-(--text-primary)">Event Date</span>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="relative">
                 <select
-                  className={selectClass}
+                  className={`${selectClass} ${monthName ? "text-(--text-primary)" : "text-(--text-muted)"}`}
                   value={monthName}
                   onChange={(e) => {
                     monthManuallySelected.current = true;
@@ -321,7 +311,7 @@ export function EventContextForm({
                   }}
                   disabled={disabled}
                 >
-                  <option value="">Select Month</option>
+                  <option value="">Select month</option>
                   {MONTH_NAMES.map((m) => (
                     <option key={m} value={m}>
                       {m}
@@ -363,13 +353,14 @@ export function EventContextForm({
           </div>
 
           <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium text-(--text-primary)">
-              State / Region{" "}
-              <span className="font-normal text-(--text-muted)">(optional)</span>
-            </span>
+            <span className="font-medium text-(--text-primary)">State / Region</span>
             <div className="relative" ref={comboContainerRef}>
               <input
                 type="text"
+                role="combobox"
+                aria-expanded={comboOpen}
+                aria-controls="state-region-listbox"
+                aria-activedescendant={comboHighlight >= 0 ? `state-region-option-${comboHighlight}` : undefined}
                 className={`${inputClass} pr-8`}
                 placeholder="Search states or regions…"
                 value={comboInputValue}
@@ -430,12 +421,13 @@ export function EventContextForm({
 
               {comboOpen && filteredComboOptions.length > 0 ? (
                 <ul
+                  id="state-region-listbox"
                   className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-(--border-default) bg-(--bg-card) py-1 shadow-lg"
                   role="listbox"
                 >
                   {stateOptions.length > 0 ? (
                     <>
-                      <li className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-(--text-muted)">
+                      <li className="px-3 py-1 text-xs font-semibold uppercase tracking-wider text-(--text-muted)">
                         States
                       </li>
                       {stateOptions.map((o) => {
@@ -444,6 +436,7 @@ export function EventContextForm({
                         return (
                           <li
                             key={o.label}
+                            id={`state-region-option-${flatIdx}`}
                             role="option"
                             aria-selected={region === o.label}
                             className={`cursor-pointer px-3 py-1.5 text-sm ${
@@ -467,7 +460,7 @@ export function EventContextForm({
                   {regionOptions.length > 0 ? (
                     <>
                       <li
-                        className={`px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-(--text-muted) ${stateOptions.length > 0 ? "mt-1 border-t border-(--border-default) pt-2" : ""}`}
+                        className={`px-3 py-1 text-xs font-semibold uppercase tracking-wider text-(--text-muted) ${stateOptions.length > 0 ? "mt-1 border-t border-(--border-default) pt-2" : ""}`}
                       >
                         Regions
                       </li>
@@ -477,6 +470,7 @@ export function EventContextForm({
                         return (
                           <li
                             key={o.label}
+                            id={`state-region-option-${flatIdx}`}
                             role="option"
                             aria-selected={region === o.label}
                             className={`cursor-pointer px-3 py-1.5 text-sm ${
@@ -548,7 +542,6 @@ export function EventContextForm({
             {importMode === "bulk" ? "Run AI Cleaning" : "Run Enrichment Pipeline"}
           </button>
         </div>
-      </form>
-    </>
+    </form>
   );
 }

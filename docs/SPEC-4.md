@@ -1,13 +1,13 @@
 # Realm Enrichment Tool — SPEC-4
 
-**Status:** Draft for operator review
+**Status:** Implemented
 **Scope:** UI polish pass — navigation clarity, progress transparency, event context improvements, pre-review card
 
 ---
 
 ## Overview
 
-SPEC-4 is a focused UI polish pass. No pipeline logic changes. Six discrete work items, each independently shippable.
+SPEC-4 was a focused UI polish pass. No pipeline logic changes. All six scoped items were shipped and are now baseline behavior for the wizard UI.
 
 ---
 

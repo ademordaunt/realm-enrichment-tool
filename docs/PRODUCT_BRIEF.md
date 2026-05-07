@@ -1,4 +1,4 @@
-# Realm Enrichment Tool — Product Brief (Post-SPEC 3)
+# Realm Enrichment Tool — Product Brief (Post-SPEC 5)
 
 ## What It Is
 A web app that transforms raw marketing event CSVs into clean, enriched lead lists and pushes them into HubSpot as static lists. Supports both company lists and contact lists across a wide variety of input formats.
@@ -174,6 +174,20 @@ Hosted on Vercel
 Codebase shared with Tyler via GitHub
 ZoomInfo credits and Anthropic costs tied to Casey's accounts — transfer to shared/team accounts before full handoff
 ## Current Maturity
-Post-SPEC 3. SPEC 1/2/3 scope is implemented in the live codebase: cache migration defaults, amber-flag trusted sorting, international "Include anyway" override, Common Room match count in Pre-Review, row-order lock during active review, upgraded state/region context picker (including non-US override), live HubSpot folder loading, parsed-table clarity improvements, personal->work email visibility + additional-email HubSpot write, and shared-password route protection with login/logout.
+Post-SPEC 5. SPEC 1 through SPEC 4 scope is fully implemented, and SPEC-5 cleanup scope is mostly implemented with a short remaining hardening list.
 
-HubSpot integration health is now MEDIUM-HIGH for intended event-list workflows. Remaining risk is concentrated in contact identity edge cases (email mismatches, no-email rows, ambiguous existing CRM records) rather than core pipeline reliability.
+Delivered through SPEC-5:
+
+- Code health improvements (dead-code removal, duplicated helper consolidation, lower-debug-noise production paths).
+- Correctness/stability hardening (polling and parse race guards, unhandled promise rejection cleanup).
+- Security improvements (manual edit input constraints and broader server-side error sanitization patterns).
+- Performance-focused UI refinements (memoization of heavy derivations, clearer empty states).
+- Consistency/accessibility improvements (button style convergence, combobox ARIA contract, focus management on step transitions).
+
+Known remaining SPEC-5 follow-up items:
+
+- Fully sanitize two remaining client-visible raw error paths.
+- Add explicit retry control for repeated bulk polling failures.
+- Finish final secondary-button and tiny-typography normalization in remaining screens.
+
+HubSpot integration health remains MEDIUM-HIGH for intended event-list workflows. Residual risk is concentrated in contact identity edge cases (email mismatches, no-email rows, ambiguous existing CRM records), not in the core pipeline sequence.

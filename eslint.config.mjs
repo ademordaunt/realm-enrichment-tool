@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Local throwaway worktrees used by assistant tooling.
+    ".claude/**",
   ]),
 ]);
 

@@ -3,6 +3,7 @@ import {
   setJobState,
 } from "@/lib/cache/enrichment-cache";
 import { queueJobChunk } from "@/lib/jobs/qstash";
+import { isRecord } from "@/lib/utils/guards";
 import type {
   BulkJobState,
   EventContext,
@@ -12,17 +13,12 @@ import type {
 
 export const maxDuration = 30;
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
 function badRequest(detail: string): Response {
   return Response.json({ error: "Bad request", detail }, { status: 400 });
 }
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    console.log("[Jobs/Start] QSTASH_TOKEN present:", !!process.env.QSTASH_TOKEN);
     let body: unknown;
     try {
       body = await request.json();
@@ -78,9 +74,7 @@ export async function POST(request: Request): Promise<Response> {
       startedAt: new Date().toISOString(),
     };
 
-    console.log("[Jobs/Start] setJobRawRows start", { jobId, totalRows });
     await setJobRawRows(jobId, rows as RawCompanyRow[] | RawContactRow[]);
-    console.log("[Jobs/Start] setJobRawRows complete", { jobId });
     await setJobState(jobId, state);
     await queueJobChunk({ jobId, chunkIndex: 0, phase: "ai" });
 
@@ -88,7 +82,7 @@ export async function POST(request: Request): Promise<Response> {
   } catch (err) {
     console.error("[Jobs/Start] error:", err);
     return Response.json(
-      { error: "Internal server error", detail: err instanceof Error ? err.message : String(err) },
+      { error: "Internal server error", detail: "Failed to start enrichment job. Please try again." },
       { status: 500 },
     );
   }

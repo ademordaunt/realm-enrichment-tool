@@ -6,6 +6,7 @@ import {
   setCachedCompany,
   setCachedContact,
 } from "@/lib/cache/enrichment-cache";
+import { chunk } from "@/lib/utils/array";
 import { isPersonalEmail } from "@/lib/utils/contacts";
 import type {
   EnrichedCompany,
@@ -39,16 +40,8 @@ function withInferredLinkedinSource<T extends EnrichedCompany | EnrichedContact>
   return cached;
 }
 
-function chunk<T>(items: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size));
-  }
-  return out;
-}
-
 /** Strip ```json ... ``` or ``` ... ``` fences from model output */
-export function stripMarkdownFences(text: string): string {
+function stripMarkdownFences(text: string): string {
   let s = text.trim();
   const fence = /^```(?:json)?\s*\n?([\s\S]*?)\n?```$/im;
   const m = s.match(fence);
@@ -58,7 +51,7 @@ export function stripMarkdownFences(text: string): string {
   return s;
 }
 
-export function parseJsonArray<T = unknown>(text: string): T[] {
+function parseJsonArray<T = unknown>(text: string): T[] {
   const rawText = text;
   const cleaned = stripMarkdownFences(text);
 
@@ -557,7 +550,6 @@ async function resolveCompanyBatchFromKv(batch: RawCompanyRow[]): Promise<{
     const cacheKeyName = row.resolvedName ?? row.rawName;
     const cached = await getCachedCompany(cacheKeyName);
     if (cached) {
-      console.log("[Cache] HIT for company at batch index", i);
       const rowId = (row as { id?: string }).id;
       partial[i] = withInferredLinkedinSource({
         ...cached,
@@ -621,10 +613,6 @@ async function resolveContactBatchFromKv(batch: RawContactRow[]): Promise<{
   for (let i = 0; i < batch.length; i++) {
     const row = batch[i]!;
     if (isFullyPopulatedContactRow(row)) {
-      console.log(
-        "[AI Enricher] Skipping fully populated contact at batch index",
-        i,
-      );
       const existingLinkedIn =
         row.linkedinUrl?.trim() || row.linkedInUrl?.trim() || "";
       partial[i] = mapPresetContactRow(row, existingLinkedIn, false);
@@ -638,7 +626,6 @@ async function resolveContactBatchFromKv(batch: RawContactRow[]): Promise<{
     }
     const cached = await getCachedContact(email);
     if (cached) {
-      console.log("[Cache] HIT for contact at batch index", i);
       const rowId = (row as { id?: string }).id;
       partial[i] = withInferredLinkedinSource({
         ...cached,

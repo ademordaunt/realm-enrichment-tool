@@ -1,5 +1,18 @@
 import type { Metadata } from "next";
+import { Golos_Text, Onest } from "next/font/google";
 import "./globals.css";
+
+const golosText = Golos_Text({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-golos-text",
+});
+
+const onest = Onest({
+  subsets: ["latin"],
+  weight: ["600", "700"],
+  variable: "--font-onest",
+});
 
 export const metadata: Metadata = {
   title: "Realm Enrichment Tool",
@@ -12,15 +25,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full antialiased">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Onest:wght@600;700&display=swap"
-          rel="stylesheet"
-        />
-      </head>
+    <html lang="en" className={`h-full antialiased ${golosText.variable} ${onest.variable}`}>
       <body className="flex min-h-full flex-col">{children}</body>
     </html>
   );

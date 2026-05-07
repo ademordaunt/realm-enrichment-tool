@@ -6,6 +6,7 @@ import {
   enrichCompanyWithZoomInfo,
   enrichContactWithZoomInfo,
 } from "@/lib/enrichment/zoominfo-enricher";
+import { isRecord } from "@/lib/utils/guards";
 import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
 
 export const maxDuration = 9;
@@ -17,10 +18,6 @@ const ZOOM_INFO_VERIFY_CONTACT_CHUNK_SIZE = 8;
 const INTERNAL_AUTH_HEADER = "x-realm-internal-auth";
 
 void checkKvConnectivity();
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 function badRequest(detail: string) {
   return Response.json({ error: "Bad request", detail }, { status: 400 });
@@ -152,7 +149,8 @@ export async function POST(request: Request): Promise<Response> {
             } else if (zi.enrichedByZoomInfo) {
               enrichedCount += 1;
             }
-            const { cachedHit: _cachedHit, ...ziFields } = zi;
+            const { cachedHit, ...ziFields } = zi;
+            void cachedHit;
             mergedRows.push(
               mergeEnrichedCompany(row as EnrichedCompany, ziFields, {}),
             );
@@ -321,8 +319,9 @@ export async function POST(request: Request): Promise<Response> {
     },
   });
   } catch (err) {
+    console.error("[enrich/zoominfo] unexpected error:", err);
     return Response.json(
-      { error: "Internal server error", detail: String(err) },
+      { error: "Internal server error", detail: "ZoomInfo enrichment failed. Please try again." },
       { status: 500 },
     );
   }

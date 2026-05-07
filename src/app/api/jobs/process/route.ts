@@ -18,6 +18,7 @@ import {
 import { mergeEnrichedCompany, mergeEnrichedContact } from "@/lib/enrichment/merger";
 import { finalizeRowsForReview } from "@/lib/utils/prereview";
 import { batchCheckCompaniesInHubSpot, normalizeDomain } from "@/lib/hubspot/companies";
+import { chunk } from "@/lib/utils/array";
 import { batchCheckContactsInHubSpot } from "@/lib/hubspot/contacts";
 import { queueJobChunk } from "@/lib/jobs/qstash";
 import type {
@@ -96,16 +97,6 @@ function fallbackAiContactRows(rows: RawContactRow[], errMsg: string): EnrichedC
       status: "pending",
     };
   });
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-function chunk<T>(rows: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
-  return out;
 }
 
 async function persistRowsByAiChunks(jobId: string, rows: unknown[]): Promise<void> {
@@ -388,7 +379,8 @@ async function handler(req: Request): Promise<Response> {
         for (const [rowId, zi] of ziMap) {
           const base = baseById.get(rowId) as EnrichedCompany | undefined;
           if (!base) continue;
-          const { cachedHit: _cachedHit, ...ziFields } = zi;
+          const { cachedHit, ...ziFields } = zi;
+          void cachedHit;
           const merged = mergeEnrichedCompany(base, ziFields, {});
           const targetIdx = allRows.findIndex((row) => row.id === rowId);
           if (targetIdx >= 0) allRows[targetIdx] = merged;
@@ -426,7 +418,6 @@ async function handler(req: Request): Promise<Response> {
       jobState.checkpointChunk = 0;
 
       // Phase 3: HubSpot pre-check now runs AFTER ZoomInfo so ZoomInfo domain is used as match key
-      console.log("[Jobs/Process] HubSpot precheck starting after ZoomInfo");
       const allRowsAfterZoom = (await getJobEnrichedRows(jobId, jobState.totalAiChunks)) as EnrichedCompany[] | EnrichedContact[];
       const prechecked = await runHubSpotPrecheck(jobState.listType, allRowsAfterZoom);
       await persistRowsByAiChunks(jobId, prechecked.rows);

@@ -5,6 +5,7 @@ import type {
   EnrichedContact,
   HubSpotFoldersApiResponse,
 } from "@/lib/utils/types";
+import { normalizeDomain } from "@/lib/utils/domain";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 const CARD_PANEL =
@@ -43,10 +44,6 @@ function PrePushEditableCell(props: {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(normalized);
 
-  useEffect(() => {
-    if (!editing) setDraft(value == null ? "" : String(value));
-  }, [value, editing]);
-
   const wrap = breakAll ? "break-all whitespace-normal" : "wrap-break-word";
 
   if (editing) {
@@ -81,7 +78,10 @@ function PrePushEditableCell(props: {
     <button
       type="button"
       className={`relative min-h-5 w-full max-w-50 rounded px-1.5 py-0.5 text-left text-xs sm:text-sm ${wrap} ${muted ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100"} hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
-      onClick={() => setEditing(true)}
+      onClick={() => {
+        setDraft(normalized);
+        setEditing(true);
+      }}
     >
       {normalized === "" ? <span className="text-zinc-400">—</span> : normalized}
     </button>
@@ -134,10 +134,6 @@ function websiteFromDomain(domain: string): string {
   return d ? `https://www.${d}` : "";
 }
 
-function normalizeDomainLocal(d: string): string {
-  return d.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0] ?? "";
-}
-
 type FieldPreviewEntry = { key: string; label: string; value: string };
 type FieldPreviewResult = {
   written: FieldPreviewEntry[];
@@ -166,7 +162,7 @@ function previewCompanyFields(
     }
   };
 
-  const domain = normalizeDomainLocal(company.domain ?? "");
+  const domain = normalizeDomain(company.domain ?? "");
   check("name", "Name", company.resolvedName?.trim() || company.rawInput?.trim() || "Unknown");
   check("domain", "Domain", domain);
   check("website", "Website", domain ? `https://www.${domain}` : "");
@@ -235,7 +231,6 @@ export interface PrePushScreenProps {
   approvedRows: Array<EnrichedCompany | EnrichedContact>;
   defaultListName: string;
   defaultLeadSourceDescription: string;
-  onBack: () => void;
   onPush: (settings: PrePushSettings) => void;
 }
 
@@ -244,7 +239,6 @@ export function PrePushScreen({
   approvedRows,
   defaultListName,
   defaultLeadSourceDescription,
-  onBack,
   onPush,
 }: PrePushScreenProps) {
   const [listName, setListName] = useState(defaultListName);
@@ -265,19 +259,25 @@ export function PrePushScreen({
   const [expandedPreviewRows, setExpandedPreviewRows] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    setListName(defaultListName);
+    queueMicrotask(() => {
+      setListName(defaultListName);
+    });
   }, [defaultListName]);
 
   useEffect(() => {
-    setLeadSourceDescription(dedupeLeadSourceDescriptionTail(defaultLeadSourceDescription));
+    queueMicrotask(() => {
+      setLeadSourceDescription(dedupeLeadSourceDescriptionTail(defaultLeadSourceDescription));
+    });
   }, [defaultLeadSourceDescription]);
 
   useEffect(() => {
-    if (listType !== "contacts") {
-      setContactEditRows(null);
-      return;
-    }
-    setContactEditRows((approvedRows as EnrichedContact[]).map((r) => ({ ...r })));
+    queueMicrotask(() => {
+      if (listType !== "contacts") {
+        setContactEditRows(null);
+        return;
+      }
+      setContactEditRows((approvedRows as EnrichedContact[]).map((r) => ({ ...r })));
+    });
   }, [listType, approvedRows]);
 
   const loadFolders = useCallback(() => {
@@ -311,14 +311,24 @@ export function PrePushScreen({
   }, []);
 
   useEffect(() => {
-    const cleanup = loadFolders();
-    return cleanup;
+    let cleanup: (() => void) | undefined;
+    const timer = setTimeout(() => {
+      cleanup = loadFolders();
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      cleanup?.();
+    };
   }, [loadFolders]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const saved = window.sessionStorage.getItem(FOLDER_SELECTION_SESSION_KEY);
-    if (saved) setFolderId(saved);
+    if (saved) {
+      queueMicrotask(() => {
+        setFolderId(saved);
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -327,27 +337,38 @@ export function PrePushScreen({
   }, [folderId]);
 
   const contactRowsForTable = contactEditRows ?? (approvedRows as EnrichedContact[]);
-  const hasExistingLeadSourceValues =
-    listType === "contacts"
-      ? contactRowsForTable.some((r) => (r.leadSource ?? "").trim().length > 0)
-      : false;
-  const hasExistingLeadSourceDescriptionValues =
-    listType === "contacts"
-      ? contactRowsForTable.some((r) => (r.leadSourceDescription ?? "").trim().length > 0)
-      : false;
-  const needsSharedLeadSourceDescriptionFallback =
-    listType === "contacts" &&
-    useExistingLeadSourceDescription &&
-    contactRowsForTable.some((r) => (r.leadSourceDescription ?? "").trim().length === 0);
+  const hasExistingLeadSourceValues = useMemo(
+    () =>
+      listType === "contacts"
+        ? contactRowsForTable.some((r) => (r.leadSource ?? "").trim().length > 0)
+        : false,
+    [listType, contactRowsForTable],
+  );
+  const hasExistingLeadSourceDescriptionValues = useMemo(
+    () =>
+      listType === "contacts"
+        ? contactRowsForTable.some((r) => (r.leadSourceDescription ?? "").trim().length > 0)
+        : false,
+    [listType, contactRowsForTable],
+  );
+  const needsSharedLeadSourceDescriptionFallback = useMemo(
+    () =>
+      listType === "contacts" &&
+      useExistingLeadSourceDescription &&
+      contactRowsForTable.some((r) => (r.leadSourceDescription ?? "").trim().length === 0),
+    [listType, useExistingLeadSourceDescription, contactRowsForTable],
+  );
 
   useEffect(() => {
-    if (listType !== "contacts") {
-      setUseExistingLeadSource(false);
-      setUseExistingLeadSourceDescription(false);
-      return;
-    }
-    setUseExistingLeadSource(hasExistingLeadSourceValues);
-    setUseExistingLeadSourceDescription(hasExistingLeadSourceDescriptionValues);
+    queueMicrotask(() => {
+      if (listType !== "contacts") {
+        setUseExistingLeadSource(false);
+        setUseExistingLeadSourceDescription(false);
+        return;
+      }
+      setUseExistingLeadSource(hasExistingLeadSourceValues);
+      setUseExistingLeadSourceDescription(hasExistingLeadSourceDescriptionValues);
+    });
   }, [listType, hasExistingLeadSourceValues, hasExistingLeadSourceDescriptionValues]);
 
   const canPush = useMemo(() => {
@@ -776,18 +797,11 @@ export function PrePushScreen({
           <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-start">
             <button
               type="button"
-              onClick={onBack}
-              className="rounded-lg bg-zinc-200 px-4 py-2 text-sm font-medium text-zinc-900 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
-            >
-              ← Back to Review
-            </button>
-            <button
-              type="button"
               disabled={!canPush}
               onClick={handlePush}
               className={`rounded-lg px-4 py-2 text-sm font-semibold ${
                 canPush
-                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  ? "bg-(--realm-purple) text-white hover:bg-(--realm-purple-hover)"
                   : "cursor-not-allowed bg-zinc-300 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"
               }`}
             >

@@ -191,8 +191,6 @@ export async function checkKvConnectivity(): Promise<void> {
     const val = await kv.get("__health_check__");
     if (String(val) !== "1") {
       console.error("[Cache] KV health check failed — reads not returning written values");
-    } else {
-      console.log("[Cache] KV connected and healthy");
     }
   } catch (err) {
     console.error(

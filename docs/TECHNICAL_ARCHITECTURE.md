@@ -48,7 +48,7 @@ src/
         linkedin-search/route.ts  # Anthropic + web_search for missing LinkedIn URLs
         prospector/route.ts       # Stub: returns { results: [] }
       hubspot/
-        precheck/route.ts # HubSpot existing-record pre-check before ZoomInfo
+        precheck/route.ts # HubSpot existing-record lookup endpoint (used after ZoomInfo resolution in current flow)
         push/route.ts     # NDJSON HubSpot push stream
         folders/route.ts  # GET list folders for PrePush UI
       manual-edits/route.ts  # GET/POST: KV-backed field overrides for review (stableKey + listType)
@@ -65,9 +65,10 @@ src/
   components/             # UI only (ReviewTable, PrePushScreen, SuccessScreen, etc.)
     StarterScreen.tsx
     CostEstimateScreen.tsx
+    EnrichmentProgressBars.tsx  # Shared per-phase progress bar component (event + bulk)
     ReasoningTooltip.tsx   # Shared hover + click-to-pin tooltip (review copy, header help)
   lib/
-    enrichment/           # ai-enricher, zoominfo-enricher, merger, commonroom-enricher
+    enrichment/           # ai-enricher, zoominfo-enricher, merger, commonroom-enricher, enrichment-utils (client-safe exports)
     hubspot/              # CRM API helpers (companies, contacts, lists, push-handler, push-result types)
     jobs/                 # qstash.ts — QStash publisher for `/api/jobs/process`
     parsers/              # CSV, Excel, column mapping
@@ -86,6 +87,24 @@ src/
 **Breadcrumb labels** (`NAV_STEPS` in `src/app/page.tsx`): Upload → Event Context → Enrichment → Review & Edit → Import Settings → Complete.
 
 **Internal `Step` union** (finer-grained): `"starter"` | `"upload"` | `"context"` | `"enriching"` | `"verifying"` | `"costestimate"` | `"prereview"` | `"enriched"` | `"prepush"` | `"pushing"` | `"complete"`.
+
+### Back-button labels and destructive-action guards (SPEC 4, retained in SPEC 5)
+
+All backward-navigation controls now describe their destination:
+
+| Location | Label | Behavior |
+|---|---|---|
+| Pre-Review | `← Back to Upload` | `resetToUpload(true)` — full reset; confirmation dialog shown when `enrichedRows.length > 0` |
+| Upload — bulk small-list warning | `← Back` | navigates to starter |
+| Event Context | `← Back` | `setStep("upload")` — state preserved |
+| Bulk progress — running | `Cancel & Start Over` | `cancelBulkJob()` → `resetToUpload(true)`; confirmation dialog shown when enrichment data exists |
+| Bulk progress — failed/cancelled | `Start Over` | unchanged — no data to preserve |
+| Pre-Push / Import Settings | `← Back to Review` | `setStep("enriched")` — state preserved |
+| Review & Edit | `← Back to Pre-Review` | `setStep("prereview")` — state preserved |
+| Complete | `Start New Import` | `resetToUpload(true)` — forward action, no confirmation needed |
+| EventContextForm | `← Back to Upload` | wired to `setStep("upload")` via `onBackToUpload` prop |
+
+The confirmation dialog uses `window.confirm()` with the message: `"This will discard your enrichment results and return to the start. Continue?"`
 
 Mapping:
 
@@ -143,6 +162,49 @@ Mapping:
 - **Client:** Loops `Math.ceil(totalRows / 15)` POSTs to `/api/enrich/zoominfo`, each body includes `chunkIndex`, `chunkSize: 15`, `totalRows`, `nonHighTotal`, `nonHighPrefixCount`, and a **slice** of rows.
 - **Server:** Processes only the slice; progress `start`/`end`/`total` use **global** row indices so the UI does not “reset” per chunk.
 - **Why 15:** With **`delayBetweenZoomInfoCalls(200)`** (200 ms between rows inside a chunk in `zoominfo/route.ts`) and external HTTP calls, keeping each invocation under **~9s** is feasible; monolithic “all rows in one request” timed out on large lists.
+
+### Enrichment progress display (SPEC 4 foundation, retained in SPEC 5)
+
+Both event mode and bulk mode use the shared **`<EnrichmentProgressBars>`** component (`src/components/EnrichmentProgressBars.tsx`). The component accepts a normalized `phases: Phase[]` array where each phase has `{ label, status: "complete" | "active" | "waiting", progress?: number, detail?: string }`. The parent is responsible for mapping mode-specific state to this shape.
+
+**Four phases in both modes:**
+
+| Phase | Event mode data source | Bulk mode data source |
+|---|---|---|
+| AI Analysis | `progress.startRow / progress.totalRows` | `jobState.currentPhase === "ai"` + `aiComplete` |
+| ZoomInfo & Common Room (event) / ZoomInfo Enrichment (bulk) | `progress.endRow / progress.totalRows` + `verifyDetail` | `jobState.currentPhase === "zoominfo"` + `zoomInfoComplete` |
+| HubSpot Check | Transitions to complete automatically when ZoomInfo bar reaches 100% (no sub-progress) | Same instant-complete pattern from `precheckComplete` |
+| LinkedIn Search | Row count of LinkedIn-missing rows processed | `jobState.currentPhase === "linkedin"` + `linkedInComplete` |
+
+**Visual states:**
+- Completed: filled bar, green tint, `✅` icon
+- Active: partially filled, brand purple, animated pulse on leading edge, `⏳` icon
+- Waiting: empty bar, gray, `○` icon, label at 50% opacity
+
+Phase detail text (e.g. "ZoomInfo enriching 22 of 47…") appears as a subtitle under the active bar only. Bulk mode retains the overall `processedRows / totalRows` percentage bar above the phase bars as a summary indicator.
+
+### EventContextForm changes (SPEC 4 foundation, retained in SPEC 5)
+
+**Date field (month + year) is optional in event mode.** The `required` attribute is removed from both selects. The submit guard `if (!monthYearForPrompt.trim()) return;` is removed. Labels show `(optional)`. In `ai-enricher.ts`, prompt construction skips the date sentence when `monthYearForPrompt` is empty rather than inserting a blank.
+
+**State/region picker replaced with a single searchable combobox.** The previous multi-stage control (root select + state sub-picker + region sub-picker + non-US text input) is replaced by a single text input that:
+- Displays placeholder `Search states or regions…`
+- Filters options in real time by case-insensitive substring match
+- Shows two labeled sections in the dropdown: **States** (51 options) and **Regions** (7 macro-regions)
+- Sets `region` directly on selection; shows a `×` clear button when a value is selected
+- Is keyboard navigable (arrow keys, Enter to select, Escape to close)
+
+State variables removed: `locationView`, `nonUsRegion`. `region` is now set directly by combobox selection. `noStateRegionSelected` derives from `region.trim() === ""`. The Non-US text input and all guards referencing it are removed. `effectiveRegion = region.trim()` (no longer `nonUsRegion.trim() || region.trim()`).
+
+### Pre-Review summary card (SPEC 4 foundation, retained in SPEC 5)
+
+`PreReviewGate.tsx` — orphaned `<hr>` at the bottom of the enrichment summary card removed. Six stats reorganized into three groups separated by faint `border-t` dividers:
+
+- **Group 1 — Records:** Records processed, Found in HubSpot, Common Room matches (conditional)
+- **Group 2 — Enrichment signals:** ZoomInfo credits used, LinkedIn URLs found from AI
+- **Group 3 — Run metadata:** Total time
+
+No new props required — all data is already on `enrichmentSummary`.
 
 ### Pre-Review behavior (current)
 
@@ -244,6 +306,10 @@ Order on the client (event mode):
 1. **AI enrichment** (batched `/api/enrich/ai`)
 2. **ZoomInfo verify** (chunked `/api/enrich/zoominfo` — includes Common Room + Prospector stub + ZoomInfo)
 3. **LinkedIn fallback** (`runLinkedInLookupPass` → `/api/enrich/linkedin-search` with `{ contact }` when `linkedinUrl` still empty)
+
+### Pure enrichment utilities split (SPEC 1 / server-side safety)
+
+`ENRICHMENT_BATCH_SIZE`, `needsLinkedInLookup`, and `needsCompanyLinkedInLookup` live in **`src/lib/enrichment/enrichment-utils.ts`** — a pure file with no server-side imports. `page.tsx` (a client component) imports from this file rather than from `ai-enricher.ts`, preventing the Upstash Redis client from being bundled into the browser build. `ai-enricher.ts` imports `ENRICHMENT_BATCH_SIZE` from `enrichment-utils.ts` for internal use.
 
 ### Pre-populated contacts (skip main AI prompt)
 
@@ -432,6 +498,9 @@ Priority order for display fields: **Common Room / Prospector** first for `linke
 
 | Item | Notes |
 |------|--------|
+| **SPEC-5 error sanitization not fully complete** | Two paths still expose raw error details client-side: `enrich/ai` batch 500 detail and `enrich/zoominfo` streamed error message. |
+| **SPEC-5 bulk polling UX follow-up** | Polling-failure escalation exists, but no explicit user-triggered retry control is shown after repeated failures. |
+| **SPEC-5 style consistency follow-up** | Secondary button and tiny-font normalization is mostly complete but still has a few remaining non-tokenized/legacy UI patterns. |
 | **Common Room Prospector** | Stub route only; no live REST integration (see `prospector/route.ts` comment). |
 | **ZoomInfo contact `linkedInUrl` field** | Product/plan may not expose a direct field; app uses **`externalUrls`** for LinkedIn. |
 | **`industry` vs `industries`** | Company enrich expects **`industries`** array in API — code was aligned to that (see `zoominfo-enricher.ts`). |

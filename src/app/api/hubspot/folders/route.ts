@@ -18,10 +18,9 @@ export async function GET(): Promise<Response> {
     const folders = await fetchHubSpotListFolders();
     return Response.json({ folders });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Internal server error";
+    console.error("[hubspot/folders] unexpected error:", err);
     return Response.json(
-      { error: message, detail: String(err) },
+      { error: "Internal server error", detail: "Failed to load HubSpot folders. Check your HubSpot connection." },
       { status: 500 },
     );
   }

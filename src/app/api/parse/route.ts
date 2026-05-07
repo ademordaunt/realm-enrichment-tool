@@ -128,7 +128,7 @@ export async function POST(request: Request): Promise<Response> {
   } catch (err) {
     console.error(err);
     return NextResponse.json(
-      { error: "Internal server error", detail: String(err) },
+      { error: "Internal server error", detail: "Failed to parse file. Please check the file format and try again." },
       { status: 500 },
     );
   }

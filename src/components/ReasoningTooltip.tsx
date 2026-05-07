@@ -55,10 +55,7 @@ export function ReasoningTooltip(props: ReasoningTooltipProps) {
   }, []);
 
   useLayoutEffect(() => {
-    if (!visible) {
-      setCoords(null);
-      return;
-    }
+    if (!visible) return;
     updatePosition();
     const handler = () => updatePosition();
     window.addEventListener("scroll", handler, true);
