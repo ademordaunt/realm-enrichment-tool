@@ -204,7 +204,7 @@ export function useHubSpotPush(options: HubSpotPushOptions) {
     } catch (e) {
       const message = e instanceof Error ? e.message : "HubSpot push failed.";
       setPushError(message);
-      const listSnap = pushListCreatedRef.current;
+      const listSnap = pushListCreatedRef.current as HubSpotPushListSnapshot | null;
       setPushResult({
         created: 0,
         updated: 0,

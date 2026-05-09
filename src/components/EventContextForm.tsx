@@ -537,7 +537,7 @@ export function EventContextForm({
           <button
             type="submit"
             disabled={disabled}
-            className="rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-medium text-white transition-[background-color,transform] duration-75 hover:bg-(--realm-purple-hover) active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {importMode === "bulk" ? "Run AI Cleaning" : "Run Enrichment Pipeline"}
           </button>

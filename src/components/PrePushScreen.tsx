@@ -801,7 +801,7 @@ export function PrePushScreen({
               onClick={handlePush}
               className={`rounded-lg px-4 py-2 text-sm font-semibold ${
                 canPush
-                  ? "bg-(--realm-purple) text-white hover:bg-(--realm-purple-hover)"
+                  ? "bg-(--realm-purple) text-white transition-transform duration-75 hover:bg-(--realm-purple-hover) active:scale-95"
                   : "cursor-not-allowed bg-zinc-300 text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400"
               }`}
             >

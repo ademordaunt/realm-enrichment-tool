@@ -7,7 +7,7 @@ import type { ListType, ParseResponse, RawCompanyRow, RawContactRow } from "@/li
 const ACCEPT = ".csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
 const PREVIEW_MAX_ROWS = 50;
 const PRIMARY_ACTION_BUTTON =
-  "rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-50";
+  "rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white transition-transform duration-75 hover:bg-(--realm-purple-hover) active:scale-95 disabled:cursor-not-allowed disabled:opacity-50";
 const UPLOAD_FADE_IN = "animate-[fadeIn_0.3s_ease-in]";
 
 const STANDARD_PREVIEW_FIELDS = new Set<string>([

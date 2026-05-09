@@ -1,67 +1,48 @@
-# Realm Enrichment Tool — Current State & Health Snapshot (Post-SPEC 5)
+# Realm Enrichment Tool — Current State & Health Snapshot
 
 ## Overall Status
 
-Core enrichment and push workflows are stable for day-to-day operation in both event and bulk modes. SPEC-5 cleanup work is mostly implemented, with a small set of final hardening tasks still open.
+Core enrichment and HubSpot push workflows are stable in event and bulk modes. Structural refactors and UI polish from prior specs are in production. Remaining work is narrow and isolated.
 
-## What Is Working Reliably
+## What Works Reliably
 
-- Three-phase enrichment architecture (AI -> ZoomInfo/Common Room -> HubSpot pre-check) is running consistently in event and bulk flows.
-- HubSpot selective overwrite logic is active and field-specific; identity keys (`domain`, `email`) remain protected.
-- Contact-to-company association is attempted on every contact push with post-push reporting for unmatched/no-domain cases.
-- Caching, row finalization, and bucketing behavior are materially improved and stable for repeated operational use.
-- SPEC-4 UX improvements are live: stacked phase bars, consistent back-navigation labeling, pre-review summary card grouping, optional date, and searchable state/region combobox.
-- SPEC-5 delivered meaningful cleanup: dead-code removal, shared utility consolidation, memoization of heavy UI derivations, and race-condition guards for parse and polling paths.
+- Pipeline execution order is consistent in both modes: AI -> ZoomInfo/Common Room enrichment -> HubSpot pre-check -> LinkedIn fallback.
+- Wizard orchestration is split across dedicated hooks (`useEnrichmentPipeline`, `useBulkJob`, `useWizardSession`, `useHubSpotPush`) with `page.tsx` acting as a thinner coordinator.
+- Heavy screens are code-split (`EventContextForm`, `PrePushScreen`, `ReviewTable`, `PreReviewGate`; bulk progress is dynamically loaded by `EnrichingStep`).
+- Contact-to-company association is attempted on every contact push with explicit post-push counts for associated, domain-not-found, and no-domain contacts.
+- Manual edits are batched for review initialization (`POST /api/manual-edits/batch`) and persisted in KV.
+- Bulk row hydration now validates row shape and skips malformed KV rows instead of crashing review load.
 
-## SPEC-5 Completion Check (Current)
+## Lead Source Behavior (Post Fix)
 
-### Completed
+- Contact pushes now use a per-row extras resolver in `push-handler.ts`.
+- `useExistingLeadSource` and `useExistingLeadSourceDescription` are honored per contact row:
+  - when enabled, CSV row values are used;
+  - when disabled, global Import Settings values are used.
+- Contact HubSpot writes keep Lead Source fields fill-empty-only semantics in `contacts.ts`.
+- Company pushes still use global extras (not per-row CSV toggles), which is intentional in current implementation.
 
-- Dead code removed (`EnrichmentProgress`, unused list helper export).
-- Shared helpers added (`isRecord`, `chunk`, and consolidated domain normalization where safe).
-- Production `console.log` noise removed from core `src/` paths (dev diagnostic route intentionally excluded).
-- Bulk polling in-flight guard and parse stale-response guard implemented.
-- Unhandled promise rejection fixes added for logout and notification-permission paths.
-- Manual edits route validation hardened (field allowlist, length caps, generic validation errors).
-- Review and pre-review UI/UX consistency improvements are in place (memoization, empty/positive states, destructive button treatment, combobox ARIA, step focus management).
+## Open Follow-Ups
 
-### Still Open (Blocking Full "Complete" Label)
+- Bulk polling failure UI escalates warnings by failure count, but the 3+ failure state still lacks an explicit retry button.
+- Secondary button and micro-typography normalization is mostly complete but not yet fully tokenized in all UI surfaces.
 
-- Two server responses can still expose raw exception text to clients in edge error paths:
-  - `src/app/api/enrich/ai/route.ts` (batch error `detail`)
-  - `src/app/api/enrich/zoominfo/route.ts` (streamed error message)
-- Bulk polling failure UX shows warnings/escalation but does not yet provide an explicit retry action after repeated failures.
-- Secondary button and micro-typography unification is mostly done but not fully standardized in all remaining screens.
+## Fragile Areas
 
-## Fragile Areas (Watch Closely)
+- Contact identity edge cases still risk duplicate creation (email drift, no-email rows, ambiguous existing CRM records).
+- HubSpot folder API response-shape drift remains a watch area.
+- Very large runs remain linear in runtime/cost despite bulk background processing.
 
-- Contact identity edge cases still risk duplicate creation (email format drift, personal-only/no-email scenarios).
-- HubSpot folder API response shape changes can still break assumptions despite current defensive parsing.
-- Very large runs remain expensive and linear in duration; background processing helps but does not change asymptotic runtime.
+## Product Gaps (Known)
 
-## What Is Still Incomplete (Product-Level)
-
-- Owner assignment remains workflow-driven in HubSpot (not directly assigned by the tool).
+- Owner assignment is still workflow-driven in HubSpot (tool does not directly assign owners).
 - Automated test coverage remains limited; validation is still heavily runtime/manual.
-- Parse UX for severely malformed inputs is improved but not fully operator-guided at per-row granularity.
+- Parse UX for severely malformed inputs is improved but not fully operator-guided at per-row level.
 
 ## HubSpot Integration Health
 
 MEDIUM-HIGH for intended event-import workflows.
 
-- Reliable: list creation/reuse, create/update batching, selective overwrite, association attempts.
-- Improving but not perfect: contact identity matching and duplicate avoidance in edge cases.
-- Operationally dependent: owner assignment workflows and follow-up verification in HubSpot.
-
-## Operator Judgment Still Required
-
-- Membership Notes and Lead Source Description quality.
-- International include/exclude judgment in borderline records.
-- Spot checks for AI web-search LinkedIn URLs in trusted rows.
-- Post-push owner-assignment verification for unassociated contacts.
-
-## Biggest New-Operator Risks
-
-- Treating pre-check results as complete identity truth for contacts.
-- Underestimating how much review is still needed for ambiguous LinkedIn or company-identity rows.
-- Running high-stakes imports without understanding cache state and source-of-truth precedence.
+- Reliable: list create/reuse, dedupe-and-match flow, batch create/update, associations.
+- Residual risk: contact identity matching in edge cases.
+- Operational dependency: owner-assignment workflows and post-push verification.

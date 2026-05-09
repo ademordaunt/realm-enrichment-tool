@@ -5,7 +5,16 @@ import { useRouter, useSearchParams } from "next/navigation";
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={null}>
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-(--bg-page) px-4">
+          <div className="flex items-center gap-2 text-sm text-(--text-muted)" role="status" aria-live="polite">
+            <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />
+            <span>Loading sign in...</span>
+          </div>
+        </main>
+      }
+    >
       <LoginPageContent />
     </Suspense>
   );
@@ -95,7 +104,7 @@ function LoginPageContent() {
         <button
           type="submit"
           disabled={busy}
-          className="mt-4 w-full rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-60"
+          className="mt-4 w-full rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white transition-transform duration-75 hover:bg-(--realm-purple-hover) active:scale-95 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {busy ? "Signing in..." : "Enter"}
         </button>

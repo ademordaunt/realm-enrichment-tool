@@ -1,4 +1,4 @@
-# Realm Enrichment Tool — Product Brief (Post-SPEC 5)
+# Realm Enrichment Tool — Product Brief
 
 ## What It Is
 A web app that transforms raw marketing event CSVs into clean, enriched lead lists and pushes them into HubSpot as static lists. Supports both company lists and contact lists across a wide variety of input formats.
@@ -7,8 +7,8 @@ Every marketing event produces an attendee spreadsheet in a different format wit
 ## Who Uses It
 Primary user: Tyler (marketing ops). One person. Technical level: comfortable with web tools, has Claude Code, builds websites. Can modify and extend the codebase independently. Secondary context: built and maintained by Casey (rev ops). No other users intended.
 
-## Pipeline Architecture — Three Phases
-The pipeline runs in three phases. This is the load-bearing design decision of the entire tool.
+## Pipeline Architecture
+The enrichment flow is phase-based with a final LinkedIn fallback pass.
 ### Phase 1 — Collect Independently
 All sources run and return their raw payloads before any merging occurs. Nothing overwrites anything in this phase.
 Collection order (companies):
@@ -33,6 +33,9 @@ Use work email as the match key for contact create vs. update, with name + compa
 Write only fields where the merged value improves on what HubSpot already has, per field-specific write rules.
 Never overwrite email or domain.
 Before writing each contact, attempt domain-based company lookup and write a structural HubSpot association if found.
+
+### Final pass — LinkedIn fallback
+After verify/pre-check, rows still missing LinkedIn URLs go through the LinkedIn search route and are tagged with source metadata for review.
 
 ## Supported Input Formats
 The tool uses fuzzy column name matching. A wide range of header labels map to the correct fields automatically.
@@ -130,7 +133,8 @@ Domain and email are never overwritten.
 LinkedIn is never overwritten pre-review. Post-review, operator-approved value is written as truth.
 Fast-aging fields (state, employees, revenue, city) are overwritten with ZoomInfo values.
 Stable or curated fields (industry, description, LinkedIn, phone) are fill-empty-only.
-Operator-set fields (lead source, lead source description, membership notes) are never touched by enrichment.
+Operator-set fields are controlled by explicit push rules, not generic enrichment writes.
+For contacts, Lead Source and Lead Source Description are resolved per row from Import Settings and optional CSV override toggles, then written fill-empty-only.
 
 ## Contact-to-Company Association
 During a contact push, the tool always attempts a domain-based company lookup before writing the contact.
@@ -174,20 +178,10 @@ Hosted on Vercel
 Codebase shared with Tyler via GitHub
 ZoomInfo credits and Anthropic costs tied to Casey's accounts — transfer to shared/team accounts before full handoff
 ## Current Maturity
-Post-SPEC 5. SPEC 1 through SPEC 4 scope is fully implemented, and SPEC-5 cleanup scope is mostly implemented with a short remaining hardening list.
 
-Delivered through SPEC-5:
+- Architecture and UX are in a stable, production-usable state for the intended operator workflow.
+- Core refactor goals are complete: hook-based orchestration, step-level component extraction, dynamic imports for heavy screens, batch manual-edit hydration, and defensive bulk row validation.
+- Contact Lead Source behavior is now explicit and controllable through Import Settings + per-row CSV override toggles.
+- Remaining work is narrow follow-up polish (bulk polling retry action and full secondary/tiny-type token convergence), not foundational reliability work.
 
-- Code health improvements (dead-code removal, duplicated helper consolidation, lower-debug-noise production paths).
-- Correctness/stability hardening (polling and parse race guards, unhandled promise rejection cleanup).
-- Security improvements (manual edit input constraints and broader server-side error sanitization patterns).
-- Performance-focused UI refinements (memoization of heavy derivations, clearer empty states).
-- Consistency/accessibility improvements (button style convergence, combobox ARIA contract, focus management on step transitions).
-
-Known remaining SPEC-5 follow-up items:
-
-- Fully sanitize two remaining client-visible raw error paths.
-- Add explicit retry control for repeated bulk polling failures.
-- Finish final secondary-button and tiny-typography normalization in remaining screens.
-
-HubSpot integration health remains MEDIUM-HIGH for intended event-list workflows. Residual risk is concentrated in contact identity edge cases (email mismatches, no-email rows, ambiguous existing CRM records), not in the core pipeline sequence.
+HubSpot integration health is MEDIUM-HIGH for intended event-list workflows. Residual risk is concentrated in contact identity edge cases rather than pipeline sequencing.

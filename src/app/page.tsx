@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { CostEstimateScreen } from "@/components/CostEstimateScreen";
 import { EnrichingStep } from "@/components/EnrichingStep";
 import { PushingStep } from "@/components/PushingStep";
+import { ReviewTableSkeleton } from "@/components/ReviewTableSkeleton";
 import { StarterScreen } from "@/components/StarterScreen";
 import { UploadStep } from "@/components/UploadStep";
 import { SuccessScreen } from "@/components/SuccessScreen";
@@ -18,6 +19,7 @@ import type {
   EnrichedCompany, EnrichedContact, EventContext,
   ListType, ParseResponse, RawCompanyRow, RawContactRow,
 } from "@/lib/utils/types";
+import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 const EventContextForm = dynamic(
@@ -30,7 +32,7 @@ const PrePushScreen = dynamic(
 );
 const ReviewTable = dynamic(
   () => import("@/components/ReviewTable").then((m) => ({ default: m.ReviewTable })),
-  { loading: () => null },
+  { loading: () => <ReviewTableSkeleton /> },
 );
 const PreReviewGate = dynamic(
   () => import("@/components/PreReviewGate").then((m) => ({ default: m.PreReviewGate })),
@@ -402,6 +404,7 @@ export default function Home() {
     (wizardImportMode === "event" && (step === "enriching" || step === "verifying")) ||
     (wizardImportMode === "bulk" && step === "enriching" &&
       (bulk.bulkJobState?.status === "queued" || bulk.bulkJobState?.status === "running"));
+  const isEnrichmentProgressStep = step === "enriching" || step === "verifying";
 
   const { pushResult } = push;
   const onBreadcrumbClick = useCallback((index: number) => {
@@ -429,9 +432,15 @@ export default function Home() {
   return (
     <div className="flex min-h-screen flex-1 flex-col bg-(--bg-page)">
       {enrichPipeline.showEnrichmentCompleteBanner ? (
-        <div className="fixed top-14 left-0 right-0 z-40 border-b border-emerald-700/20 bg-emerald-600 px-4 py-3 text-center text-sm font-medium text-white shadow-sm" role="status">
+        <motion.div
+          initial={{ opacity: 0, scale: 1 }}
+          animate={{ opacity: 1, scale: [1, 1.02, 1] }}
+          transition={{ duration: 1, ease: "easeOut" }}
+          className="fixed top-14 left-0 right-0 z-40 border-b border-emerald-700/20 bg-emerald-600 px-4 py-3 text-center text-sm font-medium text-white shadow-sm"
+          role="status"
+        >
           {enrichPipeline.completionBannerText}
-        </div>
+        </motion.div>
       ) : null}
 
       <header className="fixed top-0 left-0 right-0 z-50 grid h-14 w-full grid-cols-1 items-center bg-(--realm-navy) px-4 shadow-(--shadow-card) sm:px-6 md:grid-cols-[1fr_auto_1fr]">
@@ -475,70 +484,7 @@ export default function Home() {
           <button type="button" onClick={() => { if (enriched && enriched.length > 0 && !window.confirm("This will discard your enrichment results and return to the start. Continue?")) return; session.resetToUpload(true); }} className="self-start text-sm text-(--text-muted) hover:text-(--text-primary)">← Back to Upload</button>
         ) : null}
 
-        {step === "starter" && (
-          <StarterScreen onSelectMode={(mode) => { setWizardImportMode(mode); setStep("upload"); }} />
-        )}
-
-        {step === "costestimate" && enrichPipeline.costEstimateMeta ? (
-          <CostEstimateScreen
-            totalRows={enrichPipeline.costEstimateMeta.totalRows}
-            hubspotCompleteCount={enrichPipeline.costEstimateMeta.hubspotCompleteCount}
-            onProceed={enrichPipeline.proceedFromCostEstimate}
-            onBack={enrichPipeline.backFromCostEstimate}
-          />
-        ) : null}
-
-        {step === "upload" && (
-          <UploadStep
-            wizardImportMode={wizardImportMode}
-            bulkSmallListBypass={bulkSmallListBypass}
-            file={file}
-            busy={busy}
-            error={error}
-            result={result}
-            showSuccessFlash={showSuccessFlash}
-            effectiveListType={effectiveListType}
-            effectiveRowCount={effectiveRowCount}
-            resolvedListType={resolvedListType}
-            workingRows={workingRows}
-            displayRows={displayRows}
-            previewRowsOverride={previewRowsOverride}
-            activeNormalizedHeaders={activeNormalizedHeaders}
-            activeOriginalHeaders={activeOriginalHeaders}
-            duplicateExemptPairs={duplicateExemptPairs}
-            dupFeedback={dupFeedback}
-            duplicateSessionTotal={duplicateSessionTotal}
-            removeAllDupConfirm={removeAllDupConfirm}
-            removeAllDupMsgTimeoutRef={removeAllDupMsgTimeoutRef}
-            onFiles={onFiles}
-            parseFile={parseFile}
-            startNewImport={session.startNewImport}
-            setStep={setStep}
-            setPreviewRowsOverride={setPreviewRowsOverride}
-            setDuplicateExemptPairs={setDuplicateExemptPairs}
-            setDupFeedback={setDupFeedback}
-            setRemoveAllDupConfirm={setRemoveAllDupConfirm}
-            setBulkSmallListBypass={setBulkSmallListBypass}
-            resetToUpload={resetToUpload}
-          />
-        )}
-
-        {step === "context" && resolvedListType && (
-          <div className="flex w-full flex-1 flex-col justify-center gap-4 py-6">
-            {enrichError && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-100" role="alert">{enrichError}</div>
-            )}
-            <EventContextForm
-              listType={resolvedListType}
-              sourceFileName={file?.name ?? null}
-              initialValues={eventContext}
-              importMode={wizardImportMode}
-              onSubmit={(ctx) => wizardImportMode === "bulk" ? void bulk.startBulkJob(ctx) : void enrichPipeline.runEnrichment(ctx)}
-            />
-          </div>
-        )}
-
-        {(step === "enriching" || step === "verifying") && (
+        {isEnrichmentProgressStep ? (
           <EnrichingStep
             step={step}
             wizardImportMode={wizardImportMode}
@@ -552,68 +498,145 @@ export default function Home() {
             handleContinueToReview={bulk.handleContinueToReview}
             cancelEnrichmentToContext={enrichPipeline.cancelEnrichmentToContext}
           />
-        )}
+        ) : (
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={step}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.18, ease: "easeOut" }}
+            >
+              {step === "starter" && (
+                <StarterScreen onSelectMode={(mode) => { setWizardImportMode(mode); setStep("upload"); }} />
+              )}
 
-        {step === "prereview" && enriched && enrichedListType && (
-          <PreReviewGate
-            rows={enriched}
-            listType={enrichedListType}
-            enrichmentSummary={enrichPipeline.eventEnrichmentSummary}
-            onContinue={(updatedRows) => {
-              const lt = enrichedListType!;
-              const finalizeOpts = { importMode: eventContext?.importMode ?? wizardImportMode };
-              const finalized = lt === "companies"
-                ? finalizeRowsForReview(updatedRows as EnrichedCompany[], "companies", finalizeOpts)
-                : finalizeRowsForReview(updatedRows as EnrichedContact[], "contacts", finalizeOpts);
-              setEnriched(finalized);
-              setStep("enriched");
-            }}
-          />
-        )}
+              {step === "costestimate" && enrichPipeline.costEstimateMeta ? (
+                <CostEstimateScreen
+                  totalRows={enrichPipeline.costEstimateMeta.totalRows}
+                  hubspotCompleteCount={enrichPipeline.costEstimateMeta.hubspotCompleteCount}
+                  onProceed={enrichPipeline.proceedFromCostEstimate}
+                  onBack={enrichPipeline.backFromCostEstimate}
+                />
+              ) : null}
 
-        {step === "enriched" && enriched && enrichedListType && (
-          <section className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 pb-24 shadow-(--shadow-card)">
-            {push.pushError && (
-              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-100" role="alert">{push.pushError}</div>
-            )}
-            {enrichError && (
-              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/80 dark:bg-amber-950/40 dark:text-amber-100" role="status">{enrichError}</div>
-            )}
-            {zoomInfoVerifySummary?.kind === "credentials" ? (
-              <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/80 dark:bg-amber-950/40 dark:text-amber-100" role="alert">ZoomInfo: credentials not configured</div>
-            ) : null}
-            <div className="mt-4">
-              <ReviewTable
-                rows={reviewRows}
-                listType={enrichedListType}
-                onRowsChange={setReviewRows}
-                onApprove={() => { push.setPushError(null); setStep("prepush"); }}
-              />
-            </div>
-          </section>
-        )}
+              {step === "upload" && (
+                <UploadStep
+                  wizardImportMode={wizardImportMode}
+                  bulkSmallListBypass={bulkSmallListBypass}
+                  file={file}
+                  busy={busy}
+                  error={error}
+                  result={result}
+                  showSuccessFlash={showSuccessFlash}
+                  effectiveListType={effectiveListType}
+                  effectiveRowCount={effectiveRowCount}
+                  resolvedListType={resolvedListType}
+                  workingRows={workingRows}
+                  displayRows={displayRows}
+                  previewRowsOverride={previewRowsOverride}
+                  activeNormalizedHeaders={activeNormalizedHeaders}
+                  activeOriginalHeaders={activeOriginalHeaders}
+                  duplicateExemptPairs={duplicateExemptPairs}
+                  dupFeedback={dupFeedback}
+                  duplicateSessionTotal={duplicateSessionTotal}
+                  removeAllDupConfirm={removeAllDupConfirm}
+                  removeAllDupMsgTimeoutRef={removeAllDupMsgTimeoutRef}
+                  onFiles={onFiles}
+                  parseFile={parseFile}
+                  startNewImport={session.startNewImport}
+                  setStep={setStep}
+                  setPreviewRowsOverride={setPreviewRowsOverride}
+                  setDuplicateExemptPairs={setDuplicateExemptPairs}
+                  setDupFeedback={setDupFeedback}
+                  setRemoveAllDupConfirm={setRemoveAllDupConfirm}
+                  setBulkSmallListBypass={setBulkSmallListBypass}
+                  resetToUpload={resetToUpload}
+                />
+              )}
 
-        {step === "prepush" && enriched && enrichedListType && eventContext && approvedRowsForPush.length > 0 && (
-          <PrePushScreen
-            listType={enrichedListType}
-            approvedRows={approvedRowsForPush}
-            defaultListName={eventContext.eventName}
-            defaultLeadSourceDescription={enrichedListType === "contacts" ? formatContactDefaultLeadSourceDescription(eventContext) : ""}
-            onPush={(settings: PrePushSettings) => void push.runHubSpotPush(settings)}
-          />
-        )}
+              {step === "context" && resolvedListType && (
+                <div className="flex w-full flex-1 flex-col justify-center gap-4 py-6">
+                  {enrichError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-100" role="alert">{enrichError}</div>
+                  )}
+                  <EventContextForm
+                    listType={resolvedListType}
+                    sourceFileName={file?.name ?? null}
+                    initialValues={eventContext}
+                    importMode={wizardImportMode}
+                    onSubmit={(ctx) => wizardImportMode === "bulk" ? void bulk.startBulkJob(ctx) : void enrichPipeline.runEnrichment(ctx)}
+                  />
+                </div>
+              )}
 
-        {step === "pushing" && push.pushProgress && (
-          <PushingStep pushProgress={push.pushProgress} pushListCreatedMeta={push.pushListCreatedMeta} />
-        )}
+              {step === "prereview" && enriched && enrichedListType && (
+                <PreReviewGate
+                  rows={enriched}
+                  listType={enrichedListType}
+                  enrichmentSummary={enrichPipeline.eventEnrichmentSummary}
+                  onContinue={(updatedRows) => {
+                    const lt = enrichedListType!;
+                    const finalizeOpts = { importMode: eventContext?.importMode ?? wizardImportMode };
+                    const finalized = lt === "companies"
+                      ? finalizeRowsForReview(updatedRows as EnrichedCompany[], "companies", finalizeOpts)
+                      : finalizeRowsForReview(updatedRows as EnrichedContact[], "contacts", finalizeOpts);
+                    setEnriched(finalized);
+                    setStep("enriched");
+                  }}
+                />
+              )}
 
-        {step === "complete" && push.pushResult && (
-          <SuccessScreen
-            result={push.pushResult}
-            rowsById={approvedRowsById}
-            leadSourceUsed={push.lastPushLeadSource ?? undefined}
-            onStartNew={session.startNewImport}
-          />
+              {step === "enriched" && enriched && enrichedListType && (
+                <section className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 pb-24 shadow-(--shadow-card)">
+                  {push.pushError && (
+                    <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-100" role="alert">{push.pushError}</div>
+                  )}
+                  {enrichError && (
+                    <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/80 dark:bg-amber-950/40 dark:text-amber-100" role="status">{enrichError}</div>
+                  )}
+                  {zoomInfoVerifySummary?.kind === "credentials" ? (
+                    <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/80 dark:bg-amber-950/40 dark:text-amber-100" role="alert">ZoomInfo: credentials not configured</div>
+                  ) : null}
+                  <div className="mt-4">
+                    {reviewRows.length === 0 ? (
+                      <ReviewTableSkeleton />
+                    ) : (
+                      <ReviewTable
+                        rows={reviewRows}
+                        listType={enrichedListType}
+                        onRowsChange={setReviewRows}
+                        onApprove={() => { push.setPushError(null); setStep("prepush"); }}
+                      />
+                    )}
+                  </div>
+                </section>
+              )}
+
+              {step === "prepush" && enriched && enrichedListType && eventContext && approvedRowsForPush.length > 0 && (
+                <PrePushScreen
+                  listType={enrichedListType}
+                  approvedRows={approvedRowsForPush}
+                  defaultListName={eventContext.eventName}
+                  defaultLeadSourceDescription={enrichedListType === "contacts" ? formatContactDefaultLeadSourceDescription(eventContext) : ""}
+                  onPush={(settings: PrePushSettings) => void push.runHubSpotPush(settings)}
+                />
+              )}
+
+              {step === "pushing" && push.pushProgress && (
+                <PushingStep pushProgress={push.pushProgress} pushListCreatedMeta={push.pushListCreatedMeta} />
+              )}
+
+              {step === "complete" && push.pushResult && (
+                <SuccessScreen
+                  result={push.pushResult}
+                  rowsById={approvedRowsById}
+                  leadSourceUsed={push.lastPushLeadSource ?? undefined}
+                  onStartNew={session.startNewImport}
+                />
+              )}
+            </motion.div>
+          </AnimatePresence>
         )}
       </main>
     </div>

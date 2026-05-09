@@ -16,7 +16,7 @@ import type {
   LinkedInSource,
 } from "@/lib/utils/types";
 import type { ReactNode } from "react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export interface ReviewTableProps {
   rows: EnrichedCompany[] | EnrichedContact[];
@@ -168,6 +168,7 @@ function websiteFromDomain(domain: string): string {
 }
 
 type FilterKey = "all" | "needs_review" | "trusted" | "excluded";
+const APPROVE_ALL_STAGGER_MS = 20;
 
 const CONFIDENCE_ORDER: Record<EnrichedCompany["confidenceScore"], number> = {
   unresolved: 0,
@@ -678,6 +679,7 @@ function LinkedInProfileCell(props: {
 export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewTableProps) {
   const [editedKeys, setEditedKeys] = useState<Set<string>>(() => new Set());
   const [filter, setFilter] = useState<FilterKey>("all");
+  const approveAllTimerIdsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const editSessionKey = useMemo(
     () => `${listType}:${rows.map((r) => r.id).join("|")}`,
     [listType, rows],
@@ -837,27 +839,47 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     [filteredByShowFilter],
   );
 
-  const selectAll = useCallback(() => {
-    if (listType === "companies") {
-      setRows(
-        (rows as EnrichedCompany[]).map((r) =>
-          filteredRowIds.has(r.id) && r.reviewBucket !== "excluded"
-            ? { ...r, status: "approved" as const }
-            : r,
-        ),
-      );
-    } else {
-      setRows(
-        (rows as EnrichedContact[]).map((r) =>
-          filteredRowIds.has(r.id) && r.reviewBucket !== "excluded"
-            ? { ...r, status: "approved" as const }
-            : r,
-        ),
-      );
+  const clearApproveAllTimers = useCallback(() => {
+    for (const timerId of approveAllTimerIdsRef.current) {
+      clearTimeout(timerId);
     }
-  }, [filteredRowIds, listType, rows, setRows]);
+    approveAllTimerIdsRef.current = [];
+  }, []);
+
+  const selectAll = useCallback(() => {
+    const approvableIds = filteredByShowFilter
+      .filter((r) => r.reviewBucket !== "excluded")
+      .map((r) => r.id);
+    if (approvableIds.length === 0) return;
+
+    clearApproveAllTimers();
+
+    const approvedIds = new Set<string>();
+    const baseRows = rows;
+    for (let i = 0; i < approvableIds.length; i++) {
+      const rowId = approvableIds[i]!;
+      const timerId = setTimeout(() => {
+        approvedIds.add(rowId);
+        if (listType === "companies") {
+          setRows(
+            (baseRows as EnrichedCompany[]).map((r) =>
+              approvedIds.has(r.id) ? { ...r, status: "approved" as const } : r,
+            ),
+          );
+        } else {
+          setRows(
+            (baseRows as EnrichedContact[]).map((r) =>
+              approvedIds.has(r.id) ? { ...r, status: "approved" as const } : r,
+            ),
+          );
+        }
+      }, i * APPROVE_ALL_STAGGER_MS);
+      approveAllTimerIdsRef.current.push(timerId);
+    }
+  }, [filteredByShowFilter, clearApproveAllTimers, listType, rows, setRows]);
 
   const deselectAll = useCallback(() => {
+    clearApproveAllTimers();
     if (listType === "companies") {
       setRows(
         (rows as EnrichedCompany[]).map((r) =>
@@ -871,7 +893,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         ),
       );
     }
-  }, [filteredRowIds, listType, rows, setRows]);
+  }, [clearApproveAllTimers, filteredRowIds, listType, rows, setRows]);
 
   const toggleApprove = useCallback(
     (id: string, checked: boolean) => {
@@ -905,6 +927,8 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     },
     [listType, rows, setRows],
   );
+
+  useEffect(() => () => clearApproveAllTimers(), [clearApproveAllTimers]);
 
   const needsRows = useMemo(
     () => filteredByShowFilter.filter((r) => (r.reviewBucket ?? "needs_review") === "needs_review"),
@@ -1144,7 +1168,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   const muted = row.status === "skipped";
                   const checked = row.status === "approved";
                   return (
-                    <tr key={row.id} className={rowShellClass(row, ri)}>
+                    <tr key={row.id} className={`${rowShellClass(row, ri)} transition-colors duration-150`}>
                       <td
                         className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
                       >
@@ -1312,7 +1336,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   const checked = row.status === "approved";
                   const fullName = formatContactFullName(row);
                   return (
-                    <tr key={row.id} className={rowShellClass(row, ri)}>
+                    <tr key={row.id} className={`${rowShellClass(row, ri)} transition-colors duration-150`}>
                       <td
                         className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
                       >
@@ -1507,9 +1531,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
             type="button"
             disabled={approvedCount === 0}
             onClick={() => onApprove?.()}
-            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+            className={`shrink-0 rounded-lg px-4 py-2 text-sm font-semibold transition-[background-color,transform] duration-75 ${
               approvedCount > 0
-                ? "bg-(--realm-purple) text-white hover:bg-(--realm-purple-hover)"
+                ? "bg-(--realm-purple) text-white hover:bg-(--realm-purple-hover) active:scale-95"
                 : "cursor-not-allowed bg-(--bg-muted) text-(--text-muted)"
             }`}
           >

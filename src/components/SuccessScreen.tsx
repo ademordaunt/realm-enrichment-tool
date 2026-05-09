@@ -1,13 +1,14 @@
 "use client";
 
 import type { HubSpotPushDonePayload } from "@/lib/hubspot/push-result";
+import { motion } from "framer-motion";
 import { useState } from "react";
 
 const STAT_CARD =
   "flex flex-col gap-1 rounded-xl border border-zinc-200 bg-zinc-50 p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/40";
 
 const PRIMARY_ACTION =
-  "rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-(--realm-purple-hover)";
+  "rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white transition-[background-color,transform] duration-75 hover:bg-(--realm-purple-hover) active:scale-95";
 
 export interface SuccessScreenProps {
   result: HubSpotPushDonePayload;
@@ -32,42 +33,45 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed, rowsById }: 
 
   const failed = result.errors.length;
   const membershipError = result.errors.some((e) => e.rowId === "membership");
+  const stats = [
+    { label: "Created", value: result.created, valueClassName: "text-zinc-900 dark:text-zinc-50" },
+    { label: "Updated", value: result.updated, valueClassName: "text-zinc-900 dark:text-zinc-50" },
+    {
+      label: "Errors",
+      value: failed,
+      valueClassName:
+        failed > 0 ? "text-amber-800 dark:text-amber-200" : "text-zinc-900 dark:text-zinc-50",
+    },
+  ] as const;
 
   return (
     <section className="flex flex-col gap-6 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-      <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">
+      <motion.h2
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.18, ease: "easeOut" }}
+        className="text-xl font-semibold text-zinc-900 dark:text-zinc-50"
+      >
         ✅ Import Complete
-      </h2>
+      </motion.h2>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <div className={STAT_CARD}>
-          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            Created
-          </span>
-          <span className="text-3xl font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
-            {result.created}
-          </span>
-        </div>
-        <div className={STAT_CARD}>
-          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            Updated
-          </span>
-          <span className="text-3xl font-bold tabular-nums text-zinc-900 dark:text-zinc-50">
-            {result.updated}
-          </span>
-        </div>
-        <div className={STAT_CARD}>
-          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            Errors
-          </span>
-          <span
-            className={`text-3xl font-bold tabular-nums ${
-              failed > 0 ? "text-amber-800 dark:text-amber-200" : "text-zinc-900 dark:text-zinc-50"
-            }`}
+        {stats.map((stat, i) => (
+          <motion.div
+            key={stat.label}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.06, duration: 0.18, ease: "easeOut" }}
+            className={STAT_CARD}
           >
-            {failed}
-          </span>
-        </div>
+            <span className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              {stat.label}
+            </span>
+            <span className={`text-3xl font-bold tabular-nums ${stat.valueClassName}`}>
+              {stat.value}
+            </span>
+          </motion.div>
+        ))}
       </div>
 
       {leadSourceUsed ? (
@@ -152,7 +156,12 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed, rowsById }: 
         </p>
       ) : null}
 
-      <div className="flex flex-col gap-2 text-sm text-zinc-800 dark:text-zinc-200">
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.24, duration: 0.18, ease: "easeOut" }}
+        className="flex flex-col gap-2 text-sm text-zinc-800 dark:text-zinc-200"
+      >
         <p>
           HubSpot Segment Created:{" "}
           {listUrl ? (
@@ -186,7 +195,7 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed, rowsById }: 
             Set NEXT_PUBLIC_HUBSPOT_PORTAL_ID to enable the list link.
           </span>
         ) : null}
-      </div>
+      </motion.div>
 
       <div>
         <button type="button" onClick={onStartNew} className={PRIMARY_ACTION}>

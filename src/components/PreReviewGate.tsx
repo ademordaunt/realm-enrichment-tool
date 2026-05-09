@@ -7,10 +7,11 @@ import {
   PREREVIEW_DUPLICATE_THRESHOLD,
   PREREVIEW_INTL_GOV_THRESHOLD,
 } from "@/lib/utils/prereview";
+import { motion } from "framer-motion";
 import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 
 const PRIMARY_ACTION_BUTTON =
-  "rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-50";
+  "rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white transition-transform duration-75 hover:bg-(--realm-purple-hover) active:scale-95 disabled:cursor-not-allowed disabled:opacity-50";
 
 const cardClass =
   "rounded-xl border border-(--border-default) bg-(--bg-card) p-6 shadow-(--shadow-card) sm:p-8";
@@ -323,9 +324,14 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
         ) : null}
 
         {!summary.showIntlGov && !summary.showDup ? (
-          <div className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100"
+          >
             ✓ No duplicate or flagged records found. Ready to review.
-          </div>
+          </motion.div>
         ) : null}
 
         <div className="mt-8 flex justify-end">

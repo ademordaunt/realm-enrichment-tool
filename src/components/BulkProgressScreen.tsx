@@ -16,6 +16,15 @@ interface BulkProgressScreenProps {
   consecutivePollingErrors?: number;
 }
 
+function Spinner({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <span
+      className={`inline-block animate-spin rounded-full border-2 border-current border-t-transparent ${className}`}
+      aria-hidden
+    />
+  );
+}
+
 function formatStartedAt(ts: string): string {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "—";
@@ -130,7 +139,16 @@ export function BulkProgressScreen({
     ];
   }, [aiState, zoomState, precheckState, linkedInState, jobState]);
 
-  if (!jobState) return null;
+  if (!jobState) {
+    return (
+      <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
+        <div className="flex items-center justify-center gap-2 text-sm text-(--text-muted)" role="status" aria-live="polite">
+          <Spinner />
+          <span>Loading bulk progress...</span>
+        </div>
+      </div>
+    );
+  }
 
   const startedAt = formatStartedAt(jobState.startedAt);
   const runningFor = formatRunningFor(jobState.startedAt, nowMs);
@@ -171,7 +189,7 @@ export function BulkProgressScreen({
             type="button"
             disabled={resumeBusy}
             onClick={() => void handleResume()}
-            className="rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white transition-transform duration-75 hover:bg-(--realm-purple-hover) active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {resumeBusy ? "Trying..." : "Try Again"}
           </button>
@@ -247,9 +265,16 @@ export function BulkProgressScreen({
           type="button"
           disabled={continueLoading}
           onClick={() => void onContinueToReview()}
-          className="mt-6 rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white hover:bg-(--realm-purple-hover) disabled:cursor-not-allowed disabled:opacity-50"
+          className="mt-6 inline-flex items-center gap-2 rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white transition-transform duration-75 hover:bg-(--realm-purple-hover) active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {continueLoading ? "Loading…" : "Continue to Review & Edit →"}
+          {continueLoading ? (
+            <>
+              <Spinner className="h-3.5 w-3.5" />
+              <span>Loading…</span>
+            </>
+          ) : (
+            "Continue to Review & Edit →"
+          )}
         </button>
       </div>
     );
