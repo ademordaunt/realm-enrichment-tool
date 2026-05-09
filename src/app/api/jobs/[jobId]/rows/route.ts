@@ -1,4 +1,5 @@
 import { getJobEnrichedRows, getJobState } from "@/lib/cache/enrichment-cache";
+import { isValidEnrichedCompany, isValidEnrichedContact } from "@/lib/utils/guards";
 
 export async function GET(
   _request: Request,
@@ -10,5 +11,11 @@ export async function GET(
     return Response.json({ error: "Not found" }, { status: 404 });
   }
   const rows = await getJobEnrichedRows(jobId, state.totalAiChunks);
-  return Response.json({ rows, listType: state.listType });
+  const validate = state.listType === "companies" ? isValidEnrichedCompany : isValidEnrichedContact;
+  const validRows = rows.filter((row, i) => {
+    const ok = validate(row);
+    if (!ok) console.warn(`[jobs/rows] Skipping malformed row at index ${i}`);
+    return ok;
+  });
+  return Response.json({ rows: validRows, listType: state.listType });
 }

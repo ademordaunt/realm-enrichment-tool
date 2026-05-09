@@ -60,7 +60,140 @@ type NdjsonListCreated = {
 type NdjsonDone = { type: "done" } & HubSpotPushDonePayload;
 type NdjsonError = { type: "error"; message: string };
 
-function contactPushExtras(
+type CompanyBatchSets = {
+  toUpdate: Array<{ id: string; company: EnrichedCompany }>;
+  finalToCreate: EnrichedCompany[];
+  nameMatchedCount: number;
+  companiesNoState: number;
+};
+
+type ContactBatchSets = {
+  toUpdate: Array<{ id: string; contact: EnrichedContact }>;
+  toCreate: EnrichedContact[];
+  rowIdToHsCompanyId: Map<string, string>;
+  contactsNoDomain: number;
+  contactsDomainNotFound: number;
+};
+
+async function deduplicateAndMatchCompanies(rowsC: EnrichedCompany[]): Promise<CompanyBatchSets> {
+  const companiesNoState = rowsC.filter((c) => !c.state?.trim()).length;
+
+  const known: EnrichedCompany[] = [];
+  const unknown: EnrichedCompany[] = [];
+  for (const c of rowsC) {
+    if (typeof c.hubspotId === "string" && c.hubspotId.trim() !== "") {
+      known.push(c);
+    } else {
+      unknown.push(c);
+    }
+  }
+
+  const idMap = await batchFindCompaniesByDomain(unknown.map((r) => r.domain));
+
+  const toUpdate: Array<{ id: string; company: EnrichedCompany }> = [];
+  for (const c of known) {
+    toUpdate.push({ id: c.hubspotId!.trim(), company: c });
+  }
+  for (const c of unknown) {
+    const d = normalizeDomain(c.domain);
+    const hid = d ? idMap.get(d) : undefined;
+    if (hid) toUpdate.push({ id: hid, company: c });
+  }
+
+  const toUpdateIds = new Set(toUpdate.map((x) => x.company.id));
+  const toCreate = unknown.filter((c) => !toUpdateIds.has(c.id));
+
+  let nameMatchedCount = 0;
+  for (const c of toCreate) {
+    if (c.domain?.trim()) continue;
+    const name = c.resolvedName?.trim() || c.rawInput?.trim();
+    if (!name) continue;
+    const fallbackId = await findCompanyByName(name);
+    if (fallbackId) {
+      toUpdate.push({ id: fallbackId, company: { ...c, matchedByName: true } });
+      nameMatchedCount += 1;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  const finalToCreateIds = new Set(toUpdate.map((x) => x.company.id));
+  const finalToCreate = toCreate.filter((c) => !finalToCreateIds.has(c.id));
+
+  return { toUpdate, finalToCreate, nameMatchedCount, companiesNoState };
+}
+
+async function deduplicateAndMatchContacts(rowsT: EnrichedContact[]): Promise<ContactBatchSets> {
+  let contactsNoDomain = 0;
+  let contactsDomainNotFound = 0;
+
+  const allDomains = rowsT.flatMap((t) => {
+    const d = (t.companyDomain?.trim() || t.ziCompanyWebsite?.trim()) ?? "";
+    return d ? [d] : [];
+  });
+  const domainToCompanyIdMap = await batchFindCompaniesByDomain(allDomains);
+
+  for (const t of rowsT) {
+    const domain = t.companyDomain?.trim() || t.ziCompanyWebsite?.trim() || "";
+    if (!domain) {
+      contactsNoDomain += 1;
+    } else {
+      const compHsId = domainToCompanyIdMap.get(normalizeDomain(domain));
+      if (compHsId) {
+        t.hubspotCompanyId = compHsId;
+      } else {
+        contactsDomainNotFound += 1;
+      }
+    }
+  }
+
+  const known: EnrichedContact[] = [];
+  const unknown: EnrichedContact[] = [];
+  for (const t of rowsT) {
+    if (typeof t.hubspotId === "string" && t.hubspotId.trim() !== "") {
+      known.push(t);
+    } else {
+      unknown.push(t);
+    }
+  }
+
+  const idMap = await batchFindContactsByEmail(unknown.map((r) => r.resolvedEmail));
+
+  const toUpdate: Array<{ id: string; contact: EnrichedContact }> = [];
+  for (const t of known) {
+    toUpdate.push({ id: t.hubspotId!.trim(), contact: t });
+  }
+  for (const t of unknown) {
+    const em = t.resolvedEmail?.trim().toLowerCase() ?? "";
+    const hid = em ? idMap.get(em) : undefined;
+    if (hid) toUpdate.push({ id: hid, contact: t });
+  }
+
+  const matchedIds = new Set<string>(toUpdate.map((x) => x.contact.id));
+  for (const t of unknown) {
+    if (matchedIds.has(t.id)) continue;
+    const firstName = t.firstName?.trim() ?? "";
+    const lastName = t.lastName?.trim() ?? "";
+    const company = t.resolvedCompany?.trim() ?? "";
+    if (!firstName || !lastName || !company) continue;
+    const fallbackId = await findContactByNameAndCompany(firstName, lastName, company);
+    if (fallbackId) {
+      toUpdate.push({ id: fallbackId, contact: t });
+      matchedIds.add(t.id);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  const toUpdateIds = new Set(toUpdate.map((x) => x.contact.id));
+  const toCreate = unknown.filter((t) => !toUpdateIds.has(t.id));
+
+  const rowIdToHsCompanyId = new Map<string, string>(
+    rowsT.filter((t) => t.hubspotCompanyId).map((t) => [t.id, t.hubspotCompanyId!]),
+  );
+
+  return { toUpdate, toCreate, rowIdToHsCompanyId, contactsNoDomain, contactsDomainNotFound };
+}
+
+function buildPushExtras(
   c: EnrichedContact,
   leadSource: string,
   leadSourceDescription: string,
@@ -284,50 +417,14 @@ export async function handleHubSpotPushRequest(
 
         if (listType === "companies") {
           const rowsC = approved as EnrichedCompany[];
-
-          // Count ownership failures before push
-          companiesNoState = rowsC.filter((c) => !c.state?.trim()).length;
-
-          const known: EnrichedCompany[] = [];
-          const unknown: EnrichedCompany[] = [];
-          for (const c of rowsC) {
-            if (typeof c.hubspotId === "string" && c.hubspotId.trim() !== "") {
-              known.push(c);
-            } else {
-              unknown.push(c);
-            }
-          }
-
-          const idMap = await batchFindCompaniesByDomain(unknown.map((r) => r.domain));
-
-          const toUpdate: Array<{ id: string; company: EnrichedCompany }> = [];
-          for (const c of known) {
-            toUpdate.push({ id: c.hubspotId!.trim(), company: c });
-          }
-          for (const c of unknown) {
-            const d = normalizeDomain(c.domain);
-            const hid = d ? idMap.get(d) : undefined;
-            if (hid) {
-              toUpdate.push({ id: hid, company: c });
-            }
-          }
-          const toUpdateIds = new Set(toUpdate.map((x) => x.company.id));
-          const toCreate = unknown.filter((c) => !toUpdateIds.has(c.id));
-
-          // 6a: Name-based fallback for no-domain companies that weren't matched by domain
-          for (const c of toCreate) {
-            if (c.domain?.trim()) continue;
-            const name = c.resolvedName?.trim() || c.rawInput?.trim();
-            if (!name) continue;
-            const fallbackId = await findCompanyByName(name);
-            if (fallbackId) {
-              toUpdate.push({ id: fallbackId, company: { ...c, matchedByName: true } });
-              nameMatchedCount += 1;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 100));
-          }
-          const finalToCreateIds = new Set(toUpdate.map((x) => x.company.id));
-          const finalToCreate = toCreate.filter((c) => !finalToCreateIds.has(c.id));
+          const {
+            toUpdate,
+            finalToCreate,
+            nameMatchedCount: matched,
+            companiesNoState: noState,
+          } = await deduplicateAndMatchCompanies(rowsC);
+          nameMatchedCount = matched;
+          companiesNoState = noState;
 
           const { success: uOk, rowErrors: uErr } = await batchUpdateCompanies(
             toUpdate,
@@ -348,43 +445,18 @@ export async function handleHubSpotPushRequest(
           cOk.forEach((r) => recordIds.push(r.id));
         } else {
           const rowsT = approved as EnrichedContact[];
-
-          // 8a: Domain-based company pre-lookup for associations
-          const allDomains = rowsT.flatMap((t) => {
-            const d = (t.companyDomain?.trim() || t.ziCompanyWebsite?.trim()) ?? "";
-            return d ? [d] : [];
-          });
-          const domainToCompanyIdMap = await batchFindCompaniesByDomain(allDomains);
-
-          // 8d: Annotate contacts with resolved hubspotCompanyId
-          for (const t of rowsT) {
-            const domain = t.companyDomain?.trim() || t.ziCompanyWebsite?.trim() || "";
-            if (!domain) {
-              contactsNoDomain += 1;
-            } else {
-              const compHsId = domainToCompanyIdMap.get(normalizeDomain(domain));
-              if (compHsId) {
-                t.hubspotCompanyId = compHsId;
-              } else {
-                contactsDomainNotFound += 1;
-              }
-            }
-          }
-
-          const known: EnrichedContact[] = [];
-          const unknown: EnrichedContact[] = [];
-          for (const t of rowsT) {
-            if (typeof t.hubspotId === "string" && t.hubspotId.trim() !== "") {
-              known.push(t);
-            } else {
-              unknown.push(t);
-            }
-          }
-
-          const idMap = await batchFindContactsByEmail(unknown.map((r) => r.resolvedEmail));
+          const {
+            toUpdate,
+            toCreate,
+            rowIdToHsCompanyId,
+            contactsNoDomain: noDomain,
+            contactsDomainNotFound: notFound,
+          } = await deduplicateAndMatchContacts(rowsT);
+          contactsNoDomain = noDomain;
+          contactsDomainNotFound = notFound;
 
           const resolveContactExtras = (c: EnrichedContact) =>
-            contactPushExtras(
+            buildPushExtras(
               c,
               leadSource,
               leadSourceDescription,
@@ -392,41 +464,6 @@ export async function handleHubSpotPushRequest(
               useExistingLeadSource,
               useExistingLeadSourceDescription,
             );
-
-          const toUpdate: Array<{ id: string; contact: EnrichedContact }> = [];
-          for (const t of known) {
-            toUpdate.push({ id: t.hubspotId!.trim(), contact: t });
-          }
-          for (const t of unknown) {
-            const em = t.resolvedEmail?.trim().toLowerCase() ?? "";
-            const hid = em ? idMap.get(em) : undefined;
-            if (hid) {
-              toUpdate.push({ id: hid, contact: t });
-            }
-          }
-          const matchedByNameCompany = new Set<string>(toUpdate.map((x) => x.contact.id));
-          for (const t of unknown) {
-            if (matchedByNameCompany.has(t.id)) continue;
-            const firstName = t.firstName?.trim() ?? "";
-            const lastName = t.lastName?.trim() ?? "";
-            const company = t.resolvedCompany?.trim() ?? "";
-            if (!firstName || !lastName || !company) continue;
-            const fallbackId = await findContactByNameAndCompany(firstName, lastName, company);
-            if (fallbackId) {
-              toUpdate.push({ id: fallbackId, contact: t });
-              matchedByNameCompany.add(t.id);
-            }
-            await new Promise((resolve) => setTimeout(resolve, 100));
-          }
-          const toUpdateIds = new Set(toUpdate.map((x) => x.contact.id));
-          const toCreate = unknown.filter((t) => !toUpdateIds.has(t.id));
-
-          // Build a rowId → hubspotCompanyId lookup for association phase
-          const rowIdToHsCompanyId = new Map<string, string>(
-            rowsT
-              .filter((t) => t.hubspotCompanyId)
-              .map((t) => [t.id, t.hubspotCompanyId!]),
-          );
 
           const { success: uOk, rowErrors: uErr } = await batchUpdateContacts(
             toUpdate,
@@ -446,7 +483,7 @@ export async function handleHubSpotPushRequest(
           mergeRowErrors(cErr);
           cOk.forEach((r) => recordIds.push(r.id));
 
-          // 8c: Write contact-to-company associations for all successfully pushed contacts
+          // Write contact-to-company associations for all successfully pushed contacts
           const allPushed = [...uOk, ...cOk];
           const associations: Array<{ contactHubSpotId: string; companyHubSpotId: string }> = [];
           for (const pushed of allPushed) {

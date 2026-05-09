@@ -17,6 +17,7 @@ const EMPTY_COMPANY_EXISTING_DATA: Record<string, string> = {
   state: "",
   numberofemployees: "",
   linkedin_company_page: "",
+  lead_source: "",
   industry: "",
   description: "",
   city: "",
@@ -31,6 +32,7 @@ const EMPTY_CONTACT_EXISTING_DATA: Record<string, string> = {
   phone: "",
   job_level: "",
   job_function: "",
+  lead_source__deal_source: "",
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {

@@ -17,6 +17,7 @@ const CONTACT_PRECHECK_PROPERTIES = [
   "job_level",
   "job_function",
   "hs_additional_emails",
+  "lead_source__deal_source",
 ] as const;
 
 function normalizeEmail(email: string): string {
@@ -97,6 +98,7 @@ function contactProperties(
   // lead source — Fill empty only (extras take priority over row value)
   const leadSourceVal = extras?.leadSource?.trim() || contact.leadSource?.trim();
   if (leadSourceVal && isEmpty(ex.lead_source__deal_source)) {
+    // WRITE RULE: fill-empty-only — Lead Source is operator-set and must never be overwritten by enrichment.
     props.lead_source__deal_source = leadSourceVal;
   }
 
@@ -626,6 +628,7 @@ export async function updateContact(
   }
   if (extras) {
     if (extras.leadSource?.trim() && isEmpty(ex.lead_source__deal_source)) {
+      // WRITE RULE: fill-empty-only — Lead Source is operator-set and must never be overwritten by enrichment.
       updates.lead_source__deal_source = extras.leadSource.trim();
     }
     if (extras.leadSourceDescription?.trim() && isEmpty(ex.lead_source_description)) {
@@ -640,6 +643,7 @@ export async function updateContact(
     }
   } else {
     if (contact.leadSource?.trim() && isEmpty(ex.lead_source__deal_source)) {
+      // WRITE RULE: fill-empty-only — Lead Source is operator-set and must never be overwritten by enrichment.
       updates.lead_source__deal_source = contact.leadSource.trim();
     }
     if (contact.leadSourceDescription?.trim() && isEmpty(ex.lead_source_description)) {

@@ -20,6 +20,7 @@ const COMPANY_PRECHECK_PROPERTIES = [
   "state",
   "numberofemployees",
   "linkedin_company_page",
+  "lead_source",
   "industry",
   "description",
   "city",
@@ -133,9 +134,16 @@ function isEmptyOrZeroEmployees(val: string | null | undefined): boolean {
   return s === "" || s === "0";
 }
 
-function mergeLeadExtras(props: Record<string, string>, extras?: HubSpotCompanyPushExtras) {
+function mergeLeadExtras(
+  props: Record<string, string>,
+  existingData: Record<string, string>,
+  extras?: HubSpotCompanyPushExtras,
+) {
   if (!extras) return;
-  if (extras.leadSource?.trim()) props.lead_source = extras.leadSource.trim();
+  if (extras.leadSource?.trim() && isEmpty(existingData.lead_source)) {
+    // WRITE RULE: fill-empty-only — Lead Source is operator-set and must never be overwritten by enrichment.
+    props.lead_source = extras.leadSource.trim();
+  }
   if (extras.leadSourceDescription?.trim()) {
     props.lead_source_description = extras.leadSourceDescription.trim();
   }
@@ -218,7 +226,7 @@ function companyProperties(
   // city — Overwrite
   if (company.city?.trim()) props.city = company.city.trim();
 
-  mergeLeadExtras(props, extras);
+  mergeLeadExtras(props, ex, extras);
   return props;
 }
 
@@ -376,6 +384,7 @@ export async function updateCompany(
   }
   if (extras) {
     if (extras.leadSource?.trim() && isEmpty(ex.lead_source)) {
+      // WRITE RULE: fill-empty-only — Lead Source is operator-set and must never be overwritten by enrichment.
       updates.lead_source = extras.leadSource.trim();
     }
     if (extras.leadSourceDescription?.trim() && isEmpty(ex.lead_source_description)) {
