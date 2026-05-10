@@ -12,6 +12,7 @@ Core enrichment and HubSpot push workflows are stable in event and bulk modes. S
 - Contact-to-company association is attempted on every contact push with explicit post-push counts for associated, domain-not-found, and no-domain contacts.
 - Manual edits are batched for review initialization (`POST /api/manual-edits/batch`) and persisted in KV.
 - Bulk row hydration now validates row shape and skips malformed KV rows instead of crashing review load.
+- Bulk stuck-running recovery is implemented: jobs write `lastHeartbeatAt` during chunk processing, and the status endpoint auto-fails `running` jobs stale for >5 minutes so resume can recover them.
 
 ## Lead Source Behavior (Post Fix)
 
@@ -24,8 +25,7 @@ Core enrichment and HubSpot push workflows are stable in event and bulk modes. S
 
 ## Open Follow-Ups
 
-- Bulk polling failure UI escalates warnings by failure count, but the 3+ failure state still lacks an explicit retry button.
-- Secondary button and micro-typography normalization is mostly complete but not yet fully tokenized in all UI surfaces.
+- No open follow-ups from SPEC-7 remain.
 
 ## Fragile Areas
 

@@ -8,12 +8,15 @@ import type { Phase } from "@/components/EnrichmentProgressBars";
 interface BulkProgressScreenProps {
   jobState: BulkJobState | null;
   onCancel: () => void;
+  onRetryStatusCheck?: () => void | Promise<void>;
   /** When the job finished and rows are not loaded yet, user continues to review. */
   onContinueToReview?: () => void | Promise<void>;
   /** True while fetching completed rows after the user clicks continue. */
   continueLoading?: boolean;
   /** Number of consecutive poll failures; used to surface connectivity warnings. */
   consecutivePollingErrors?: number;
+  /** True while a polling request is currently in flight. */
+  retryBusy?: boolean;
 }
 
 function Spinner({ className = "h-4 w-4" }: { className?: string }) {
@@ -54,9 +57,11 @@ type PhaseState = "done" | "active" | "waiting";
 export function BulkProgressScreen({
   jobState,
   onCancel,
+  onRetryStatusCheck,
   onContinueToReview,
   continueLoading = false,
   consecutivePollingErrors = 0,
+  retryBusy = false,
 }: BulkProgressScreenProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [resumeBusy, setResumeBusy] = useState(false);
@@ -119,7 +124,6 @@ export function BulkProgressScreen({
         label: "AI Analysis",
         status: aiState === "done" ? "complete" : aiState === "active" ? "active" : "waiting",
         progress: aiPct,
-        detail: aiState === "active" ? `${jobState.processedRows} / ${jobState.totalRows} records` : undefined,
       },
       {
         label: "ZoomInfo Enrichment",
@@ -314,7 +318,20 @@ export function BulkProgressScreen({
           className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-700 dark:bg-red-950/30 dark:text-red-300"
           role="alert"
         >
-          Unable to reach the server. Your job is still running — refresh the page to check progress, or wait and it will reconnect automatically.
+          <p>
+            Unable to reach the server. Your job is still running — check status now or wait and it
+            will reconnect automatically.
+          </p>
+          {onRetryStatusCheck ? (
+            <button
+              type="button"
+              onClick={() => void onRetryStatusCheck()}
+              disabled={retryBusy}
+              className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-700 dark:bg-transparent dark:text-red-300 dark:hover:bg-red-950/30"
+            >
+              {retryBusy ? "Checking..." : "Retry Connection"}
+            </button>
+          ) : null}
         </div>
       ) : consecutivePollingErrors >= 1 ? (
         <p className="mt-3 text-xs text-amber-700 dark:text-amber-400" role="status">

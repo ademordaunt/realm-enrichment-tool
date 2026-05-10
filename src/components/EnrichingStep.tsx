@@ -28,18 +28,20 @@ interface EnrichingStepProps {
   bulkJobId: string | null;
   bulkJobState: BulkJobState | null;
   consecutivePollingErrors: number;
+  bulkPollingInFlight: boolean;
   bulkRowsContinueLoading: boolean;
   progress: ProgressState;
   resolvedListType: "companies" | "contacts" | null;
   cancelBulkJob: () => Promise<void>;
+  retryStatusPollNow: () => Promise<void>;
   handleContinueToReview: () => Promise<void>;
   cancelEnrichmentToContext: () => void;
 }
 
 export function EnrichingStep({
   step, wizardImportMode, bulkJobId, bulkJobState, consecutivePollingErrors,
-  bulkRowsContinueLoading, progress, resolvedListType,
-  cancelBulkJob, handleContinueToReview, cancelEnrichmentToContext,
+  bulkPollingInFlight, bulkRowsContinueLoading, progress, resolvedListType,
+  cancelBulkJob, retryStatusPollNow, handleContinueToReview, cancelEnrichmentToContext,
 }: EnrichingStepProps) {
   const enrichmentBatchPercent = useMemo(() => {
     if (!progress || progress.totalRows <= 0) return 0;
@@ -64,14 +66,9 @@ export function EnrichingStep({
         label: "AI Analysis",
         status: isEnriching ? "active" : "complete",
         progress: isEnriching ? enrichmentBatchPercent : 100,
-        detail: isEnriching
-          ? (progress.fromCache
-              ? `From cache: rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}`
-              : `Analyzing rows ${progress.startRow}–${progress.endRow} of ${progress.totalRows}`)
-          : undefined,
       },
       {
-        label: resolvedListType === "contacts" ? "ZoomInfo & Common Room" : "ZoomInfo Verify",
+        label: resolvedListType === "contacts" ? "ZoomInfo & Common Room Enrichment" : "ZoomInfo Verify",
         status: isEnriching ? "waiting" : isVerifyingZoom ? "active" : "complete",
         progress: isVerifyingZoom ? zoomPct : isEnriching ? 0 : 100,
         detail: isVerifyingZoom ? progress.detail : undefined,
@@ -95,9 +92,11 @@ export function EnrichingStep({
       <BulkProgressScreen
         jobState={bulkJobState}
         onCancel={() => { void cancelBulkJob(); }}
+        onRetryStatusCheck={() => void retryStatusPollNow()}
         onContinueToReview={() => void handleContinueToReview()}
         continueLoading={bulkRowsContinueLoading}
         consecutivePollingErrors={consecutivePollingErrors}
+        retryBusy={bulkPollingInFlight}
       />
     );
   }

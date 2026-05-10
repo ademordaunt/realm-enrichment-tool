@@ -1,10 +1,10 @@
 "use client";
 
 const btnBase =
-  "flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg px-6 py-8 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7B35C1] focus-visible:ring-offset-2";
+  "flex flex-1 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg px-6 py-8 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--realm-purple) focus-visible:ring-offset-2";
 
 const btnOutline =
-  `${btnBase} border-2 border-[#7B35C1] bg-white text-[#7B35C1] hover:bg-[#7B35C1] hover:text-white`;
+  `${btnBase} border-2 border-(--realm-purple) bg-(--bg-card) text-(--realm-purple) hover:bg-(--realm-purple) hover:text-white`;
 
 export interface StarterScreenProps {
   onSelectMode: (mode: "event" | "bulk") => void;

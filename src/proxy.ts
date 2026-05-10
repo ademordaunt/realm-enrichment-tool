@@ -6,7 +6,8 @@ const INTERNAL_AUTH_HEADER = "x-realm-internal-auth";
 function isPublicPath(pathname: string): boolean {
   return (
     pathname === "/login" ||
-    pathname.startsWith("/api/auth/login")
+    pathname.startsWith("/api/auth/login") ||
+    pathname.startsWith("/api/auth/session")
   );
 }
 

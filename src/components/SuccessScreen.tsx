@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import { useState } from "react";
 
 const STAT_CARD =
-  "flex flex-col gap-1 rounded-xl border border-zinc-200 bg-zinc-50 p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950/40";
+  "flex flex-col gap-1 rounded-xl border border-(--border-default) bg-(--bg-muted) p-4 shadow-(--shadow-card)";
 
 const PRIMARY_ACTION =
   "rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white transition-[background-color,transform] duration-75 hover:bg-(--realm-purple-hover) active:scale-95";
@@ -45,12 +45,12 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed, rowsById }: 
   ] as const;
 
   return (
-    <section className="flex flex-col gap-6 rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+    <section className="flex flex-col gap-6 rounded-xl border border-(--border-default) bg-(--bg-card) p-6 shadow-(--shadow-card)">
       <motion.h2
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.18, ease: "easeOut" }}
-        className="text-xl font-semibold text-zinc-900 dark:text-zinc-50"
+        className="text-xl font-semibold text-(--text-primary)"
       >
         ✅ Import Complete
       </motion.h2>

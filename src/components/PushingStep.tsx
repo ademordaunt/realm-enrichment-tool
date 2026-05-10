@@ -13,8 +13,8 @@ interface PushingStepProps {
 
 export function PushingStep({ pushProgress, pushListCreatedMeta }: PushingStepProps) {
   return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-      <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100" role="status">
+    <div className="rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card)">
+      <p className="text-sm font-medium text-(--text-primary)" role="status">
         Pushing record {pushProgress.current} of {pushProgress.total} to HubSpot…
       </p>
       {pushListCreatedMeta ? (

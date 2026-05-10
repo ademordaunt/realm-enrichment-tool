@@ -15,6 +15,7 @@ const VALID_FIELDS = new Set([
   "rawEmail",
   "resolvedCompany",
   "title",
+  "membershipNotes",
   "manuallyIncluded",
 ]);
 

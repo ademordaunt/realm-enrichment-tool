@@ -5,14 +5,15 @@ import type {
   EnrichedContact,
   HubSpotFoldersApiResponse,
 } from "@/lib/utils/types";
-import { normalizeDomain } from "@/lib/utils/domain";
+import { FieldTrustRulesSubline } from "@/components/FieldTrustRulesSubline";
+import { ReasoningTooltip } from "@/components/ReasoningTooltip";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 const CARD_PANEL =
-  "rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900";
+  "rounded-xl border border-(--border-default) bg-(--bg-card) p-6 shadow-(--shadow-card)";
 
 const FIELD_CONTROL =
-  "rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
+  "rounded-lg border border-(--border-default) bg-(--bg-card) px-3 py-2 text-(--text-primary)";
 
 /** Collapse duplicated trailing "Mon. YYYY Mon. YYYY" when the parent string already ended with that date. */
 function dedupeLeadSourceDescriptionTail(s: string): string {
@@ -24,12 +25,8 @@ function dedupeLeadSourceDescriptionTail(s: string): string {
 }
 
 const SELECT_WITH_CARET =
-  "w-full appearance-none rounded-lg border border-zinc-300 bg-white py-2 pl-3 pr-10 text-sm text-zinc-900 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100";
+  "w-full appearance-none rounded-lg border border-(--border-default) bg-(--bg-card) py-2 pl-3 pr-10 text-sm text-(--text-primary)";
 
-const TABLE_HEAD_CELL =
-  "border-b border-zinc-200 px-3 py-2 font-semibold dark:border-zinc-700";
-
-const TABLE_ROW = "border-b border-zinc-100 dark:border-zinc-800";
 const FOLDER_SELECTION_SESSION_KEY = "realm-selected-hubspot-folder";
 
 /** Mirrors `EditableCell` in ReviewTable — click to edit, Enter/blur saves. */
@@ -103,6 +100,158 @@ export const LEAD_SOURCE_OPTIONS: Array<{ label: string; value: string }> = [
   { label: "Marketing - Website", value: "website" },
 ];
 
+const SUMMARY_TOOLTIP_OVERWRITE = "Overwrites existing HubSpot value";
+const SUMMARY_TOOLTIP_FILL = "Fills empty only — existing value preserved";
+
+type SummaryWriteRule = "overwrite" | "fill_empty";
+
+/** Matches field trust rule HTML for contact enriched columns (tooltips only). */
+const CONTACT_ENRICHED_WRITE = {
+  state: "overwrite",
+  city: "overwrite",
+  employees: "overwrite",
+  industry: "fill_empty",
+  jobLevel: "fill_empty",
+  jobFunction: "fill_empty",
+} as const satisfies Record<string, SummaryWriteRule>;
+
+const COMPANY_ENRICHED_WRITE = {
+  state: "overwrite",
+  city: "overwrite",
+  employees: "overwrite",
+  industry: "fill_empty",
+} as const satisfies Record<string, SummaryWriteRule>;
+
+const CONTACT_CORE_STICKY_PX = [96, 96, 132, 148, 120, 120, 128, 168, 152] as const;
+const COMPANY_CORE_STICKY_PX = [148, 136, 136, 132] as const;
+
+function coreStickyOffset(widths: readonly number[], index: number): number {
+  let sum = 0;
+  for (let i = 0; i < index; i++) sum += widths[i] ?? 0;
+  return sum;
+}
+
+function contactCityStateDisplay(
+  location: string | undefined,
+): { city: string; stateRegion: string } {
+  const loc = (location ?? "").trim();
+  if (!loc) return { city: "", stateRegion: "" };
+  const i = loc.indexOf(",");
+  if (i < 0) return { city: "", stateRegion: loc };
+  return {
+    city: loc.slice(0, i).trim(),
+    stateRegion: loc.slice(i + 1).trim(),
+  };
+}
+
+function resolvedLeadSourceDisplay(
+  row: EnrichedContact,
+  useExisting: boolean,
+  globalValue: string,
+): string {
+  if (useExisting) return (row.leadSource ?? "").trim() || "—";
+  if (!globalValue.trim()) return "—";
+  const opt = LEAD_SOURCE_OPTIONS.find((o) => o.value === globalValue);
+  return opt?.label ?? globalValue;
+}
+
+function resolvedLeadSourceDescriptionDisplay(
+  row: EnrichedContact,
+  useExisting: boolean,
+  globalDescription: string,
+): string {
+  if (useExisting) return (row.leadSourceDescription ?? "").trim() || "—";
+  return globalDescription.trim() || "—";
+}
+
+function SummaryEmailCell({ row }: { row: EnrichedContact }) {
+  const work = (row.resolvedEmail ?? "").trim();
+  const personal = (row.personalEmail ?? "").trim();
+  const showPersonal =
+    personal.length > 0 &&
+    work.length > 0 &&
+    personal.toLowerCase() !== work.toLowerCase();
+  const primary = work || (row.rawEmail ?? "").trim();
+  if (!primary && !showPersonal) return <span className="text-zinc-400">—</span>;
+  if (!showPersonal) {
+    return <span className="wrap-break-word break-all">{primary}</span>;
+  }
+  return (
+    <div className="max-w-44">
+      <div className="wrap-break-word break-all">{work || primary}</div>
+      <div className="wrap-break-word break-all text-xs text-(--text-secondary)">{personal}</div>
+    </div>
+  );
+}
+
+function CoreTh(props: {
+  children: ReactNode;
+  index: number;
+  widths: readonly number[];
+  lastCore: boolean;
+}) {
+  const { children, index, widths, lastCore } = props;
+  const w = widths[index] ?? 96;
+  const left = coreStickyOffset(widths, index);
+  return (
+    <th
+      className={`sticky z-30 border-b border-zinc-200 bg-zinc-100 px-3 py-2 text-left text-xs font-semibold text-zinc-800 dark:border-zinc-800 dark:bg-zinc-800/80 dark:text-zinc-200 ${
+        lastCore
+          ? "border-r-2 border-r-zinc-300 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)] dark:border-r-zinc-600"
+          : ""
+      }`}
+      style={{ left, minWidth: w }}
+    >
+      {children}
+    </th>
+  );
+}
+
+function CoreTd(props: {
+  children: ReactNode;
+  index: number;
+  widths: readonly number[];
+  lastCore: boolean;
+}) {
+  const { children, index, widths, lastCore } = props;
+  const w = widths[index] ?? 96;
+  const left = coreStickyOffset(widths, index);
+  return (
+    <td
+      className={`sticky z-10 border-b border-zinc-200 bg-(--bg-card) px-3 py-2 align-middle text-xs text-zinc-800 dark:border-zinc-800 dark:text-zinc-200 sm:text-sm ${
+        lastCore
+          ? "border-r-2 border-r-zinc-300 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] dark:border-r-zinc-600"
+          : ""
+      }`}
+      style={{ left, minWidth: w }}
+    >
+      {children}
+    </td>
+  );
+}
+
+function EnrichedTh({ label, rule }: { label: string; rule: SummaryWriteRule }) {
+  const tip = rule === "overwrite" ? SUMMARY_TOOLTIP_OVERWRITE : SUMMARY_TOOLTIP_FILL;
+  return (
+    <th className="border-b border-zinc-200 bg-zinc-200/95 px-3 py-2 text-left text-xs font-semibold text-zinc-800 dark:border-zinc-800 dark:bg-zinc-700/75 dark:text-zinc-100 sm:text-sm">
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <ReasoningTooltip
+          content={
+            <span className="whitespace-nowrap text-xs text-(--text-secondary)">{tip}</span>
+          }
+          trigger={
+            <span className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-(--border-default) text-[9px] font-medium leading-none text-(--text-muted)">
+              ⓘ
+            </span>
+          }
+          triggerAriaLabel={tip}
+        />
+      </span>
+    </th>
+  );
+}
+
 export type PrePushSettings = {
   listName: string;
   folderId?: string;
@@ -134,98 +283,6 @@ function websiteFromDomain(domain: string): string {
   return d ? `https://www.${d}` : "";
 }
 
-type FieldPreviewEntry = { key: string; label: string; value: string };
-type FieldPreviewResult = {
-  written: FieldPreviewEntry[];
-  skipped: Array<{ key: string; label: string; hsValue: string }>;
-};
-
-function isEmpty(v: string | null | undefined): boolean {
-  return v == null || String(v).trim() === "";
-}
-
-function previewCompanyFields(
-  company: EnrichedCompany,
-  isUpdate: boolean,
-): FieldPreviewResult {
-  const ex: Record<string, string> = isUpdate ? (company.existingData ?? {}) : {};
-  const written: FieldPreviewEntry[] = [];
-  const skipped: Array<{ key: string; label: string; hsValue: string }> = [];
-
-  const check = (key: string, label: string, value: string | undefined | null, overwrite = false) => {
-    const v = value?.trim() ?? "";
-    if (!v) return;
-    if (!overwrite && !isEmpty(ex[key])) {
-      skipped.push({ key, label, hsValue: ex[key] ?? "" });
-    } else {
-      written.push({ key, label, value: v });
-    }
-  };
-
-  const domain = normalizeDomain(company.domain ?? "");
-  check("name", "Name", company.resolvedName?.trim() || company.rawInput?.trim() || "Unknown");
-  check("domain", "Domain", domain);
-  check("website", "Website", domain ? `https://www.${domain}` : "");
-  check("linkedin_company_page", "LinkedIn Page", company.linkedinUrl?.trim());
-  check("industry", "Industry", company.industry?.trim());
-  check("description", "Description", company.description?.trim());
-  check("phone", "Phone", company.phone?.trim());
-  check("state", "State/Region", company.state?.trim(), true);
-  if (company.numberOfEmployees != null && !Number.isNaN(company.numberOfEmployees)) {
-    check("numberofemployees", "Employees", String(company.numberOfEmployees), true);
-  }
-  if (company.revenue != null && !Number.isNaN(Number(company.revenue))) {
-    check("annualrevenue", "Annual Revenue", String(company.revenue * 1000), true);
-  }
-  check("city", "City", company.city?.trim(), true);
-
-  return { written, skipped };
-}
-
-function previewContactFields(
-  contact: EnrichedContact,
-  isUpdate: boolean,
-): FieldPreviewResult {
-  const ex: Record<string, string> = isUpdate ? (contact.existingData ?? {}) : {};
-  const written: FieldPreviewEntry[] = [];
-  const skipped: Array<{ key: string; label: string; hsValue: string }> = [];
-
-  const check = (key: string, label: string, value: string | undefined | null, overwrite = false) => {
-    const v = value?.trim() ?? "";
-    if (!v) return;
-    if (!overwrite && !isEmpty(ex[key])) {
-      skipped.push({ key, label, hsValue: ex[key] ?? "" });
-    } else {
-      written.push({ key, label, value: v });
-    }
-  };
-
-  check("firstname", "First Name", contact.firstName?.trim());
-  check("lastname", "Last Name", contact.lastName?.trim());
-  if (!isUpdate) {
-    const email = contact.resolvedEmail?.trim();
-    if (email) written.push({ key: "email", label: "Email", value: email });
-  } else if (contact.resolvedEmail?.trim()) {
-    skipped.push({ key: "email", label: "Email", hsValue: "(never overwritten)" });
-  }
-  check("jobtitle", "Job Title", contact.title?.trim());
-  check("company", "Company Name", contact.resolvedCompany?.trim());
-  check("ds_liprofile", "LinkedIn Profile", contact.linkedinUrl?.trim());
-  check("state", "State/Region", contact.location?.trim(), true);
-  check("phone", "Phone", contact.phone?.trim());
-  check("job_level", "Job Level", contact.ziManagementLevel?.trim());
-  check("job_function", "Job Function", contact.ziJobFunction?.trim());
-  check("industry", "Industry", contact.ziCompanyPrimaryIndustry?.trim());
-  if (contact.ziCompanyEmployeeCount?.trim()) {
-    check("numemployees", "Employees (Company)", contact.ziCompanyEmployeeCount.trim(), true);
-  }
-  if (!contact.companyDomain?.trim() && contact.ziCompanyWebsite?.trim()) {
-    check("website", "Company Website", contact.ziCompanyWebsite.trim());
-  }
-
-  return { written, skipped };
-}
-
 export interface PrePushScreenProps {
   listType: "companies" | "contacts";
   approvedRows: Array<EnrichedCompany | EnrichedContact>;
@@ -255,8 +312,6 @@ export function PrePushScreen({
   const [folderId, setFolderId] = useState("");
 
   const [contactEditRows, setContactEditRows] = useState<EnrichedContact[] | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [expandedPreviewRows, setExpandedPreviewRows] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -424,22 +479,6 @@ export function PrePushScreen({
     );
   }, []);
 
-  const fieldPreviewRows = useMemo(() => {
-    const rows = listType === "contacts"
-      ? (contactRowsForTable as Array<EnrichedCompany | EnrichedContact>)
-      : (approvedRows as Array<EnrichedCompany | EnrichedContact>);
-    return rows.map((row) => {
-      const isUpdate = typeof (row as EnrichedCompany).hubspotId === "string" && (row as EnrichedCompany).hubspotId !== null && (row as EnrichedCompany).hubspotId !== "";
-      const preview = listType === "companies"
-        ? previewCompanyFields(row as EnrichedCompany, isUpdate)
-        : previewContactFields(row as EnrichedContact, isUpdate);
-      const name = listType === "companies"
-        ? ((row as EnrichedCompany).resolvedName?.trim() || (row as EnrichedCompany).rawInput?.trim() || "—")
-        : `${(row as EnrichedContact).firstName ?? ""} ${(row as EnrichedContact).lastName ?? ""}`.trim() || "—";
-      return { id: row.id, name, ...preview };
-    });
-  }, [listType, approvedRows, contactRowsForTable]);
-
   const ownershipCompaniesNoState = useMemo(() => {
     if (listType !== "companies") return 0;
     return (approvedRows as EnrichedCompany[]).filter((r) => !r.state?.trim()).length;
@@ -575,35 +614,55 @@ export function PrePushScreen({
         <div className={CARD_PANEL}>
           <h3 className="mb-3 text-sm font-semibold text-zinc-800 dark:text-zinc-200">Summary</h3>
           <div className="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
+            <table className="min-w-full border-separate border-spacing-0 text-left text-xs sm:text-sm">
               {listType === "companies" ? (
                 <>
-                  <thead className="bg-zinc-100 dark:bg-zinc-800/80">
+                  <thead>
                     <tr>
-                      <th className={TABLE_HEAD_CELL}>Name</th>
-                      <th className={TABLE_HEAD_CELL}>Domain</th>
-                      <th className={TABLE_HEAD_CELL}>Website</th>
-                      <th className={TABLE_HEAD_CELL}>LinkedIn</th>
-                      <th className={TABLE_HEAD_CELL}>State/Region</th>
-                      <th className={TABLE_HEAD_CELL}>Number of Employees</th>
+                      <CoreTh index={0} widths={COMPANY_CORE_STICKY_PX} lastCore={false}>
+                        Name
+                      </CoreTh>
+                      <CoreTh index={1} widths={COMPANY_CORE_STICKY_PX} lastCore={false}>
+                        Domain
+                      </CoreTh>
+                      <CoreTh index={2} widths={COMPANY_CORE_STICKY_PX} lastCore={false}>
+                        Website
+                      </CoreTh>
+                      <CoreTh index={3} widths={COMPANY_CORE_STICKY_PX} lastCore={true}>
+                        LinkedIn
+                      </CoreTh>
+                      <EnrichedTh label="State/Region" rule={COMPANY_ENRICHED_WRITE.state} />
+                      <EnrichedTh label="City" rule={COMPANY_ENRICHED_WRITE.city} />
+                      <EnrichedTh label="Employee Count" rule={COMPANY_ENRICHED_WRITE.employees} />
+                      <EnrichedTh label="Industry" rule={COMPANY_ENRICHED_WRITE.industry} />
                     </tr>
                   </thead>
                   <tbody>
                     {(approvedRows as EnrichedCompany[]).map((row) => (
-                      <tr key={row.id} className={TABLE_ROW}>
-                        <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.resolvedName}</td>
-                        <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                          {row.domain}
+                      <tr key={row.id}>
+                        <CoreTd index={0} widths={COMPANY_CORE_STICKY_PX} lastCore={false}>
+                          {row.resolvedName}
+                        </CoreTd>
+                        <CoreTd index={1} widths={COMPANY_CORE_STICKY_PX} lastCore={false}>
+                          <span className="break-all">{row.domain}</span>
+                        </CoreTd>
+                        <CoreTd index={2} widths={COMPANY_CORE_STICKY_PX} lastCore={false}>
+                          <span className="break-all">{websiteFromDomain(row.domain)}</span>
+                        </CoreTd>
+                        <CoreTd index={3} widths={COMPANY_CORE_STICKY_PX} lastCore={true}>
+                          <span className="break-all">{row.linkedinUrl || "—"}</span>
+                        </CoreTd>
+                        <td className="border-b border-zinc-200 bg-(--bg-card) px-3 py-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200">
+                          {row.state?.trim() || "—"}
                         </td>
-                        <td className="max-w-48 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                          {websiteFromDomain(row.domain)}
+                        <td className="border-b border-zinc-200 bg-(--bg-card) px-3 py-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200">
+                          {row.city?.trim() || "—"}
                         </td>
-                        <td className="max-w-40 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                          {row.linkedinUrl || "—"}
-                        </td>
-                        <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.state || "—"}</td>
-                        <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">
+                        <td className="border-b border-zinc-200 bg-(--bg-card) px-3 py-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200">
                           {row.numberOfEmployees != null ? String(row.numberOfEmployees) : "—"}
+                        </td>
+                        <td className="border-b border-zinc-200 bg-(--bg-card) px-3 py-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200">
+                          {row.industry?.trim() || "—"}
                         </td>
                       </tr>
                     ))}
@@ -611,169 +670,130 @@ export function PrePushScreen({
                 </>
               ) : (
                 <>
-                  <thead className="bg-zinc-100 dark:bg-zinc-800/80">
+                  <thead>
                     <tr>
-                      <th className={TABLE_HEAD_CELL}>First Name</th>
-                      <th className={TABLE_HEAD_CELL}>Last Name</th>
-                      <th className={TABLE_HEAD_CELL}>Email</th>
-                      <th className={TABLE_HEAD_CELL}>Company Name</th>
-                      <th className={TABLE_HEAD_CELL}>Title</th>
-                      <th className={TABLE_HEAD_CELL}>LinkedIn</th>
-                      <th className={TABLE_HEAD_CELL}>Membership Notes</th>
+                      <CoreTh index={0} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                        First Name
+                      </CoreTh>
+                      <CoreTh index={1} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                        Last Name
+                      </CoreTh>
+                      <CoreTh index={2} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                        Email
+                      </CoreTh>
+                      <CoreTh index={3} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                        Company Name
+                      </CoreTh>
+                      <CoreTh index={4} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                        Title
+                      </CoreTh>
+                      <CoreTh index={5} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                        LinkedIn
+                      </CoreTh>
+                      <CoreTh index={6} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                        Lead Source
+                      </CoreTh>
+                      <CoreTh index={7} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                        Lead Source Desc.
+                      </CoreTh>
+                      <CoreTh index={8} widths={CONTACT_CORE_STICKY_PX} lastCore={true}>
+                        Membership Notes
+                      </CoreTh>
+                      <EnrichedTh label="State/Region" rule={CONTACT_ENRICHED_WRITE.state} />
+                      <EnrichedTh label="City" rule={CONTACT_ENRICHED_WRITE.city} />
+                      <EnrichedTh label="Employee Count" rule={CONTACT_ENRICHED_WRITE.employees} />
+                      <EnrichedTh label="Industry" rule={CONTACT_ENRICHED_WRITE.industry} />
+                      <EnrichedTh label="Job Level" rule={CONTACT_ENRICHED_WRITE.jobLevel} />
+                      <EnrichedTh label="Job Function" rule={CONTACT_ENRICHED_WRITE.jobFunction} />
                     </tr>
                   </thead>
                   <tbody>
-                    {contactRowsForTable.map((row) => (
-                      <tr key={row.id} className={TABLE_ROW}>
-                        <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.firstName}</td>
-                        <td className="px-3 py-2 text-zinc-800 dark:text-zinc-200">{row.lastName}</td>
-                        <td className="max-w-44 break-all px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                          {row.rawEmail}
-                        </td>
-                        <td className="max-w-40 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
-                          <PrePushEditableCell
-                            value={row.resolvedCompany}
-                            onSave={(v) => patchContact(row.id, { resolvedCompany: v })}
-                          />
-                        </td>
-                        <td className="max-w-36 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
-                          <PrePushEditableCell
-                            value={row.title}
-                            onSave={(v) => patchContact(row.id, { title: v })}
-                          />
-                        </td>
-                        <td className="max-w-36 px-3 py-2 align-middle text-zinc-800 dark:text-zinc-200">
-                          <PrePushEditableCell
-                            value={row.linkedinUrl}
-                            breakAll
-                            onSave={(v) => patchContact(row.id, { linkedinUrl: v, linkedinSource: "" })}
-                          />
-                        </td>
-                        <td className="align-middle px-3 py-2 text-zinc-800 dark:text-zinc-200">
-                          <div className="flex min-h-9 w-full items-center">
-                            <div className="w-full min-w-0">
-                              <PrePushEditableCell
-                                value={row.membershipNotes ?? ""}
-                                onSave={(v) => patchContact(row.id, { membershipNotes: v })}
-                              />
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                    {contactRowsForTable.map((row) => {
+                      const loc = contactCityStateDisplay(row.location);
+                      return (
+                        <tr key={row.id}>
+                          <CoreTd index={0} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                            {row.firstName}
+                          </CoreTd>
+                          <CoreTd index={1} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                            {row.lastName}
+                          </CoreTd>
+                          <CoreTd index={2} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                            <SummaryEmailCell row={row} />
+                          </CoreTd>
+                          <CoreTd index={3} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                            <PrePushEditableCell
+                              value={row.resolvedCompany}
+                              onSave={(v) => patchContact(row.id, { resolvedCompany: v })}
+                            />
+                          </CoreTd>
+                          <CoreTd index={4} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                            <PrePushEditableCell
+                              value={row.title}
+                              onSave={(v) => patchContact(row.id, { title: v })}
+                            />
+                          </CoreTd>
+                          <CoreTd index={5} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                            <PrePushEditableCell
+                              value={row.linkedinUrl}
+                              breakAll
+                              onSave={(v) =>
+                                patchContact(row.id, { linkedinUrl: v, linkedinSource: "" })
+                              }
+                            />
+                          </CoreTd>
+                          <CoreTd index={6} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                            <span className="wrap-break-word">
+                              {resolvedLeadSourceDisplay(
+                                row,
+                                useExistingLeadSource,
+                                leadSource,
+                              )}
+                            </span>
+                          </CoreTd>
+                          <CoreTd index={7} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
+                            <span className="wrap-break-word">
+                              {resolvedLeadSourceDescriptionDisplay(
+                                row,
+                                useExistingLeadSourceDescription,
+                                leadSourceDescription,
+                              )}
+                            </span>
+                          </CoreTd>
+                          <CoreTd index={8} widths={CONTACT_CORE_STICKY_PX} lastCore={true}>
+                            <span className="wrap-break-word">
+                              {row.membershipNotes?.trim() ? row.membershipNotes : "—"}
+                            </span>
+                          </CoreTd>
+                          <td className="border-b border-zinc-200 bg-(--bg-card) px-3 py-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200">
+                            {loc.stateRegion.trim() || "—"}
+                          </td>
+                          <td className="border-b border-zinc-200 bg-(--bg-card) px-3 py-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200">
+                            {loc.city.trim() || "—"}
+                          </td>
+                          <td className="border-b border-zinc-200 bg-(--bg-card) px-3 py-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200">
+                            {row.ziCompanyEmployeeCount?.trim() || "—"}
+                          </td>
+                          <td className="border-b border-zinc-200 bg-(--bg-card) px-3 py-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200">
+                            {row.ziCompanyPrimaryIndustry?.trim() || "—"}
+                          </td>
+                          <td className="border-b border-zinc-200 bg-(--bg-card) px-3 py-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200">
+                            {row.ziManagementLevel?.trim() || "—"}
+                          </td>
+                          <td className="border-b border-zinc-200 bg-(--bg-card) px-3 py-2 text-zinc-800 dark:border-zinc-800 dark:text-zinc-200">
+                            {row.ziJobFunction?.trim() || "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </>
               )}
             </table>
           </div>
+          <FieldTrustRulesSubline listType={listType} />
         </div>
       </section>
-
-      {/* Section 10a: Collapsible field preview */}
-      <div className={CARD_PANEL}>
-        <button
-          type="button"
-          className="flex w-full items-center justify-between text-sm font-semibold text-zinc-800 dark:text-zinc-200"
-          onClick={() => setPreviewOpen((o) => !o)}
-          aria-expanded={previewOpen}
-        >
-          <span>Preview fields being pushed to HubSpot</span>
-          <span className="text-zinc-500">{previewOpen ? "▼" : "▶"}</span>
-        </button>
-
-        {previewOpen ? (
-          <div className="mt-3 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
-            <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
-              <thead className="bg-zinc-100 dark:bg-zinc-800/80">
-                <tr>
-                  <th className={TABLE_HEAD_CELL}>Record</th>
-                  <th className={TABLE_HEAD_CELL}>Fields being written</th>
-                  <th className={TABLE_HEAD_CELL}>Fields skipped (HubSpot has value)</th>
-                  <th className={TABLE_HEAD_CELL}></th>
-                </tr>
-              </thead>
-              <tbody>
-                {fieldPreviewRows.map((row) => {
-                  const isExpanded = expandedPreviewRows.has(row.id);
-                  return (
-                    <>
-                      <tr key={row.id} className={TABLE_ROW}>
-                        <td className="max-w-40 wrap-break-word px-3 py-2 font-medium text-zinc-800 dark:text-zinc-200">
-                          {row.name}
-                        </td>
-                        <td className="px-3 py-2 tabular-nums text-zinc-800 dark:text-zinc-200">
-                          <span className="font-medium text-emerald-700 dark:text-emerald-400">{row.written.length}</span>
-                        </td>
-                        <td className="px-3 py-2 tabular-nums text-zinc-600 dark:text-zinc-400">
-                          {row.skipped.length > 0 ? (
-                            <span className="text-amber-700 dark:text-amber-400">{row.skipped.length}</span>
-                          ) : "—"}
-                        </td>
-                        <td className="px-3 py-2">
-                          {(row.written.length > 0 || row.skipped.length > 0) ? (
-                            <button
-                              type="button"
-                              className="text-xs text-blue-600 underline hover:text-blue-800 dark:text-blue-400"
-                              onClick={() =>
-                                setExpandedPreviewRows((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(row.id)) next.delete(row.id);
-                                  else next.add(row.id);
-                                  return next;
-                                })
-                              }
-                            >
-                              {isExpanded ? "Hide" : "Details"}
-                            </button>
-                          ) : null}
-                        </td>
-                      </tr>
-                      {isExpanded ? (
-                        <tr key={`${row.id}-detail`} className="bg-zinc-50 dark:bg-zinc-900/50">
-                          <td colSpan={4} className="px-4 pb-3 pt-1">
-                            <div className="flex flex-wrap gap-6">
-                              {row.written.length > 0 ? (
-                                <div className="min-w-48">
-                                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
-                                    Will write ({row.written.length})
-                                  </p>
-                                  <ul className="space-y-0.5">
-                                    {row.written.map((f) => (
-                                      <li key={f.key} className="flex items-baseline gap-1.5 text-xs text-zinc-700 dark:text-zinc-300">
-                                        <span className="font-medium text-zinc-900 dark:text-zinc-100 shrink-0">{f.label}:</span>
-                                        <span className="break-all">{f.value}</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              ) : null}
-                              {row.skipped.length > 0 ? (
-                                <div className="min-w-48">
-                                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                                    Skipped — HubSpot has value ({row.skipped.length})
-                                  </p>
-                                  <ul className="space-y-0.5">
-                                    {row.skipped.map((f) => (
-                                      <li key={f.key} className="flex items-baseline gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-                                        <span className="font-medium shrink-0">{f.label}:</span>
-                                        <span className="break-all italic">{f.hsValue}</span>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              ) : null}
-                            </div>
-                          </td>
-                        </tr>
-                      ) : null}
-                    </>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </div>
 
       {/* Section 10b: Ownership failure preview */}
       {(ownershipCompaniesNoState > 0 || ownershipContactsNoDomain > 0) ? (
@@ -792,7 +812,7 @@ export function PrePushScreen({
         </div>
       ) : null}
 
-      <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50 border-t border-zinc-200 bg-white/95 px-4 py-4 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] backdrop-blur-sm dark:border-zinc-800 dark:bg-zinc-900/95">
+      <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50 border-t border-(--border-default) bg-(--bg-card)/95 px-4 py-4 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] backdrop-blur-sm">
         <div className="pointer-events-auto mx-auto flex w-full max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-start">
             <button

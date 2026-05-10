@@ -1,7 +1,7 @@
 # Realm Enrichment Tool — SPEC-7
 ## Final Follow-Up Closures (Post-SPEC 6)
 
-**Status:** Draft for implementation  
+**Status:** Complete  
 **Scope:** Close the two remaining documented follow-ups after SPEC-6 completion  
 **Tools:** Cursor / Claude Code (implementation can be split by area)
 

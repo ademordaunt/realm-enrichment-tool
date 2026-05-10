@@ -52,6 +52,7 @@ Dynamic imports:
 
 - In `page.tsx`: `EventContextForm`, `PrePushScreen`, `ReviewTable`, `PreReviewGate`
 - In `EnrichingStep.tsx`: `BulkProgressScreen`
+- Secondary button styles and micro-typography are fully normalized to tokenized CSS variables across all UI surfaces as of SPEC-7.
 
 Session storage keys in active use:
 
@@ -95,9 +96,35 @@ Bulk polling:
 
 - Implemented in `useBulkJob.startJobPolling`
 - In-flight guard prevents overlapping polls
-- `consecutivePollingErrors` increments on fetch failures and resets on success
+- `consecutivePollingErrors` increments on fetch failures and resets:
+  - on successful poll
+  - on new bulk job start
+  - on bulk session reset
+  - on bulk cancel
 - Escalated warning copy is shown in `BulkProgressScreen`
-- No explicit user-triggered retry button is currently rendered in the 3+ failure state
+- At 3+ consecutive failures, `BulkProgressScreen` renders an explicit retry control wired to an immediate manual status poll
+
+### Bulk Stuck-Running Watchdog
+
+Bulk jobs include a server-side watchdog to recover from jobs that remain in `running` without heartbeat updates.
+
+Behavior:
+
+- Worker chunk handler writes a heartbeat timestamp at chunk start:
+  - `src/app/api/jobs/process/route.ts` sets `jobState.lastHeartbeatAt = Date.now()`
+- Status endpoint enforces stale-running cutoff:
+  - `src/app/api/jobs/[jobId]/status/route.ts` defines `STALE_RUNNING_MS = 5 * 60 * 1000`
+  - If job state is `running` and `Date.now() - lastHeartbeatAt > STALE_RUNNING_MS`, state is auto-transitioned to `failed`
+  - Endpoint sets both `failureReason` and legacy `error` message for UI compatibility, then persists via `setJobState(...)`
+- Resume flow clears stale-failure marker before retry:
+  - `src/app/api/jobs/[jobId]/resume/route.ts` clears `failureReason` so resume can proceed cleanly
+- State shape supports this flow:
+  - `src/lib/utils/types.ts` includes `lastHeartbeatAt?: number` and `failureReason?: string` on `BulkJobState`
+
+Result:
+
+- Stuck-running jobs no longer remain indefinitely in `running`.
+- They become resumable via the existing resume path after automatic transition to `failed`.
 
 ---
 
@@ -220,7 +247,5 @@ Auth model:
 
 ## 10) Known Limitations
 
-- Bulk polling retry UX: no explicit retry button in the 3+ error escalation state.
-- UI token cleanup: secondary button and tiny text normalization is not fully converged.
 - Common Room Prospector is not integrated.
 - Large lists remain expensive/slow due to linear external-call volume.

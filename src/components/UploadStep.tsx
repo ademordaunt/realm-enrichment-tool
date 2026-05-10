@@ -305,16 +305,25 @@ export function UploadStep({
               <div className="flex items-end justify-between gap-2">
                 <p className="text-sm font-semibold text-(--text-primary)">Preview — your uploaded data as parsed</p>
               </div>
-              <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-(--border-default)">
+              <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-(--border-default) [scrollbar-width:thin] [scrollbar-color:var(--border-default)_transparent] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-(--border-default) hover:[scrollbar-color:var(--text-muted)_transparent] hover:[&::-webkit-scrollbar-thumb]:bg-(--text-muted)">
                 <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
                   <thead className="sticky top-0 z-1 bg-(--bg-muted)">
                     <tr>
                       {previewColumnMeta.map((col) => (
-                        <th key={col.key} className="whitespace-nowrap border-b border-(--border-default) px-3 py-2 font-semibold text-(--text-secondary)">
+                        <th key={col.key} className="whitespace-nowrap border-b border-(--border-default) px-4 py-3 font-bold text-(--text-secondary)">
                           <div className="flex flex-col">
-                            <span className="font-semibold text-(--text-primary)">{col.label}</span>
+                            <span className="font-bold text-(--text-primary)">{col.label}</span>
                             <span className="text-xs font-normal text-(--text-muted)">
-                              {col.recognized ? col.originalHeader : `${col.originalHeader} - Extra column - will be carried through.`}
+                              {col.recognized ? (
+                                col.originalHeader
+                              ) : (
+                                <>
+                                  {col.originalHeader} (extra column)
+                                  <span className="mt-1 block text-[11px] font-medium text-(--text-secondary)">
+                                    Note: This column will be carried through.
+                                  </span>
+                                </>
+                              )}
                             </span>
                           </div>
                         </th>
@@ -325,7 +334,7 @@ export function UploadStep({
                     {previewRowsForTable.map((row, ri) => (
                       <tr key={ri} className={ri % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)"}>
                         {previewColumnMeta.map((col) => (
-                          <td key={col.key} className="border-b border-(--border-default) px-3 py-2 text-(--text-primary)">
+                          <td key={col.key} className="border-b border-(--border-default) px-4 py-3 text-(--text-primary)">
                             {(row as Record<string, string | undefined>)[col.key] ?? ""}
                           </td>
                         ))}

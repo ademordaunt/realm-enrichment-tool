@@ -93,7 +93,7 @@ export function ReasoningTooltip(props: ReasoningTooltipProps) {
         type="button"
         className={
           triggerClassName ??
-          "inline-flex cursor-help items-center justify-center rounded p-0.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+          "inline-flex cursor-help items-center justify-center rounded p-0.5 text-(--text-muted) hover:bg-(--bg-muted) hover:text-(--text-primary)"
         }
         aria-label={triggerAriaLabel ?? "Show enrichment details"}
         onClick={(e) => {
@@ -106,7 +106,7 @@ export function ReasoningTooltip(props: ReasoningTooltipProps) {
       {visible && coords ? (
         <div
           ref={tooltipRef}
-          className="z-9999 w-72 max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal wrap-break-word rounded-lg border border-zinc-200 bg-white opacity-100 p-3 text-left text-sm leading-relaxed text-zinc-900 shadow-xl"
+          className="z-9999 w-72 max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal wrap-break-word rounded-lg border border-(--border-default) bg-(--bg-card) opacity-100 p-3 text-left text-sm leading-relaxed text-(--text-primary) shadow-xl"
           style={{
             position: "fixed",
             top: coords.top,

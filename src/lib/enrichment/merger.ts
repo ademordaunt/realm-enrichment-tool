@@ -1,4 +1,5 @@
 import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
+import { isPersonalEmail } from "@/lib/utils/contacts";
 
 function websiteFromDomain(domain: string): string {
   const d = domain.trim().toLowerCase();
@@ -203,8 +204,40 @@ export function mergeEnrichedContact(
   const ziDiscarded = typeof ziScore === "number" && ziScore < 25;
   const zi: Partial<EnrichedContact> = ziDiscarded ? {} : zoominfo;
 
-  /** CSV email is canonical; never use AI/ZoomInfo/Common Room suggestions for the stored email. */
-  const resolvedEmail = ai.rawEmail?.trim() ?? "";
+  /**
+   * Primary email: CSV raw remains canonical unless ZoomInfo / Common Room returns an upgraded
+   * contact-level resolvedEmail (work email when input was personal or missing).
+   */
+  const enricherResolvedEmail = firstNonEmptyString(
+    zi.resolvedEmail,
+    commonroom.resolvedEmail,
+  );
+  const resolvedEmail =
+    enricherResolvedEmail || (ai.rawEmail?.trim() ?? "");
+
+  let personalEmail = firstNonEmptyString(
+    zi.personalEmail,
+    commonroom.personalEmail,
+    ai.personalEmail,
+  );
+  const csvRaw = ai.rawEmail?.trim() ?? "";
+  if (
+    !personalEmail &&
+    csvRaw &&
+    resolvedEmail &&
+    csvRaw.toLowerCase() !== resolvedEmail.toLowerCase() &&
+    isPersonalEmail(csvRaw) &&
+    !isPersonalEmail(resolvedEmail)
+  ) {
+    personalEmail = csvRaw;
+  }
+  if (
+    personalEmail &&
+    resolvedEmail &&
+    personalEmail.trim().toLowerCase() === resolvedEmail.trim().toLowerCase()
+  ) {
+    personalEmail = "";
+  }
 
   const linkedinUrl = firstNonEmptyString(
     commonroom.linkedinUrl,
@@ -284,6 +317,9 @@ export function mergeEnrichedContact(
   return {
     ...ai,
     resolvedEmail,
+    ...(personalEmail.trim()
+      ? { personalEmail: personalEmail.trim() }
+      : { personalEmail: undefined }),
     linkedinUrl,
     linkedinSource,
     resolvedCompany,

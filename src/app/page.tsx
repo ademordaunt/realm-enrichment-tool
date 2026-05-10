@@ -144,6 +144,7 @@ export default function Home() {
   const [duplicateSessionTotal, setDuplicateSessionTotal] = useState<number | null>(null);
   const [removeAllDupConfirm, setRemoveAllDupConfirm] = useState<string | null>(null);
   const [showSuccessFlash, setShowSuccessFlash] = useState(false);
+  const [isReviewTableReady, setIsReviewTableReady] = useState(true);
 
   const stepContentRef = useRef<HTMLDivElement>(null);
   const parseRequestIdRef = useRef(0);
@@ -491,10 +492,12 @@ export default function Home() {
             bulkJobId={bulk.bulkJobId}
             bulkJobState={bulk.bulkJobState}
             consecutivePollingErrors={bulk.consecutivePollingErrors}
+            bulkPollingInFlight={bulk.isPollingInFlight}
             bulkRowsContinueLoading={bulk.bulkRowsContinueLoading}
             progress={progress}
             resolvedListType={resolvedListType}
             cancelBulkJob={bulk.cancelBulkJob}
+            retryStatusPollNow={bulk.retryStatusPollNow}
             handleContinueToReview={bulk.handleContinueToReview}
             cancelEnrichmentToContext={enrichPipeline.cancelEnrichmentToContext}
           />
@@ -582,7 +585,11 @@ export default function Home() {
                       ? finalizeRowsForReview(updatedRows as EnrichedCompany[], "companies", finalizeOpts)
                       : finalizeRowsForReview(updatedRows as EnrichedContact[], "contacts", finalizeOpts);
                     setEnriched(finalized);
+                    setIsReviewTableReady(false);
                     setStep("enriched");
+                    void import("@/components/ReviewTable")
+                      .then(() => setIsReviewTableReady(true))
+                      .catch(() => setIsReviewTableReady(true));
                   }}
                 />
               )}
@@ -599,7 +606,7 @@ export default function Home() {
                     <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700/80 dark:bg-amber-950/40 dark:text-amber-100" role="alert">ZoomInfo: credentials not configured</div>
                   ) : null}
                   <div className="mt-4">
-                    {reviewRows.length === 0 ? (
+                    {!isReviewTableReady || reviewRows.length === 0 ? (
                       <ReviewTableSkeleton />
                     ) : (
                       <ReviewTable

@@ -1,6 +1,7 @@
 "use client";
 
 import { ConfidenceBadge } from "@/components/ConfidenceBadge";
+import { FieldTrustRulesSubline } from "@/components/FieldTrustRulesSubline";
 import { ReasoningTooltip } from "@/components/ReasoningTooltip";
 import {
   sanitizeCompanyName,
@@ -29,24 +30,26 @@ export interface ReviewTableProps {
 function linkedInHeaderLegendContent(): ReactNode {
   return (
     <div className="space-y-1.5">
-      <p className="font-medium">LinkedIn source legend:</p>
-      <p className="flex items-center gap-1.5">
+      <p className="border-b-[0.5px] border-(--border-default) pb-1.5 font-medium text-(--text-primary)">
+        LinkedIn source
+      </p>
+      <p className="flex items-center gap-1.5 font-normal text-(--text-secondary)">
         <span className="inline-block h-2 w-2 rounded-full bg-violet-600" aria-hidden />
         HubSpot verified
       </p>
-      <p className="flex items-center gap-1.5">
+      <p className="flex items-center gap-1.5 font-normal text-(--text-secondary)">
         <span className="inline-block h-2 w-2 rounded-full bg-blue-600" aria-hidden />
         ZoomInfo verified
       </p>
-      <p className="flex items-center gap-1.5">
+      <p className="flex items-center gap-1.5 font-normal text-(--text-secondary)">
         <span className="inline-block h-2 w-2 rounded-full bg-teal-600" aria-hidden />
         Common Room verified
       </p>
-      <p className="flex items-center gap-1.5">
+      <p className="flex items-center gap-1.5 font-normal text-(--text-secondary)">
         <span className="inline-block h-2 w-2 rounded-full bg-amber-500" aria-hidden />
         AI web search
       </p>
-      <p className="flex items-center gap-1.5">
+      <p className="flex items-center gap-1.5 font-normal text-(--text-secondary)">
         <span className="inline-block h-2 w-2 rounded-full bg-zinc-800 dark:bg-black" aria-hidden />
         Manually entered
       </p>
@@ -87,6 +90,7 @@ function buildReasoningTooltipContent(
   listType: "companies" | "contacts",
 ): ReactNode {
   const bucket = row.reviewBucket ?? "needs_review";
+  const entityLabel = listType === "companies" ? "company" : "contact";
   const company = listType === "companies" ? (row as EnrichedCompany) : null;
   const contact = listType === "contacts" ? (row as EnrichedContact) : null;
   const trustedSource = row.enrichedByZoomInfo && row.hubspotId
@@ -105,12 +109,12 @@ function buildReasoningTooltipContent(
 
   if (bucket === "excluded") {
     if (row.exclusionReason === "international") {
-      return "International company. Click 'Include anyway' if they have significant US operations.";
+      return `International ${entityLabel}. Click 'Include anyway' if they have significant US operations.`;
     }
     if (row.exclusionReason === "government") {
       return "Government or public institution. Excluded by default.";
     }
-    return "Could not identify this company. Too little information to enrich reliably.";
+    return `Could not identify this ${entityLabel}: too little information to enrich reliably.`;
   }
 
   const companyDomainConflict = Boolean(
@@ -679,6 +683,15 @@ function LinkedInProfileCell(props: {
 export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewTableProps) {
   const [editedKeys, setEditedKeys] = useState<Set<string>>(() => new Set());
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [statusSortSnapshot, setStatusSortSnapshot] = useState<{
+    listType: "companies" | "contacts";
+    byId: Map<string, EnrichedCompany["status"]>;
+  }>(
+    () => ({
+      listType,
+      byId: new Map(rows.map((row) => [row.id, row.status])),
+    }),
+  );
   const approveAllTimerIdsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const editSessionKey = useMemo(
     () => `${listType}:${rows.map((r) => r.id).join("|")}`,
@@ -747,11 +760,24 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     [listType, rows, persistManualEdit, setRows],
   );
 
+  const statusSortSnapshotById = useMemo(
+    () =>
+      statusSortSnapshot.listType === listType
+        ? statusSortSnapshot.byId
+        : new Map(rows.map((row) => [row.id, row.status])),
+    [listType, rows, statusSortSnapshot],
+  );
+
   const sortedRows = useMemo(() => {
+    const statusForSort = (row: EnrichedCompany | EnrichedContact) =>
+      statusSortSnapshotById.get(row.id) ?? row.status;
+    const sortTier = (row: EnrichedCompany | EnrichedContact) =>
+      reviewSortTier({ ...row, status: statusForSort(row) }, listType);
+
     if (listType === "companies") {
       return [...(rows as EnrichedCompany[])].sort((a, b) => {
-        const ta = reviewSortTier(a, "companies");
-        const tb = reviewSortTier(b, "companies");
+        const ta = sortTier(a);
+        const tb = sortTier(b);
         if (ta !== tb) return ta - tb;
         const da = getDisplayConfidence(a, "companies");
         const db = getDisplayConfidence(b, "companies");
@@ -769,8 +795,8 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
       });
     }
     return [...(rows as EnrichedContact[])].sort((a, b) => {
-      const ta = reviewSortTier(a, "contacts");
-      const tb = reviewSortTier(b, "contacts");
+      const ta = sortTier(a);
+      const tb = sortTier(b);
       if (ta !== tb) return ta - tb;
       const da = getDisplayConfidence(a, "contacts");
       const db = getDisplayConfidence(b, "contacts");
@@ -789,7 +815,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         sensitivity: "base",
       });
     });
-  }, [rows, listType]);
+  }, [rows, listType, statusSortSnapshotById]);
 
   const isEdited = useCallback(
     (id: string, field: string) => editedKeys.has(getSessionFieldKey(id, field)),
@@ -993,10 +1019,10 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
 
     const base = `border-b border-(--border-default) border-l-4 ${borderClass}`;
     if (bucket === "excluded" && r.status === "skipped") {
-      return `${base} bg-zinc-100/80 text-zinc-600 opacity-90 dark:bg-zinc-900/50 dark:text-zinc-300`;
+      return `${base} bg-zinc-100/80 dark:bg-zinc-900/50`;
     }
     if (r.status === "skipped") {
-      return `${base} bg-(--bg-muted) opacity-70`;
+      return `${base} bg-(--bg-muted)`;
     }
     const stripe = rowIndex % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)";
     return `${base} ${stripe}`;
@@ -1008,7 +1034,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     if (bucket === "excluded" && r.status === "skipped") {
       return "bg-zinc-100/90 dark:bg-zinc-900/55";
     }
-    if (r.status === "skipped") return "bg-(--bg-muted) opacity-70";
+    if (r.status === "skipped") return "bg-(--bg-muted)";
     return rowIndex % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)";
   };
 
@@ -1021,20 +1047,20 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
           <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
             ⚠️ Needs Review — {needsReviewCount} records
           </p>
-          <p className="text-xs text-(--text-muted)">These records need a quick check before pushing</p>
+          <p className="text-xs text-(--text-muted)">These records need a check before pushing.</p>
         </div>
         <div>
           <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-300">
             ✓ Trusted — {trustedCount} records
           </p>
-          <p className="text-xs text-(--text-muted)">Verified by HubSpot or ZoomInfo</p>
+          <p className="text-xs text-(--text-muted)">Verified and ready to push — no action needed.</p>
         </div>
         <div>
           <p className="text-sm font-semibold text-zinc-600 dark:text-zinc-400">
             ✗ Excluded — {excludedCount} records
           </p>
           <p className="text-xs text-(--text-muted)">
-            Not being pushed to HubSpot — check a row to override and include it
+            Not being pushed — check a row to override and include.
           </p>
         </div>
       </div>
@@ -1043,14 +1069,14 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            className="rounded-lg border border-(--border-default) bg-white px-3 py-1.5 text-xs font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
+            className="rounded-lg border border-(--border-default) bg-(--bg-card) px-3 py-1.5 text-xs font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
             onClick={selectAll}
           >
             Select All
           </button>
           <button
             type="button"
-            className="rounded-lg border border-(--border-default) bg-white px-3 py-1.5 text-xs font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
+            className="rounded-lg border border-(--border-default) bg-(--bg-card) px-3 py-1.5 text-xs font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
             onClick={deselectAll}
           >
             Deselect All
@@ -1065,7 +1091,13 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
               id="rt-filter"
               className="appearance-none rounded-lg border border-(--border-default) bg-(--bg-card) py-1 pl-2 pr-8 text-xs text-(--text-primary)"
               value={filter}
-              onChange={(e) => setFilter(e.target.value as FilterKey)}
+              onChange={(e) => {
+                setFilter(e.target.value as FilterKey);
+                setStatusSortSnapshot({
+                  listType,
+                  byId: new Map(rows.map((row) => [row.id, row.status])),
+                });
+              }}
             >
               <option value="all">All</option>
               <option value="needs_review">Needs Review</option>
@@ -1081,6 +1113,8 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
           </div>
         </div>
       </div>
+
+      <FieldTrustRulesSubline listType={listType} />
 
       <div className="min-w-0 overflow-x-auto rounded-lg border border-(--border-default)">
         <table className="min-w-full border-separate border-spacing-0 text-left text-xs sm:text-sm">
@@ -1107,7 +1141,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                     <ReasoningTooltip
                       content={linkedInHeaderLegendContent()}
                       trigger={
-                        <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-gray-400 text-[10px] text-gray-500 cursor-help">
+                        <span className="ml-1 inline-flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full border border-(--border-default) text-[10px] text-(--text-muted)">
                           ?
                         </span>
                       }
@@ -1137,13 +1171,16 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                     <ReasoningTooltip
                       content={linkedInHeaderLegendContent()}
                       trigger={
-                        <span className="ml-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-gray-400 text-[10px] text-gray-500 cursor-help">
+                        <span className="ml-1 inline-flex h-3.5 w-3.5 cursor-help items-center justify-center rounded-full border border-(--border-default) text-[10px] text-(--text-muted)">
                           ?
                         </span>
                       }
                       triggerAriaLabel="LinkedIn source legend"
                     />
                   </span>
+                </th>
+                <th className="max-w-56 border-b border-(--border-default) px-2 py-2">
+                  Membership Notes
                 </th>
                 <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">
                   Confidence
@@ -1166,6 +1203,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
             {listType === "companies"
               ? (orderedReviewRows as EnrichedCompany[]).map((row, ri) => {
                   const muted = row.status === "skipped";
+                  const mutedCellTextClass = muted ? "text-zinc-500 dark:text-zinc-400" : "";
                   const checked = row.status === "approved";
                   return (
                     <tr key={row.id} className={`${rowShellClass(row, ri)} transition-colors duration-150`}>
@@ -1187,7 +1225,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       >
                         {row.rawInput}
                       </td>
-                      <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <EditableCell
                           value={row.resolvedName}
                           edited={isEdited(row.id, "resolvedName")}
@@ -1208,7 +1246,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <EditableCell
                           value={row.domain}
                           edited={isEdited(row.id, "domain")}
@@ -1232,7 +1270,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="max-w-56 px-2 py-1.5 align-middle">
+                      <td className={`max-w-56 px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <StateRegionCell
                           value={row.state}
                           edited={isEdited(row.id, "state")}
@@ -1253,7 +1291,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="px-2 py-1.5 align-middle">
+                      <td className={`px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <EmployeesCell
                           value={row.numberOfEmployees}
                           edited={isEdited(row.id, "numberOfEmployees")}
@@ -1273,7 +1311,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal">
+                      <td className={`min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal ${mutedCellTextClass}`}>
                         <LinkedInProfileCell
                           value={row.linkedinUrl}
                           edited={isEdited(row.id, "linkedinUrl")}
@@ -1299,7 +1337,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="min-w-[120px] px-2 py-1.5 align-middle">
+                      <td className={`min-w-[120px] px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <ConfidenceBadge score={getDisplayConfidence(row, "companies")} />
                           {row.hubspotId ? (
@@ -1314,14 +1352,14 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             <button
                               type="button"
                               onClick={() => includeInternationalAnyway(row.id)}
-                              className="rounded border border-zinc-300 px-2 py-0.5 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                              className="rounded border border-(--border-default) bg-(--bg-card) px-2 py-0.5 text-xs font-medium text-(--text-primary) transition-colors hover:bg-(--bg-muted)"
                             >
                               Include anyway
                             </button>
                           ) : null}
                         </div>
                       </td>
-                      <td className="max-w-56 px-2 py-1.5 align-middle wrap-break-word">
+                      <td className={`max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <div className="flex items-center justify-center">
                           <ReasoningTooltip
                             content={buildReasoningTooltipContent(row, "companies")}
@@ -1333,6 +1371,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                 })
               : (orderedReviewRows as EnrichedContact[]).map((row, ri) => {
                   const muted = row.status === "skipped";
+                  const mutedCellTextClass = muted ? "text-zinc-500 dark:text-zinc-400" : "";
                   const checked = row.status === "approved";
                   const fullName = formatContactFullName(row);
                   return (
@@ -1377,7 +1416,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="min-w-0 max-w-48 break-all px-2 py-1.5 align-middle">
+                      <td className={`min-w-0 max-w-48 break-all px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <div className="flex items-center gap-1.5">
                           <EditableCell
                             value={sanitizeUnknown(row.rawEmail)}
@@ -1406,7 +1445,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             <ReasoningTooltip
                               text={`Work email found by ZoomInfo. Original email: ${row.personalEmail.trim()}`}
                               trigger={
-                                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-zinc-400 px-1 text-[10px] text-zinc-500">
+                                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-(--border-default) px-1 text-[10px] text-(--text-muted)">
                                   i
                                 </span>
                               }
@@ -1415,7 +1454,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           ) : null}
                         </div>
                       </td>
-                      <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <EditableCell
                           value={sanitizeCompanyName(row.resolvedCompany)}
                           edited={isEdited(row.id, "resolvedCompany")}
@@ -1437,7 +1476,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="max-w-48 px-2 py-1.5 align-middle wrap-break-word">
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <EditableCell
                           value={sanitizeUnknown(row.title)}
                           edited={isEdited(row.id, "title")}
@@ -1459,7 +1498,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal">
+                      <td className={`min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal ${mutedCellTextClass}`}>
                         <LinkedInProfileCell
                           value={sanitizeUnknown(row.linkedinUrl)}
                           edited={isEdited(row.id, "linkedinUrl")}
@@ -1486,7 +1525,32 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className="min-w-[120px] px-2 py-1.5 align-middle">
+                      <td
+                        className={`max-w-56 min-w-[140px] px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}
+                      >
+                        <EditableCell
+                          value={row.membershipNotes ?? ""}
+                          edited={isEdited(row.id, "membershipNotes")}
+                          muted={muted}
+                          breakAll
+                          pencilOnHover
+                          onSave={(v) => {
+                            markEdited(row.id, "membershipNotes");
+                            const next = v.trim();
+                            setRows(
+                              (rows as EnrichedContact[]).map((r) =>
+                                r.id === row.id ? { ...r, membershipNotes: next } : r,
+                              ),
+                            );
+                            persistManualEdit(
+                              (row as EnrichedContact).resolvedEmail?.trim().toLowerCase() ?? "",
+                              "membershipNotes",
+                              next,
+                            );
+                          }}
+                        />
+                      </td>
+                      <td className={`min-w-[120px] px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <ConfidenceBadge score={getDisplayConfidence(row, "contacts")} />
                           {row.hubspotId ? (
@@ -1499,7 +1563,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           ) : null}
                         </div>
                       </td>
-                      <td className="max-w-56 px-2 py-1.5 align-middle wrap-break-word">
+                      <td className={`max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <div className="flex items-center justify-center">
                           <ReasoningTooltip
                             content={buildReasoningTooltipContent(row, "contacts")}

@@ -75,6 +75,14 @@ function parseMonthYearString(s: string): { month: string; year: number } | null
   return { month: monthStr, year };
 }
 
+function monthMatchesQuery(month: (typeof MONTH_NAMES)[number], query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const full = month.toLowerCase();
+  const short = full.slice(0, 3);
+  return full.startsWith(q) || short.startsWith(q);
+}
+
 /** All searchable options for the state/region combobox. */
 const ALL_COMBO_OPTIONS = [
   ...US_STATE_OPTIONS.map((s) => ({ label: s, group: "States" as const })),
@@ -103,6 +111,9 @@ export function EventContextForm({
 }: EventContextFormProps) {
   const [eventName, setEventName] = useState("");
   const [monthName, setMonthName] = useState<string>("");
+  const [monthInputValue, setMonthInputValue] = useState("");
+  const [monthOpen, setMonthOpen] = useState(false);
+  const [monthHighlight, setMonthHighlight] = useState(-1);
   const [year, setYear] = useState<string>(new Date().getFullYear().toString());
   const [region, setRegion] = useState("");
   /** Text currently shown in the combobox input (may differ from `region` while typing). */
@@ -134,6 +145,10 @@ export function EventContextForm({
       : ALL_COMBO_OPTIONS,
     [comboInputValue],
   );
+  const filteredMonthOptions = useMemo(
+    () => MONTH_NAMES.filter((month) => monthMatchesQuery(month, monthInputValue)),
+    [monthInputValue],
+  );
 
   useEffect(() => {
     if (!initialValues) return;
@@ -156,6 +171,7 @@ export function EventContextForm({
       setAudienceLevel(initialValues.audienceLevel || DEFAULT_AUDIENCE);
       if (parsed) {
         setMonthName(parsed.month);
+        setMonthInputValue(parsed.month);
         setYear(parsed.year.toString());
       }
     });
@@ -212,7 +228,10 @@ export function EventContextForm({
         }
       }
       if (inferredMonth) {
-        queueMicrotask(() => setMonthName(inferredMonth));
+        queueMicrotask(() => {
+          setMonthName(inferredMonth);
+          setMonthInputValue(inferredMonth);
+        });
       }
     }
 
@@ -240,6 +259,14 @@ export function EventContextForm({
     setRegion("");
     setComboInputValue("");
     setComboOpen(false);
+  }, []);
+
+  const selectMonthOption = useCallback((month: (typeof MONTH_NAMES)[number]) => {
+    monthManuallySelected.current = true;
+    setMonthName(month);
+    setMonthInputValue(month);
+    setMonthOpen(false);
+    setMonthHighlight(-1);
   }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -302,28 +329,95 @@ export function EventContextForm({
             <span className="font-medium text-(--text-primary)">Event Date</span>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="relative">
-                <select
-                  className={`${selectClass} ${monthName ? "text-(--text-primary)" : "text-(--text-muted)"}`}
-                  value={monthName}
-                  onChange={(e) => {
-                    monthManuallySelected.current = true;
-                    setMonthName(e.target.value);
-                  }}
+                <input
+                  type="text"
+                  role="combobox"
+                  aria-expanded={monthOpen}
+                  aria-controls="month-listbox"
+                  aria-activedescendant={monthHighlight >= 0 ? `month-option-${monthHighlight}` : undefined}
+                  className={`${inputClass} pr-8`}
+                  placeholder="Search months..."
+                  value={monthInputValue}
+                  autoComplete="off"
                   disabled={disabled}
-                >
-                  <option value="">Select month</option>
-                  {MONTH_NAMES.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(e) => {
+                    setMonthInputValue(e.target.value);
+                    setMonthOpen(true);
+                    setMonthHighlight(-1);
+                  }}
+                  onFocus={() => setMonthOpen(true)}
+                  onBlur={() => {
+                    setTimeout(() => {
+                      setMonthOpen(false);
+                      setMonthInputValue(monthName);
+                      setMonthHighlight(-1);
+                    }, 120);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setMonthOpen(true);
+                      setMonthHighlight((h) => Math.min(h + 1, filteredMonthOptions.length - 1));
+                    } else if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setMonthHighlight((h) => Math.max(h - 1, -1));
+                    } else if (e.key === "Enter") {
+                      e.preventDefault();
+                      const sel = filteredMonthOptions[monthHighlight];
+                      if (sel) selectMonthOption(sel);
+                    } else if (e.key === "Escape") {
+                      setMonthOpen(false);
+                      setMonthInputValue(monthName);
+                      setMonthHighlight(-1);
+                    }
+                  }}
+                />
                 <span
                   className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-(--text-muted)"
                   aria-hidden
                 >
                   ▾
                 </span>
+
+                {monthOpen && filteredMonthOptions.length > 0 ? (
+                  <ul
+                    id="month-listbox"
+                    className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-(--border-default) bg-(--bg-card) py-1 shadow-lg"
+                    role="listbox"
+                  >
+                    <li className="px-3 py-1 text-xs font-semibold uppercase tracking-wider text-(--text-muted)">
+                      Months
+                    </li>
+                    {filteredMonthOptions.map((m, idx) => {
+                      const isHighlighted = idx === monthHighlight;
+                      return (
+                        <li
+                          key={m}
+                          id={`month-option-${idx}`}
+                          role="option"
+                          aria-selected={monthName === m}
+                          className={`cursor-pointer px-3 py-1.5 text-sm ${
+                            isHighlighted
+                              ? "bg-(--realm-purple) text-white"
+                              : monthName === m
+                                ? "bg-(--bg-muted) text-(--text-primary)"
+                                : "text-(--text-primary) hover:bg-(--bg-muted)"
+                          }`}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            selectMonthOption(m);
+                          }}
+                        >
+                          {m}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : monthOpen && monthInputValue.trim() && filteredMonthOptions.length === 0 ? (
+                  <div className="absolute z-50 mt-1 w-full rounded-lg border border-(--border-default) bg-(--bg-card) px-3 py-2 text-sm text-(--text-muted) shadow-lg">
+                    No results for &ldquo;{monthInputValue}&rdquo;
+                  </div>
+                ) : null}
               </div>
               <div className="relative">
                 <select

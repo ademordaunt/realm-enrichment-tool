@@ -243,6 +243,31 @@ function countZoomVerifyNonHighPrefix(rows: (EnrichedCompany | EnrichedContact)[
 
 const ZOOM_VERIFY_COMPANY_CHUNK_SIZE = 15;
 const ZOOM_VERIFY_CONTACT_CHUNK_SIZE = 8;
+const MIN_PHASE_DISPLAY_MS = 700;
+
+async function waitForMinimumPhaseDisplay(
+  phaseStartMs: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  const remainingMs = MIN_PHASE_DISPLAY_MS - (Date.now() - phaseStartMs);
+  if (remainingMs <= 0) return;
+  await new Promise<void>((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, remainingMs);
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 /** HubSpot property name → enriched row field name (companies). */
 const companyFieldMap: Record<string, string> = {
@@ -337,6 +362,7 @@ export function useEnrichmentPipeline(options: EnrichmentPipelineOptions) {
     listType: "companies" | "contacts",
     signal?: AbortSignal,
   ): Promise<EnrichedCompany[] | EnrichedContact[]> => {
+    const phaseStartMs = Date.now();
     setStep("verifying");
     setProgress({ startRow: 0, endRow: 0, totalRows: 1, detail: "Checking HubSpot for existing records…" });
     try {
@@ -374,6 +400,7 @@ export function useEnrichmentPipeline(options: EnrichmentPipelineOptions) {
       return aiRows;
     } finally {
       setProgress({ startRow: 1, endRow: 1, totalRows: 1, detail: "Checking HubSpot for existing records…" });
+      await waitForMinimumPhaseDisplay(phaseStartMs, signal);
     }
   }, [setStep, setProgress]);
 
@@ -462,20 +489,24 @@ export function useEnrichmentPipeline(options: EnrichmentPipelineOptions) {
       const contactRowsAfterPrecheck = rowsAfterPrecheck as EnrichedContact[];
       const missingLinkedInTotal = contactRowsAfterPrecheck.filter((r) => needsLinkedInLookup(r)).length;
       if (missingLinkedInTotal > 0) {
+        const linkedInPhaseStartMs = Date.now();
         setProgress({ startRow: 1, endRow: 0, totalRows: missingLinkedInTotal, detail: `Searching for remaining LinkedIn URLs: 0 of ${missingLinkedInTotal}…` });
         finalRows = await runLinkedInLookupPass(contactRowsAfterPrecheck, signal, (done, total) => {
           setProgress({ startRow: 1, endRow: done, totalRows: total, detail: `Searching for remaining LinkedIn URLs: ${done} of ${total}…` });
         });
+        await waitForMinimumPhaseDisplay(linkedInPhaseStartMs, signal);
       }
     }
     if (listType === "companies") {
       const companyRowsAfterPrecheck = rowsAfterPrecheck as EnrichedCompany[];
       const missingCompanyLinkedIn = companyRowsAfterPrecheck.filter((r) => needsCompanyLinkedInLookup(r)).length;
       if (missingCompanyLinkedIn > 0) {
+        const linkedInPhaseStartMs = Date.now();
         setProgress({ startRow: 1, endRow: 0, totalRows: missingCompanyLinkedIn, detail: `Finding remaining company LinkedIn profiles… (0 of ${missingCompanyLinkedIn})` });
         finalRows = await runCompanyLinkedInLookupPass(companyRowsAfterPrecheck, signal, (done, total) => {
           setProgress({ startRow: 1, endRow: done, totalRows: total, detail: `Finding remaining company LinkedIn profiles… (${done} of ${total})` });
         });
+        await waitForMinimumPhaseDisplay(linkedInPhaseStartMs, signal);
       }
     }
 

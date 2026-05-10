@@ -78,6 +78,7 @@ export function useBulkJob(options: BulkJobOptions) {
   const [bulkJobState, setBulkJobState] = useState<BulkJobState | null>(null);
   const [consecutivePollingErrors, setConsecutivePollingErrors] = useState(0);
   const [bulkRowsContinueLoading, setBulkRowsContinueLoading] = useState(false);
+  const [isPollingInFlight, setIsPollingInFlight] = useState(false);
 
   const bulkCompleteNotifiedRef = useRef(false);
   const bulkPollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -90,54 +91,72 @@ export function useBulkJob(options: BulkJobOptions) {
     }
   }, []);
 
+  const pollJobStatus = useCallback(
+    async (jobId: string) => {
+      if (pollingInFlightRef.current) return false;
+      pollingInFlightRef.current = true;
+      setIsPollingInFlight(true);
+      try {
+        const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/status`, {
+          method: "GET",
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          setConsecutivePollingErrors((n) => n + 1);
+          return false;
+        }
+        const state = (await res.json()) as BulkJobState;
+        setConsecutivePollingErrors(0);
+        setBulkJobState(state);
+        setProgress({
+          startRow: 1,
+          endRow: state.processedRows,
+          totalRows: state.totalRows || 1,
+          detail: `Bulk job ${state.currentPhase}: ${state.processedRows} of ${state.totalRows}`,
+        });
+        if (state.status === "complete") {
+          stopJobPolling();
+          if (!bulkCompleteNotifiedRef.current) {
+            bulkCompleteNotifiedRef.current = true;
+            fireEnrichmentCompleteNotification();
+          }
+          return true;
+        }
+        if (state.status === "failed" || state.status === "cancelled") {
+          stopJobPolling();
+          return true;
+        }
+        return true;
+      } catch (err) {
+        console.error("[bulk-job] polling failed", err);
+        setConsecutivePollingErrors((n) => n + 1);
+        return false;
+      } finally {
+        pollingInFlightRef.current = false;
+        setIsPollingInFlight(false);
+      }
+    },
+    [setProgress, stopJobPolling],
+  );
+
   const startJobPolling = useCallback(
     (jobId: string) => {
       stopJobPolling();
+      setConsecutivePollingErrors(0);
       const tick = async () => {
-        if (pollingInFlightRef.current) return;
-        pollingInFlightRef.current = true;
-        try {
-          const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/status`, {
-            method: "GET",
-            cache: "no-store",
-          });
-          if (!res.ok) {
-            setConsecutivePollingErrors((n) => n + 1);
-            return;
-          }
-          const state = (await res.json()) as BulkJobState;
-          setConsecutivePollingErrors(0);
-          setBulkJobState(state);
-          setProgress({
-            startRow: 1,
-            endRow: state.processedRows,
-            totalRows: state.totalRows || 1,
-            detail: `Bulk job ${state.currentPhase}: ${state.processedRows} of ${state.totalRows}`,
-          });
-          if (state.status === "complete") {
-            stopJobPolling();
-            if (!bulkCompleteNotifiedRef.current) {
-              bulkCompleteNotifiedRef.current = true;
-              fireEnrichmentCompleteNotification();
-            }
-            return;
-          }
-          if (state.status === "failed" || state.status === "cancelled") {
-            stopJobPolling();
-            return;
-          }
-        } catch (err) {
-          console.error("[bulk-job] polling failed", err);
-          setConsecutivePollingErrors((n) => n + 1);
-        } finally {
-          pollingInFlightRef.current = false;
-        }
+        await pollJobStatus(jobId);
       };
       void tick();
       bulkPollTimerRef.current = setInterval(() => { void tick(); }, 5000);
     },
-    [stopJobPolling, setProgress],
+    [pollJobStatus, stopJobPolling],
   );
+
+  const retryStatusPollNow = useCallback(async () => {
+    const jobId = bulkJobId;
+    if (!jobId) return;
+    await pollJobStatus(jobId);
+  }, [bulkJobId, pollJobStatus]);
 
   const loadCompletedBulkRows = useCallback(
     async (jobId: string, listType: "companies" | "contacts") => {
@@ -200,6 +219,7 @@ export function useBulkJob(options: BulkJobOptions) {
         }
         setBulkJobId(jobId);
         bulkCompleteNotifiedRef.current = false;
+        setConsecutivePollingErrors(0);
         if (typeof window !== "undefined") window.sessionStorage.setItem(BULK_JOB_SESSION_KEY, jobId);
         setStep("enriching");
         startJobPolling(jobId);
@@ -215,6 +235,7 @@ export function useBulkJob(options: BulkJobOptions) {
     stopJobPolling();
     setBulkJobId(null);
     setBulkJobState(null);
+    setConsecutivePollingErrors(0);
     bulkCompleteNotifiedRef.current = false;
   }, [stopJobPolling]);
 
@@ -228,6 +249,7 @@ export function useBulkJob(options: BulkJobOptions) {
     stopJobPolling();
     setBulkJobId(null);
     setBulkJobState(null);
+    setConsecutivePollingErrors(0);
     bulkCompleteNotifiedRef.current = false;
     if (typeof window !== "undefined") window.sessionStorage.removeItem(BULK_JOB_SESSION_KEY);
     onCancelComplete();
@@ -238,10 +260,12 @@ export function useBulkJob(options: BulkJobOptions) {
     setBulkJobId,
     bulkJobState,
     consecutivePollingErrors,
+    isPollingInFlight,
     bulkRowsContinueLoading,
     startBulkJob,
     cancelBulkJob,
     handleContinueToReview,
+    retryStatusPollNow,
     startJobPolling,
     stopJobPolling,
     resetBulkJob,

@@ -7,7 +7,6 @@ import {
   PREREVIEW_DUPLICATE_THRESHOLD,
   PREREVIEW_INTL_GOV_THRESHOLD,
 } from "@/lib/utils/prereview";
-import { motion } from "framer-motion";
 import { useCallback, useLayoutEffect, useMemo, useState } from "react";
 
 const PRIMARY_ACTION_BUTTON =
@@ -321,17 +320,6 @@ export function PreReviewGate({ rows, listType, enrichmentSummary, onContinue }:
                   : null
               : null}
           </div>
-        ) : null}
-
-        {!summary.showIntlGov && !summary.showDup ? (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.18, ease: "easeOut" }}
-            className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-100"
-          >
-            ✓ No duplicate or flagged records found. Ready to review.
-          </motion.div>
         ) : null}
 
         <div className="mt-8 flex justify-end">

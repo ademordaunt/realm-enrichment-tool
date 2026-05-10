@@ -11,6 +11,28 @@
   }
 }
 
+@keyframes auth-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.auth-load-dot {
+  animation: auth-dot-pulse 1s ease-in-out infinite;
+}
+.auth-load-dot--2 {
+  animation-delay: 0.18s;
+}
+.auth-load-dot--3 {
+  animation-delay: 0.36s;
+}
+
 :root {
   --realm-purple: #7B35C1;
   --realm-purple-hover: #6A2AAD;

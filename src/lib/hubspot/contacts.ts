@@ -18,6 +18,7 @@ const CONTACT_PRECHECK_PROPERTIES = [
   "job_function",
   "hs_additional_emails",
   "lead_source__deal_source",
+  "lead_source_description",
 ] as const;
 
 function normalizeEmail(email: string): string {
@@ -47,6 +48,36 @@ async function hubspotSearchWithBackoff(path: string, body: string): Promise<Res
 function isEmpty(val: string | null | undefined): boolean {
   if (val == null) return true;
   return String(val).trim() === "";
+}
+
+function additionalEmailTokens(existingVal: string | null | undefined): string[] {
+  return String(existingVal ?? "")
+    .split(/[;,]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function additionalEmailTokenSetsEqual(a: string, b: string): boolean {
+  const norm = (s: string) =>
+    additionalEmailTokens(s)
+      .map((t) => t.toLowerCase())
+      .sort()
+      .join("|");
+  return norm(a) === norm(b);
+}
+
+/** Ensures `personalEmail` appears in HubSpot secondary emails without dropping existing values. */
+function mergeHsAdditionalEmailsWithPersonal(
+  existingVal: string | null | undefined,
+  personalEmail: string,
+): string {
+  const personal = personalEmail.trim();
+  const tokens = additionalEmailTokens(existingVal);
+  const lowerPersonal = personal.toLowerCase();
+  if (!tokens.some((t) => t.toLowerCase() === lowerPersonal)) {
+    tokens.push(personal);
+  }
+  return tokens.join("; ");
 }
 
 /**
@@ -139,16 +170,18 @@ function contactProperties(
     props.website = contact.ziCompanyWebsite.trim();
   }
 
-  // hs_additional_emails — Fill empty only (preserve existing additional emails)
+  // hs_additional_emails — include distinct personal when present; merge into existing list
   const personalEmail = contact.personalEmail?.trim() ?? "";
   const resolvedEmail = contact.resolvedEmail?.trim() ?? "";
-  if (
-    personalEmail &&
-    resolvedEmail &&
-    personalEmail.toLowerCase() !== resolvedEmail.toLowerCase() &&
-    isEmpty(ex.hs_additional_emails)
-  ) {
-    props.hs_additional_emails = personalEmail;
+  const shouldWritePersonalAdditional =
+    Boolean(personalEmail) &&
+    Boolean(resolvedEmail) &&
+    personalEmail.toLowerCase() !== resolvedEmail.toLowerCase();
+  if (shouldWritePersonalAdditional) {
+    const merged = mergeHsAdditionalEmailsWithPersonal(ex.hs_additional_emails, personalEmail);
+    if (!additionalEmailTokenSetsEqual(merged, String(ex.hs_additional_emails ?? ""))) {
+      props.hs_additional_emails = merged;
+    }
   }
 
   return props;
@@ -677,13 +710,18 @@ export async function updateContact(
   ) {
     updates.website = contact.ziCompanyWebsite.trim();
   }
-  if (
-    contact.personalEmail?.trim() &&
-    contact.resolvedEmail?.trim() &&
-    contact.personalEmail.trim().toLowerCase() !== contact.resolvedEmail.trim().toLowerCase() &&
-    isEmpty(ex.hs_additional_emails)
-  ) {
-    updates.hs_additional_emails = contact.personalEmail.trim();
+  const pushPersonal = contact.personalEmail?.trim() ?? "";
+  const pushResolved = contact.resolvedEmail?.trim() ?? "";
+  const shouldWritePersonalAdditional =
+    Boolean(pushPersonal) &&
+    Boolean(pushResolved) &&
+    pushPersonal.toLowerCase() !== pushResolved.toLowerCase();
+
+  if (shouldWritePersonalAdditional) {
+    const merged = mergeHsAdditionalEmailsWithPersonal(ex.hs_additional_emails, pushPersonal);
+    if (!additionalEmailTokenSetsEqual(merged, String(ex.hs_additional_emails ?? ""))) {
+      updates.hs_additional_emails = merged;
+    }
   }
 
   if (Object.keys(updates).length === 0) {
