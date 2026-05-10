@@ -4,6 +4,11 @@ import { ConfidenceBadge } from "@/components/ConfidenceBadge";
 import { FieldTrustRulesSubline } from "@/components/FieldTrustRulesSubline";
 import { ReasoningTooltip } from "@/components/ReasoningTooltip";
 import {
+  COMPANY_FIELD_LABELS,
+  CONTACT_FIELD_LABELS,
+  UI_FIELD_LABELS,
+} from "@/lib/utils/field-labels";
+import {
   sanitizeCompanyName,
   sanitizeState,
   sanitizeUnknown,
@@ -173,6 +178,8 @@ function websiteFromDomain(domain: string): string {
 
 type FilterKey = "all" | "needs_review" | "trusted" | "excluded";
 const APPROVE_ALL_STAGGER_MS = 20;
+
+const CONTACT_REVIEW_NAME_HEADER = `${CONTACT_FIELD_LABELS.firstName} / ${CONTACT_FIELD_LABELS.lastName}`;
 
 const CONFIDENCE_ORDER: Record<EnrichedCompany["confidenceScore"], number> = {
   unresolved: 0,
@@ -1125,19 +1132,19 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   ✓
                 </th>
                 <th className="sticky left-[64px] z-21 w-40 min-w-40 max-w-48 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
-                  Raw Input
+                  {UI_FIELD_LABELS.rawInput}
                 </th>
-                <th className="border-b border-(--border-default) px-2 py-2">Company Name</th>
+                <th className="border-b border-(--border-default) px-2 py-2">{COMPANY_FIELD_LABELS.rawName}</th>
                 <th className="border-b border-(--border-default) px-2 py-2">
-                  Company Domain Name
+                  {COMPANY_FIELD_LABELS.domain}
                 </th>
-                <th className="border-b border-(--border-default) px-2 py-2">State / Region</th>
+                <th className="border-b border-(--border-default) px-2 py-2">{COMPANY_FIELD_LABELS.state}</th>
                 <th className="border-b border-(--border-default) px-2 py-2">
-                  Number Of Employees
+                  {COMPANY_FIELD_LABELS.employees}
                 </th>
                 <th className="border-b border-(--border-default) px-2 py-2">
                   <span className="inline-flex items-center gap-1">
-                    LinkedIn Profile
+                    {COMPANY_FIELD_LABELS.linkedinUrl}
                     <ReasoningTooltip
                       content={linkedInHeaderLegendContent()}
                       trigger={
@@ -1150,9 +1157,9 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   </span>
                 </th>
                 <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">
-                  Confidence
+                  {UI_FIELD_LABELS.confidence}
                 </th>
-                <th className="border-b border-(--border-default) px-2 py-2">Reasoning</th>
+                <th className="border-b border-(--border-default) px-2 py-2">{UI_FIELD_LABELS.reasoning}</th>
               </tr>
             ) : (
               <tr>
@@ -1160,14 +1167,14 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   ✓
                 </th>
                 <th className="sticky left-[64px] z-21 w-40 min-w-40 max-w-48 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
-                  Name
+                  {CONTACT_REVIEW_NAME_HEADER}
                 </th>
-                <th className="border-b border-(--border-default) px-2 py-2">Email</th>
-                <th className="border-b border-(--border-default) px-2 py-2">Company</th>
-                <th className="border-b border-(--border-default) px-2 py-2">Title</th>
+                <th className="border-b border-(--border-default) px-2 py-2">{CONTACT_FIELD_LABELS.email}</th>
+                <th className="border-b border-(--border-default) px-2 py-2">{CONTACT_FIELD_LABELS.company}</th>
+                <th className="border-b border-(--border-default) px-2 py-2">{CONTACT_FIELD_LABELS.title}</th>
                 <th className="border-b border-(--border-default) px-2 py-2">
                   <span className="inline-flex items-center gap-1">
-                    LinkedIn Profile
+                    {CONTACT_FIELD_LABELS.linkedinUrl}
                     <ReasoningTooltip
                       content={linkedInHeaderLegendContent()}
                       trigger={
@@ -1180,12 +1187,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   </span>
                 </th>
                 <th className="max-w-56 border-b border-(--border-default) px-2 py-2">
-                  Membership Notes
+                  {CONTACT_FIELD_LABELS.membershipNotes}
                 </th>
                 <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">
-                  Confidence
+                  {UI_FIELD_LABELS.confidence}
                 </th>
-                <th className="border-b border-(--border-default) px-2 py-2">Reasoning</th>
+                <th className="border-b border-(--border-default) px-2 py-2">{UI_FIELD_LABELS.reasoning}</th>
               </tr>
             )}
           </thead>

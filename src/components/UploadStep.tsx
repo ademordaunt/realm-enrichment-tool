@@ -3,36 +3,19 @@
 import type { MutableRefObject } from "react";
 import { useMemo } from "react";
 import type { ListType, ParseResponse, RawCompanyRow, RawContactRow } from "@/lib/utils/types";
+import { resolveParsedColumnField } from "@/lib/parsers/column-mapper";
+import { COMPANY_FIELD_LABELS, CONTACT_FIELD_LABELS } from "@/lib/utils/field-labels";
 
 const ACCEPT = ".csv,.xlsx,.xls,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv";
-const PREVIEW_MAX_ROWS = 50;
 const PRIMARY_ACTION_BUTTON =
   "rounded-lg bg-(--realm-purple) px-4 py-2 text-sm font-semibold text-white transition-transform duration-75 hover:bg-(--realm-purple-hover) active:scale-95 disabled:cursor-not-allowed disabled:opacity-50";
 const UPLOAD_FADE_IN = "animate-[fadeIn_0.3s_ease-in]";
 
-const STANDARD_PREVIEW_FIELDS = new Set<string>([
-  "rawName", "domain", "state", "employees", "industry",
-  "firstName", "lastName", "email", "phone", "title", "company",
-  "location", "notes", "membershipNotes", "leadSource", "leadSourceDescription",
-  "attended", "eventFormat", "companyDomain",
-]);
-
-function humanizeFieldLabel(key: string): string {
-  const special: Record<string, string> = {
-    rawName: "Company", firstName: "First Name", lastName: "Last Name",
-    leadSource: "Lead Source", leadSourceDescription: "Lead Source Description",
-    eventFormat: "Format", companyDomain: "Domain", rawEmail: "Email",
-  };
-  if (special[key]) return special[key];
-  return key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
-}
-
-function collectKeys(rows: Array<RawCompanyRow | RawContactRow>, maxScan: number): string[] {
-  const keys = new Set<string>();
-  for (let i = 0; i < Math.min(rows.length, maxScan); i++) {
-    Object.keys(rows[i] ?? {}).forEach((k) => keys.add(k));
-  }
-  return Array.from(keys).sort();
+function displayLabelForCanonicalField(field: string, listType: "contacts" | "companies"): string {
+  const primary = listType === "companies" ? COMPANY_FIELD_LABELS[field] : CONTACT_FIELD_LABELS[field];
+  if (primary) return primary;
+  const fallback = listType === "companies" ? CONTACT_FIELD_LABELS[field] : COMPANY_FIELD_LABELS[field];
+  return fallback ?? field;
 }
 
 function rowDedupKey(row: RawCompanyRow | RawContactRow, kind: "companies" | "contacts"): string {
@@ -145,19 +128,32 @@ export function UploadStep({
   const showBulkSmallListWarning =
     wizardImportMode === "bulk" && effectiveRowCount > 0 && effectiveRowCount < 200 && !bulkSmallListBypass;
 
-  const previewKeys = useMemo(() => collectKeys(workingRows, 100), [workingRows]);
+  const mappingListType: "contacts" | "companies" = useMemo(() => {
+    if (resolvedListType) return resolvedListType;
+    if (effectiveListType === "companies") return "companies";
+    return "contacts";
+  }, [resolvedListType, effectiveListType]);
 
-  const previewColumnMeta = useMemo(
-    () => previewKeys.map((key) => {
-      const headerIdx = activeNormalizedHeaders.findIndex((h) => h === key);
-      const originalHeader = headerIdx >= 0 ? (activeOriginalHeaders[headerIdx] ?? key) : key;
-      const recognized = STANDARD_PREVIEW_FIELDS.has(key) || headerIdx < 0;
-      return { key, label: humanizeFieldLabel(key), originalHeader, recognized };
-    }),
-    [previewKeys, activeNormalizedHeaders, activeOriginalHeaders],
-  );
-
-  const previewRowsForTable = useMemo(() => workingRows.slice(0, PREVIEW_MAX_ROWS), [workingRows]);
+  const columnMappingRows = useMemo(() => {
+    const n = Math.max(activeOriginalHeaders.length, activeNormalizedHeaders.length);
+    const rows: Array<{
+      originalHeader: string;
+      normalized: string;
+      mappedField: string | null;
+    }> = [];
+    for (let i = 0; i < n; i++) {
+      const originalHeader = activeOriginalHeaders[i] ?? "";
+      const normalized = activeNormalizedHeaders[i] ?? "";
+      const target = resolveParsedColumnField(normalized, mappingListType);
+      if (target === "ignore") continue;
+      rows.push({
+        originalHeader: originalHeader.trim() || normalized || "(empty)",
+        normalized,
+        mappedField: target,
+      });
+    }
+    return rows;
+  }, [activeOriginalHeaders, activeNormalizedHeaders, mappingListType]);
 
   const duplicatePair = useMemo((): [number, number] | null => {
     if (!resolvedListType) return null;
@@ -225,10 +221,21 @@ export function UploadStep({
         {result && file && !showSuccessFlash && !showBulkSmallListWarning && (
           <section className={`flex w-full flex-col gap-6 rounded-xl border border-(--border-default) bg-(--bg-card) p-5 shadow-(--shadow-card) sm:p-6 ${UPLOAD_FADE_IN}`}>
             <div className="flex w-full flex-wrap items-start justify-between gap-3 text-sm text-(--text-primary)">
-              <p className="min-w-0 flex-1">
-                ✓ <span className="font-semibold">{file.name}</span> — {effectiveRowCount} row{effectiveRowCount === 1 ? "" : "s"} detected as{" "}
-                <span className="font-semibold capitalize">{effectiveListType === "unknown" ? "unknown" : effectiveListType}</span>
-              </p>
+              <div className="min-w-0 flex-1 flex flex-col gap-1">
+                <p>
+                  ✓ <span className="font-semibold">{file.name}</span>
+                </p>
+                <p>
+                  {effectiveRowCount} row{effectiveRowCount === 1 ? "" : "s"} detected as{" "}
+                  <span className="font-semibold">
+                    {effectiveListType === "companies"
+                      ? "Companies"
+                      : effectiveListType === "contacts"
+                        ? "Contacts"
+                        : "Unknown"}
+                  </span>
+                </p>
+              </div>
               <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                 <button type="button" className="text-sm font-medium text-(--realm-purple) hover:text-(--realm-purple-hover) hover:underline" onClick={startNewImport}>Change File</button>
               </div>
@@ -287,6 +294,7 @@ export function UploadStep({
                     </button>
                   ) : null}
                 </div>
+
                 {dupFeedback ? (
                   <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">
                     {dupFeedback === "removed" ? "Removed the later duplicate row from this import." : "Kept both rows for this pair."}
@@ -301,62 +309,59 @@ export function UploadStep({
               </div>
             ) : null}
 
-            <div className="space-y-2">
-              <div className="flex items-end justify-between gap-2">
-                <p className="text-sm font-semibold text-(--text-primary)">Preview — your uploaded data as parsed</p>
-              </div>
-              <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-(--border-default) [scrollbar-width:thin] [scrollbar-color:var(--border-default)_transparent] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-(--border-default) hover:[scrollbar-color:var(--text-muted)_transparent] hover:[&::-webkit-scrollbar-thumb]:bg-(--text-muted)">
-                <table className="min-w-full border-collapse text-left text-xs sm:text-sm">
-                  <thead className="sticky top-0 z-1 bg-(--bg-muted)">
-                    <tr>
-                      {previewColumnMeta.map((col) => (
-                        <th key={col.key} className="whitespace-nowrap border-b border-(--border-default) px-4 py-3 font-bold text-(--text-secondary)">
-                          <div className="flex flex-col">
-                            <span className="font-bold text-(--text-primary)">{col.label}</span>
-                            <span className="text-xs font-normal text-(--text-muted)">
-                              {col.recognized ? (
-                                col.originalHeader
-                              ) : (
-                                <>
-                                  {col.originalHeader} (extra column)
-                                  <span className="mt-1 block text-[11px] font-medium text-(--text-secondary)">
-                                    Note: This column will be carried through.
-                                  </span>
-                                </>
-                              )}
-                            </span>
-                          </div>
-                        </th>
-                      ))}
+            <div className="overflow-x-auto rounded-lg border border-(--border-default)">
+              <table className="min-w-full border-separate border-spacing-0 text-left text-xs sm:text-sm">
+                <thead className="bg-(--bg-muted) text-(--text-secondary)">
+                  <tr>
+                    <th className="border-b border-(--border-default) px-4 py-3 font-semibold text-(--text-primary)">Your Column</th>
+                    <th className="border-b border-(--border-default) px-4 py-3 font-semibold text-(--text-primary)">Mapped To</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {columnMappingRows.map((row, idx) => (
+                    <tr
+                      key={`${row.normalized}-${idx}`}
+                      className={idx % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)"}
+                    >
+                      <td className="border-b border-(--border-default) px-4 py-3 text-(--text-primary) wrap-break-word">
+                        {row.originalHeader}
+                      </td>
+                      <td className="border-b border-(--border-default) px-4 py-3 wrap-break-word">
+                        {row.mappedField ? (
+                          <span className="text-(--text-primary)">
+                            → {displayLabelForCanonicalField(row.mappedField, mappingListType)}
+                          </span>
+                        ) : (
+                          <span className="text-amber-800/90 dark:text-amber-200/90">
+                            Column not recognized — visible during review, not pushed to HubSpot
+                          </span>
+                        )}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {previewRowsForTable.map((row, ri) => (
-                      <tr key={ri} className={ri % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)"}>
-                        {previewColumnMeta.map((col) => (
-                          <td key={col.key} className="border-b border-(--border-default) px-4 py-3 text-(--text-primary)">
-                            {(row as Record<string, string | undefined>)[col.key] ?? ""}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {effectiveListType === "unknown" ? (
-                <div className="text-xs text-(--text-muted)">Could not detect list type — please select below.</div>
-              ) : null}
-              {effectiveListType === "unknown" ? (
-                <div className="flex gap-2">
-                  <button type="button" disabled={busy} className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`} onClick={() => { if (!file) return; void parseFile(file, "companies"); }}>Company list</button>
-                  <button type="button" disabled={busy} className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`} onClick={() => { if (!file) return; void parseFile(file, "contacts"); }}>Contact list</button>
-                </div>
-              ) : null}
+                  ))}
+                </tbody>
+              </table>
             </div>
 
+            {effectiveListType === "unknown" ? (
+              <div className="text-xs text-(--text-muted)">Could not detect list type — please select below.</div>
+            ) : null}
+            {effectiveListType === "unknown" ? (
+              <div className="flex gap-2">
+                <button type="button" disabled={busy} className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`} onClick={() => { if (!file) return; void parseFile(file, "companies"); }}>Company list</button>
+                <button type="button" disabled={busy} className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`} onClick={() => { if (!file) return; void parseFile(file, "contacts"); }}>Contact list</button>
+              </div>
+            ) : null}
+
             {!showBulkSmallListWarning ? (
-              <div className="flex justify-end">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  className="text-sm font-medium text-(--realm-purple) hover:text-(--realm-purple-hover) hover:underline"
+                  onClick={startNewImport}
+                >
+                  Change File
+                </button>
                 <button type="button" disabled={!resolvedListType || effectiveRowCount === 0} onClick={() => setStep("context")} className={PRIMARY_ACTION_BUTTON}>
                   Continue →
                 </button>

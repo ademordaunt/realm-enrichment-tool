@@ -336,7 +336,7 @@ export function EventContextForm({
                   aria-controls="month-listbox"
                   aria-activedescendant={monthHighlight >= 0 ? `month-option-${monthHighlight}` : undefined}
                   className={`${inputClass} pr-8`}
-                  placeholder="Search months..."
+                  placeholder="Select month..."
                   value={monthInputValue}
                   autoComplete="off"
                   disabled={disabled}
@@ -421,7 +421,7 @@ export function EventContextForm({
               </div>
               <div className="relative">
                 <select
-                  className={selectClass}
+                  className={`${selectClass} ${year === "" ? "text-(--text-muted)" : ""}`}
                   value={year}
                   onChange={(e) => {
                     yearManuallySelected.current = true;
@@ -429,7 +429,7 @@ export function EventContextForm({
                   }}
                   disabled={disabled}
                 >
-                  <option value="">Select Year</option>
+                  <option value="">Select year...</option>
                   {years.map((y) => (
                     <option key={y} value={y}>
                       {y}

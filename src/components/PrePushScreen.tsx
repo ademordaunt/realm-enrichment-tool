@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  COMPANY_FIELD_LABELS,
+  CONTACT_FIELD_LABELS,
+} from "@/lib/utils/field-labels";
 import type {
   EnrichedCompany,
   EnrichedContact,
@@ -620,21 +624,21 @@ export function PrePushScreen({
                   <thead>
                     <tr>
                       <CoreTh index={0} widths={COMPANY_CORE_STICKY_PX} lastCore={false}>
-                        Name
+                        {COMPANY_FIELD_LABELS.rawName}
                       </CoreTh>
                       <CoreTh index={1} widths={COMPANY_CORE_STICKY_PX} lastCore={false}>
-                        Domain
+                        {COMPANY_FIELD_LABELS.domain}
                       </CoreTh>
                       <CoreTh index={2} widths={COMPANY_CORE_STICKY_PX} lastCore={false}>
-                        Website
+                        {COMPANY_FIELD_LABELS.website}
                       </CoreTh>
                       <CoreTh index={3} widths={COMPANY_CORE_STICKY_PX} lastCore={true}>
-                        LinkedIn
+                        {COMPANY_FIELD_LABELS.linkedinUrl}
                       </CoreTh>
-                      <EnrichedTh label="State/Region" rule={COMPANY_ENRICHED_WRITE.state} />
-                      <EnrichedTh label="City" rule={COMPANY_ENRICHED_WRITE.city} />
-                      <EnrichedTh label="Employee Count" rule={COMPANY_ENRICHED_WRITE.employees} />
-                      <EnrichedTh label="Industry" rule={COMPANY_ENRICHED_WRITE.industry} />
+                      <EnrichedTh label={COMPANY_FIELD_LABELS.state} rule={COMPANY_ENRICHED_WRITE.state} />
+                      <EnrichedTh label={COMPANY_FIELD_LABELS.city} rule={COMPANY_ENRICHED_WRITE.city} />
+                      <EnrichedTh label={COMPANY_FIELD_LABELS.employees} rule={COMPANY_ENRICHED_WRITE.employees} />
+                      <EnrichedTh label={COMPANY_FIELD_LABELS.industry} rule={COMPANY_ENRICHED_WRITE.industry} />
                     </tr>
                   </thead>
                   <tbody>
@@ -673,38 +677,38 @@ export function PrePushScreen({
                   <thead>
                     <tr>
                       <CoreTh index={0} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
-                        First Name
+                        {CONTACT_FIELD_LABELS.firstName}
                       </CoreTh>
                       <CoreTh index={1} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
-                        Last Name
+                        {CONTACT_FIELD_LABELS.lastName}
                       </CoreTh>
                       <CoreTh index={2} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
-                        Email
+                        {CONTACT_FIELD_LABELS.email}
                       </CoreTh>
                       <CoreTh index={3} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
-                        Company Name
+                        {CONTACT_FIELD_LABELS.company}
                       </CoreTh>
                       <CoreTh index={4} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
-                        Title
+                        {CONTACT_FIELD_LABELS.title}
                       </CoreTh>
                       <CoreTh index={5} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
-                        LinkedIn
+                        {CONTACT_FIELD_LABELS.linkedinUrl}
                       </CoreTh>
                       <CoreTh index={6} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
-                        Lead Source
+                        {CONTACT_FIELD_LABELS.leadSource}
                       </CoreTh>
                       <CoreTh index={7} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
-                        Lead Source Desc.
+                        {CONTACT_FIELD_LABELS.leadSourceDescription}
                       </CoreTh>
                       <CoreTh index={8} widths={CONTACT_CORE_STICKY_PX} lastCore={true}>
-                        Membership Notes
+                        {CONTACT_FIELD_LABELS.membershipNotes}
                       </CoreTh>
-                      <EnrichedTh label="State/Region" rule={CONTACT_ENRICHED_WRITE.state} />
-                      <EnrichedTh label="City" rule={CONTACT_ENRICHED_WRITE.city} />
-                      <EnrichedTh label="Employee Count" rule={CONTACT_ENRICHED_WRITE.employees} />
-                      <EnrichedTh label="Industry" rule={CONTACT_ENRICHED_WRITE.industry} />
-                      <EnrichedTh label="Job Level" rule={CONTACT_ENRICHED_WRITE.jobLevel} />
-                      <EnrichedTh label="Job Function" rule={CONTACT_ENRICHED_WRITE.jobFunction} />
+                      <EnrichedTh label={CONTACT_FIELD_LABELS.state} rule={CONTACT_ENRICHED_WRITE.state} />
+                      <EnrichedTh label={COMPANY_FIELD_LABELS.city} rule={CONTACT_ENRICHED_WRITE.city} />
+                      <EnrichedTh label={CONTACT_FIELD_LABELS.employees} rule={CONTACT_ENRICHED_WRITE.employees} />
+                      <EnrichedTh label={CONTACT_FIELD_LABELS.industry} rule={CONTACT_ENRICHED_WRITE.industry} />
+                      <EnrichedTh label={CONTACT_FIELD_LABELS.jobLevel} rule={CONTACT_ENRICHED_WRITE.jobLevel} />
+                      <EnrichedTh label={CONTACT_FIELD_LABELS.jobFunction} rule={CONTACT_ENRICHED_WRITE.jobFunction} />
                     </tr>
                   </thead>
                   <tbody>

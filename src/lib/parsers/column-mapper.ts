@@ -400,6 +400,29 @@ const COMPANY_ENRICHED_ALIASES: Record<string, keyof RawCompanyRow> = {
   vertical: "industry",
 };
 
+/**
+ * Canonical field key for an uploaded column (for mapping preview UI).
+ * Returns `"ignore"` for columns that should be omitted from mapping tables;
+ * `null` when the column is not recognized (stored on the row under the normalized header only).
+ */
+export function resolveParsedColumnField(
+  normalizedHeader: string,
+  listType: "contacts" | "companies",
+): "ignore" | null | string {
+  const nh = normalizedHeader.trim();
+  if (!nh) return null;
+  if (listType === "companies") {
+    if (isCompanyHeader(nh)) return "rawName";
+    const typed = COMPANY_ENRICHED_ALIASES[nh];
+    if (typed) return typed as string;
+    return null;
+  }
+  const f = CONTACT_HEADER_MAP[nh];
+  if (f === "ignore") return "ignore";
+  if (f) return f as string;
+  return null;
+}
+
 function mapCompanyRow(
   headers: string[],
   values: string[],
