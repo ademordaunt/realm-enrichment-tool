@@ -302,6 +302,8 @@ async function handler(req: Request): Promise<Response> {
 
     jobState.status = "running";
     jobState.currentPhase = phase;
+    // Heartbeat for watchdog staleness detection; refreshed at the start of every chunk run.
+    jobState.lastHeartbeatAt = Date.now();
     await setJobState(jobId, jobState);
 
     const rawRows = await getJobRawRows(jobId);

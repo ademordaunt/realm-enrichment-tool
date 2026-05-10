@@ -222,6 +222,10 @@ export interface BulkJobState {
   checkpointChunk: number;
   totalAiChunks: number;
   totalZoomChunks: number;
+  /** Unix timestamp (ms) for the latest worker heartbeat written at chunk start. */
+  lastHeartbeatAt?: number;
+  /** User-facing failure reason for terminal failed states (including watchdog transitions). */
+  failureReason?: string;
   error?: string;
   startedAt: string;
   completedAt?: string;

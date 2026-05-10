@@ -23,6 +23,7 @@ export async function POST(
       : "ai";
   state.status = "queued";
   state.error = undefined;
+  state.failureReason = undefined;
   await setJobState(jobId, state);
   await queueJobChunk({ jobId, chunkIndex: state.checkpointChunk, phase });
   return Response.json({ jobId, requeued: true });
