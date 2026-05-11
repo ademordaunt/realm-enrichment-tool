@@ -521,8 +521,6 @@ export function useEnrichmentPipeline(options: EnrichmentPipelineOptions) {
 
     setPipelineCompleteHold(true);
     await new Promise<void>((resolve) => setTimeout(resolve, 1200));
-    setPipelineCompleteHold(false);
-
     await advanceToReview(withLinkedInSourceFallback, listType);
 
     // Fire completion notification
