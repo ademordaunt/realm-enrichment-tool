@@ -2,7 +2,7 @@
 
 ## Overall Status
 
-Core enrichment and HubSpot push workflows are stable in event and bulk modes. Structural refactors and UI polish from prior specs are in production. Remaining work is narrow and isolated.
+Core enrichment and HubSpot push workflows are stable in event and bulk modes. Structural refactors and UI polish are reflected in the current codebase. Remaining work is narrow and isolated.
 
 ## What Works Reliably
 
@@ -25,7 +25,7 @@ Core enrichment and HubSpot push workflows are stable in event and bulk modes. S
 
 ## Open Follow-Ups
 
-- No open follow-ups from SPEC-7 remain.
+- None tracked at this snapshot.
 
 ## Fragile Areas
 

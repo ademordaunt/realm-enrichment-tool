@@ -52,7 +52,7 @@ Dynamic imports:
 
 - In `page.tsx`: `EventContextForm`, `PrePushScreen`, `ReviewTable`, `PreReviewGate`
 - In `EnrichingStep.tsx`: `BulkProgressScreen`
-- Secondary button styles and micro-typography are fully normalized to tokenized CSS variables across all UI surfaces as of SPEC-7.
+- Secondary button styles and micro-typography are fully normalized to tokenized CSS variables across all UI surfaces.
 
 Session storage keys in active use:
 
