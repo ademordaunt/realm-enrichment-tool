@@ -697,6 +697,7 @@ export function useEnrichmentPipeline(options: EnrichmentPipelineOptions) {
     resolveGate?.();
     setCostEstimateMeta(null);
     setEventEnrichmentSummary(null);
+    setPipelineCompleteHold(false);
     enrichAbortRef.current?.abort();
     enrichAbortRef.current = null;
     stopJobPolling();

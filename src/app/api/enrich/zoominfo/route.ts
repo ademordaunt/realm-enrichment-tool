@@ -9,7 +9,7 @@ import {
 import { isRecord } from "@/lib/utils/guards";
 import type { EnrichedCompany, EnrichedContact } from "@/lib/utils/types";
 
-export const maxDuration = 9;
+export const maxDuration = 45;
 
 /** Rows per verify chunk when the client omits `chunkSize` (keep in sync with `page.tsx` verify loop). */
 const ZOOM_INFO_VERIFY_COMPANY_CHUNK_SIZE = 15;
