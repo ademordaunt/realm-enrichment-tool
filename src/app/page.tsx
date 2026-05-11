@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { CostEstimateScreen } from "@/components/CostEstimateScreen";
 import { EnrichingStep } from "@/components/EnrichingStep";
 import { PushingStep } from "@/components/PushingStep";
+import { PrePushSkeleton } from "@/components/PrePushSkeleton";
 import { ReviewTableSkeleton } from "@/components/ReviewTableSkeleton";
 import { StarterScreen } from "@/components/StarterScreen";
 import { UploadStep } from "@/components/UploadStep";
@@ -28,7 +29,7 @@ const EventContextForm = dynamic(
 );
 const PrePushScreen = dynamic(
   () => import("@/components/PrePushScreen").then((m) => ({ default: m.PrePushScreen })),
-  { loading: () => null },
+  { loading: () => <PrePushSkeleton /> },
 );
 const ReviewTable = dynamic(
   () => import("@/components/ReviewTable").then((m) => ({ default: m.ReviewTable })),
@@ -479,10 +480,6 @@ export default function Home() {
             <p className="text-sm">Enrichment was interrupted. Click Run to start again.</p>
             <button type="button" onClick={() => setShowEnrichmentInterruptedBanner(false)} className="shrink-0 rounded-lg border border-amber-800/20 bg-white px-3 py-1.5 text-sm font-medium text-amber-950 hover:bg-amber-100 dark:border-amber-600/40 dark:bg-amber-900/60 dark:text-amber-50 dark:hover:bg-amber-900">Dismiss</button>
           </div>
-        ) : null}
-
-        {step === "prereview" ? (
-          <button type="button" onClick={() => { if (enriched && enriched.length > 0 && !window.confirm("This will discard your enrichment results and return to the start. Continue?")) return; session.resetToUpload(true); }} className="self-start text-sm text-(--text-muted) hover:text-(--text-primary)">← Back to Upload</button>
         ) : null}
 
         {isEnrichmentProgressStep ? (

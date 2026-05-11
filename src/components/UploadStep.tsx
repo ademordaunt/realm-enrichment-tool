@@ -306,24 +306,24 @@ export function UploadStep({
               </div>
             ) : null}
 
-            <div className="overflow-x-auto rounded-lg border border-(--border-default)">
-              <table className="min-w-full border-separate border-spacing-0 text-left text-xs sm:text-sm">
+            <div className="overflow-x-auto rounded-lg border border-(--border-default) bg-(--bg-muted)/40">
+              <table className="min-w-full border-separate border-spacing-0 text-left text-xs">
                 <thead className="bg-(--bg-muted) text-(--text-secondary)">
                   <tr>
-                    <th className="border-b border-(--border-default) px-4 py-3 font-semibold text-(--text-primary)">Your Column</th>
-                    <th className="border-b border-(--border-default) px-4 py-3 font-semibold text-(--text-primary)">Mapped To</th>
+                    <th className="border-b border-(--border-default) px-3 py-1.5 font-semibold text-(--text-secondary)">Your Column</th>
+                    <th className="border-b border-(--border-default) px-3 py-1.5 font-semibold text-(--text-secondary)">Mapped To</th>
                   </tr>
                 </thead>
                 <tbody>
                   {columnMappingRows.map((row, idx) => (
                     <tr
                       key={`${row.normalized}-${idx}`}
-                      className={idx % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-page)"}
+                      className={idx % 2 === 0 ? "bg-(--bg-card)" : "bg-(--bg-muted)/60"}
                     >
-                      <td className="border-b border-(--border-default) px-4 py-3 text-(--text-primary) wrap-break-word">
+                      <td className="border-b border-(--border-default) px-3 py-1.5 text-(--text-secondary) wrap-break-word">
                         {row.originalHeader}
                       </td>
-                      <td className="border-b border-(--border-default) px-4 py-3 wrap-break-word">
+                      <td className="border-b border-(--border-default) px-3 py-1.5 wrap-break-word">
                         {row.mappedField ? (
                           <span className="text-(--text-primary)">
                             → {displayLabelForCanonicalField(row.mappedField, mappingListType)}

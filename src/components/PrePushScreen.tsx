@@ -33,61 +33,6 @@ const SELECT_WITH_CARET =
 
 const FOLDER_SELECTION_SESSION_KEY = "realm-selected-hubspot-folder";
 
-/** Mirrors `EditableCell` in ReviewTable — click to edit, Enter/blur saves. */
-function PrePushEditableCell(props: {
-  value: string;
-  muted?: boolean;
-  breakAll?: boolean;
-  onSave: (next: string) => void;
-}) {
-  const { value, muted, breakAll, onSave } = props;
-  const normalized = value == null ? "" : String(value);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(normalized);
-
-  const wrap = breakAll ? "break-all whitespace-normal" : "wrap-break-word";
-
-  if (editing) {
-    return (
-      <div className={`relative min-w-24 w-full max-w-50 ${wrap}`}>
-        <input
-          className={`w-full rounded border border-blue-500 bg-white px-1.5 py-0.5 text-xs outline-none ring-1 ring-blue-500/30 dark:bg-zinc-950 sm:text-sm ${muted ? "text-zinc-500" : ""} ${wrap}`}
-          value={draft}
-          autoFocus
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              onSave(draft);
-              setEditing(false);
-            }
-            if (e.key === "Escape") {
-              setDraft(normalized);
-              setEditing(false);
-            }
-          }}
-          onBlur={() => {
-            onSave(draft);
-            setEditing(false);
-          }}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      className={`relative min-h-5 w-full max-w-50 rounded px-1.5 py-0.5 text-left text-xs sm:text-sm ${wrap} ${muted ? "text-zinc-500" : "text-zinc-900 dark:text-zinc-100"} hover:bg-zinc-100/80 dark:hover:bg-zinc-800/80`}
-      onClick={() => {
-        setDraft(normalized);
-        setEditing(true);
-      }}
-    >
-      {normalized === "" ? <span className="text-zinc-400">—</span> : normalized}
-    </button>
-  );
-}
 
 export const LEAD_SOURCE_OPTIONS: Array<{ label: string; value: string }> = [
   { label: "Marketing - Advertisement", value: "advertisement" },
@@ -315,8 +260,6 @@ export function PrePushScreen({
   const [foldersError, setFoldersError] = useState(false);
   const [folderId, setFolderId] = useState("");
 
-  const [contactEditRows, setContactEditRows] = useState<EnrichedContact[] | null>(null);
-
   useEffect(() => {
     queueMicrotask(() => {
       setListName(defaultListName);
@@ -328,16 +271,6 @@ export function PrePushScreen({
       setLeadSourceDescription(dedupeLeadSourceDescriptionTail(defaultLeadSourceDescription));
     });
   }, [defaultLeadSourceDescription]);
-
-  useEffect(() => {
-    queueMicrotask(() => {
-      if (listType !== "contacts") {
-        setContactEditRows(null);
-        return;
-      }
-      setContactEditRows((approvedRows as EnrichedContact[]).map((r) => ({ ...r })));
-    });
-  }, [listType, approvedRows]);
 
   const loadFolders = useCallback(() => {
     let cancelled = false;
@@ -395,7 +328,7 @@ export function PrePushScreen({
     window.sessionStorage.setItem(FOLDER_SELECTION_SESSION_KEY, folderId);
   }, [folderId]);
 
-  const contactRowsForTable = contactEditRows ?? (approvedRows as EnrichedContact[]);
+  const contactRowsForTable = approvedRows as EnrichedContact[];
   const hasExistingLeadSourceValues = useMemo(
     () =>
       listType === "contacts"
@@ -461,8 +394,6 @@ export function PrePushScreen({
       useExistingLeadSourceDescription:
         listType === "contacts" ? useExistingLeadSourceDescription : false,
       notes: "",
-      contactRowsOverride:
-        listType === "contacts" && contactEditRows ? contactEditRows : undefined,
     });
   }, [
     canPush,
@@ -473,15 +404,8 @@ export function PrePushScreen({
     useExistingLeadSource,
     useExistingLeadSourceDescription,
     listType,
-    contactEditRows,
     onPush,
   ]);
-
-  const patchContact = useCallback((id: string, partial: Partial<EnrichedContact>) => {
-    setContactEditRows((prev) =>
-      prev ? prev.map((r) => (r.id === id ? { ...r, ...partial } : r)) : prev,
-    );
-  }, []);
 
   const ownershipCompaniesNoState = useMemo(() => {
     if (listType !== "companies") return 0;
@@ -726,25 +650,13 @@ export function PrePushScreen({
                             <SummaryEmailCell row={row} />
                           </CoreTd>
                           <CoreTd index={3} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
-                            <PrePushEditableCell
-                              value={row.resolvedCompany}
-                              onSave={(v) => patchContact(row.id, { resolvedCompany: v })}
-                            />
+                            <span className="wrap-break-word">{row.resolvedCompany || "—"}</span>
                           </CoreTd>
                           <CoreTd index={4} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
-                            <PrePushEditableCell
-                              value={row.title}
-                              onSave={(v) => patchContact(row.id, { title: v })}
-                            />
+                            <span className="wrap-break-word">{row.title || "—"}</span>
                           </CoreTd>
                           <CoreTd index={5} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
-                            <PrePushEditableCell
-                              value={row.linkedinUrl}
-                              breakAll
-                              onSave={(v) =>
-                                patchContact(row.id, { linkedinUrl: v, linkedinSource: "" })
-                              }
-                            />
+                            <span className="break-all">{row.linkedinUrl || "—"}</span>
                           </CoreTd>
                           <CoreTd index={6} widths={CONTACT_CORE_STICKY_PX} lastCore={false}>
                             <span className="wrap-break-word">

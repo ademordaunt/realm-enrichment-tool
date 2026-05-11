@@ -7,8 +7,7 @@ import {
 import { isRecord } from "@/lib/utils/guards";
 import type { EventContext, RawCompanyRow, RawContactRow } from "@/lib/utils/types";
 
-/** Per-batch ceiling (Vercel hobby ~10s); batched JSON requests should finish within this window. */
-export const maxDuration = 9;
+export const maxDuration = 45;
 export const LINKEDIN_SEARCH_ROUTE = "/api/enrich/linkedin-search";
 
 function badRequest(detail: string) {

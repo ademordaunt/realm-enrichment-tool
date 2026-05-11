@@ -1,7 +1,6 @@
 "use client";
 
 import { ConfidenceBadge } from "@/components/ConfidenceBadge";
-import { FieldTrustRulesSubline } from "@/components/FieldTrustRulesSubline";
 import { ReasoningTooltip } from "@/components/ReasoningTooltip";
 import {
   COMPANY_FIELD_LABELS,
@@ -36,7 +35,7 @@ function linkedInHeaderLegendContent(): ReactNode {
   return (
     <div className="space-y-1.5">
       <p className="border-b-[0.5px] border-(--border-default) pb-1.5 font-medium text-(--text-primary)">
-        LinkedIn source
+        LinkedIn Source
       </p>
       <p className="flex items-center gap-1.5 font-normal text-(--text-secondary)">
         <span className="inline-block h-2 w-2 rounded-full bg-violet-600" aria-hidden />
@@ -58,7 +57,7 @@ function linkedInHeaderLegendContent(): ReactNode {
         <span className="inline-block h-2 w-2 rounded-full bg-zinc-800 dark:bg-black" aria-hidden />
         Manually entered
       </p>
-      <p className="pt-1 text-xs text-zinc-600">
+      <p className="pt-1 text-xs font-normal text-(--text-muted)">
         Web search note: amber rows should be spot-checked before push.
       </p>
     </div>
@@ -1121,8 +1120,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         </div>
       </div>
 
-      <FieldTrustRulesSubline listType={listType} />
-
       <div className="min-w-0 overflow-x-auto rounded-lg border border-(--border-default)">
         <table className="min-w-full border-separate border-spacing-0 text-left text-xs sm:text-sm">
           <thead className="bg-(--bg-muted) text-(--text-secondary) text-sm font-semibold">
@@ -1159,7 +1156,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                 <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">
                   {UI_FIELD_LABELS.confidence}
                 </th>
-                <th className="border-b border-(--border-default) px-2 py-2">{UI_FIELD_LABELS.reasoning}</th>
+                <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">{UI_FIELD_LABELS.reasoning}</th>
               </tr>
             ) : (
               <tr>
@@ -1169,7 +1166,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                 <th className="sticky left-[64px] z-21 w-40 min-w-40 max-w-48 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
                   {CONTACT_REVIEW_NAME_HEADER}
                 </th>
-                <th className="border-b border-(--border-default) px-2 py-2">{CONTACT_FIELD_LABELS.email}</th>
+                <th className="min-w-[160px] border-b border-(--border-default) px-2 py-2">{CONTACT_FIELD_LABELS.email}</th>
                 <th className="border-b border-(--border-default) px-2 py-2">{CONTACT_FIELD_LABELS.company}</th>
                 <th className="border-b border-(--border-default) px-2 py-2">{CONTACT_FIELD_LABELS.title}</th>
                 <th className="border-b border-(--border-default) px-2 py-2">
@@ -1186,13 +1183,13 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                     />
                   </span>
                 </th>
-                <th className="max-w-56 border-b border-(--border-default) px-2 py-2">
+                <th className="min-w-[140px] max-w-56 border-b border-(--border-default) px-2 py-2">
                   {CONTACT_FIELD_LABELS.membershipNotes}
                 </th>
                 <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">
                   {UI_FIELD_LABELS.confidence}
                 </th>
-                <th className="border-b border-(--border-default) px-2 py-2">{UI_FIELD_LABELS.reasoning}</th>
+                <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">{UI_FIELD_LABELS.reasoning}</th>
               </tr>
             )}
           </thead>
@@ -1366,7 +1363,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           ) : null}
                         </div>
                       </td>
-                      <td className={`max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
+                      <td className={`min-w-[120px] max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <div className="flex items-center justify-center">
                           <ReasoningTooltip
                             content={buildReasoningTooltipContent(row, "companies")}
@@ -1423,7 +1420,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`min-w-0 max-w-48 break-all px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
+                      <td className={`min-w-[160px] max-w-48 break-all px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <div className="flex items-center gap-1.5">
                           <EditableCell
                             value={sanitizeUnknown(row.rawEmail)}
@@ -1570,7 +1567,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           ) : null}
                         </div>
                       </td>
-                      <td className={`max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
+                      <td className={`min-w-[120px] max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <div className="flex items-center justify-center">
                           <ReasoningTooltip
                             content={buildReasoningTooltipContent(row, "contacts")}
