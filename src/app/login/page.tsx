@@ -1,7 +1,7 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 function AuthBrandedLoader() {
   return (
@@ -24,55 +24,47 @@ function AuthBrandedLoader() {
 }
 
 export default function LoginPage() {
-  return (
-    <Suspense
-      fallback={
-        <main className="flex min-h-screen items-center justify-center bg-(--bg-page) px-4">
-          <AuthBrandedLoader />
-        </main>
-      }
-    >
-      <LoginPageContent />
-    </Suspense>
-  );
+  return <LoginPageContent />;
 }
 
 function LoginPageContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [showLoader, setShowLoader] = useState(true);
+  /** Post-login destination from `?next=`; ref avoids `useSearchParams` + Suspense (extra loading phase). */
+  const nextPathRef = useRef("/");
+  const [sessionCheckDone, setSessionCheckDone] = useState(false);
   const passwordInputRef = useRef<HTMLInputElement>(null);
 
-  const nextPath = useMemo(() => {
-    const next = searchParams.get("next") ?? "/";
-    if (!next.startsWith("/")) return "/";
-    return next;
-  }, [searchParams]);
-
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get("next") ?? "/";
+    const path = raw.startsWith("/") ? raw : "/";
+    nextPathRef.current = path;
+
     let cancelled = false;
-    (async () => {
+    void (async () => {
       try {
         const res = await fetch("/api/auth/session");
         if (cancelled) return;
         if (res.ok) {
-          router.replace(nextPath);
+          router.replace(path);
           router.refresh();
           return;
         }
       } catch {
         /* show login */
       }
-      if (!cancelled) setShowLoader(false);
+      if (!cancelled) setSessionCheckDone(true);
     })();
     return () => {
       cancelled = true;
     };
-  }, [nextPath, router]);
+  }, [router]);
+
+  const showLoader = !sessionCheckDone;
 
   useEffect(() => {
     if (!showLoader) passwordInputRef.current?.focus();
@@ -93,7 +85,7 @@ function LoginPageContent() {
         setBusy(false);
         return;
       }
-      router.replace(nextPath);
+      router.replace(nextPathRef.current);
       router.refresh();
     } catch {
       setError("Login failed. Please try again.");

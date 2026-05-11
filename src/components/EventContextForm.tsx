@@ -297,7 +297,7 @@ export function EventContextForm({
           <p className="mt-1 text-sm text-(--text-muted)">
             {importMode === "bulk"
               ? "Describe the list so AI can resolve company names accurately."
-              : "Adding event context helps the AI enrich your records with greater precision"}
+              : "Adding event context helps the AI enrich your records with greater precision."}
           </p>
         </div>
 
@@ -421,7 +421,7 @@ export function EventContextForm({
               </div>
               <div className="relative">
                 <select
-                  className={`${selectClass} ${year === "" ? "text-(--text-muted)" : ""}`}
+                  className={selectClass}
                   value={year}
                   onChange={(e) => {
                     yearManuallySelected.current = true;
@@ -429,7 +429,6 @@ export function EventContextForm({
                   }}
                   disabled={disabled}
                 >
-                  <option value="">Select year...</option>
                   {years.map((y) => (
                     <option key={y} value={y}>
                       {y}
