@@ -70,6 +70,9 @@ function PhaseBar({ phase }: { phase: Phase }) {
           style={{ width: `${pct}%` }}
         />
       </div>
+      {status === "active" && label === "LinkedIn Search" && phase.detail ? (
+        <p className="mt-1 text-xs text-(--text-muted)">{phase.detail}</p>
+      ) : null}
     </div>
   );
 }

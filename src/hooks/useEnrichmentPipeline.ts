@@ -520,7 +520,7 @@ export function useEnrichmentPipeline(options: EnrichmentPipelineOptions) {
     setEventEnrichmentSummary({ totalRows: context.totalRows, hubspotFound: context.hubspotFound, creditsUsed: zoomCreditsUsed, linkedInFound: linkedInFoundCount, elapsedMinutes, commonRoomFound });
 
     setPipelineCompleteHold(true);
-    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+    await new Promise<void>((resolve) => setTimeout(resolve, 1200));
     setPipelineCompleteHold(false);
 
     await advanceToReview(withLinkedInSourceFallback, listType);
