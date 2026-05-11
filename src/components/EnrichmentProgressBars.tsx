@@ -34,7 +34,7 @@ export function EnrichmentProgressBars({ title, phases }: EnrichmentProgressBars
 }
 
 function PhaseBar({ phase }: { phase: Phase }) {
-  const { label, status, progress = 0, detail } = phase;
+  const { label, status, progress = 0 } = phase;
 
   const icon = status === "complete" ? "✅" : status === "active" ? "⏳" : "○";
   const pct = status === "complete" ? 100 : status === "active" ? Math.min(100, progress) : 0;
@@ -70,9 +70,6 @@ function PhaseBar({ phase }: { phase: Phase }) {
           style={{ width: `${pct}%` }}
         />
       </div>
-      {detail && status === "active" ? (
-        <p className="mt-1 text-xs text-(--text-muted)">{detail}</p>
-      ) : null}
     </div>
   );
 }

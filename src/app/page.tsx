@@ -469,7 +469,7 @@ export default function Home() {
           </nav>
         ) : null}
         <div className="hidden min-w-0 md:col-start-3 md:row-start-1 md:flex md:justify-end">
-          <button type="button" onClick={signOut} className="rounded border border-white/30 px-2.5 py-1 text-xs font-medium text-white hover:bg-white/10">Sign Out</button>
+          <button type="button" onClick={signOut} disabled={isEnrichmentProgressStep} className="rounded border border-white/30 px-2.5 py-1 text-xs font-medium text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent">Sign Out</button>
         </div>
       </header>
 
@@ -496,6 +496,7 @@ export default function Home() {
             bulkRowsContinueLoading={bulk.bulkRowsContinueLoading}
             progress={progress}
             resolvedListType={resolvedListType}
+            pipelineCompleteHold={enrichPipeline.pipelineCompleteHold}
             cancelBulkJob={bulk.cancelBulkJob}
             retryStatusPollNow={bulk.retryStatusPollNow}
             handleContinueToReview={bulk.handleContinueToReview}

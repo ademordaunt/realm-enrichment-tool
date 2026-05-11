@@ -32,6 +32,7 @@ interface EnrichingStepProps {
   bulkRowsContinueLoading: boolean;
   progress: ProgressState;
   resolvedListType: "companies" | "contacts" | null;
+  pipelineCompleteHold?: boolean;
   cancelBulkJob: () => Promise<void>;
   retryStatusPollNow: () => Promise<void>;
   handleContinueToReview: () => Promise<void>;
@@ -41,6 +42,7 @@ interface EnrichingStepProps {
 export function EnrichingStep({
   step, wizardImportMode, bulkJobId, bulkJobState, consecutivePollingErrors,
   bulkPollingInFlight, bulkRowsContinueLoading, progress, resolvedListType,
+  pipelineCompleteHold = false,
   cancelBulkJob, retryStatusPollNow, handleContinueToReview, cancelEnrichmentToContext,
 }: EnrichingStepProps) {
   const enrichmentBatchPercent = useMemo(() => {
@@ -52,6 +54,14 @@ export function EnrichingStep({
 
   const eventPhases = useMemo((): Phase[] | null => {
     if (!progress) return null;
+    if (pipelineCompleteHold) {
+      return [
+        { label: "AI Analysis", status: "complete", progress: 100 },
+        { label: resolvedListType === "contacts" ? "ZoomInfo & Common Room Enrichment" : "ZoomInfo Verify", status: "complete", progress: 100 },
+        { label: "HubSpot Check", status: "complete", progress: 100 },
+        { label: "LinkedIn Search", status: "complete", progress: 100 },
+      ];
+    }
     const isEnriching = step === "enriching";
     const isVerifying = step === "verifying";
     const isVerifyingHubspot = isVerifying && Boolean(progress.detail?.includes("HubSpot"));
@@ -85,7 +95,7 @@ export function EnrichingStep({
         detail: isVerifyingLinkedIn ? progress.detail : undefined,
       },
     ];
-  }, [step, progress, enrichmentBatchPercent, resolvedListType]);
+  }, [step, progress, enrichmentBatchPercent, resolvedListType, pipelineCompleteHold]);
 
   if (wizardImportMode === "bulk" && bulkJobId) {
     return (

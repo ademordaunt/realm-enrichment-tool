@@ -351,6 +351,7 @@ export function useEnrichmentPipeline(options: EnrichmentPipelineOptions) {
   const [eventEnrichmentSummary, setEventEnrichmentSummary] = useState<EnrichmentSummary | null>(null);
   const [showEnrichmentCompleteBanner, setShowEnrichmentCompleteBanner] = useState(false);
   const [completionBannerText, setCompletionBannerText] = useState("✓ Enrichment complete — your results are ready below.");
+  const [pipelineCompleteHold, setPipelineCompleteHold] = useState(false);
 
   const enrichAbortRef = useRef<AbortController | null>(null);
   const bulkContinueRef = useRef<{ rows: EnrichedCompany[] | EnrichedContact[]; listType: "companies" | "contacts"; signal: AbortSignal } | null>(null);
@@ -518,6 +519,10 @@ export function useEnrichmentPipeline(options: EnrichmentPipelineOptions) {
     const elapsedMinutes = Math.round((Date.now() - context.enrichmentStartTime) / 60000);
     setEventEnrichmentSummary({ totalRows: context.totalRows, hubspotFound: context.hubspotFound, creditsUsed: zoomCreditsUsed, linkedInFound: linkedInFoundCount, elapsedMinutes, commonRoomFound });
 
+    setPipelineCompleteHold(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+    setPipelineCompleteHold(false);
+
     await advanceToReview(withLinkedInSourceFallback, listType);
 
     // Fire completion notification
@@ -556,7 +561,7 @@ export function useEnrichmentPipeline(options: EnrichmentPipelineOptions) {
         }
       }
     } catch { /* ignore */ }
-  }, [runZoomVerify, runHubSpotPreCheck, setStep, setEnrichError, setZoomInfoVerifySummary, setProgress, setEventEnrichmentSummary, advanceToReview, enrichmentBannerTimeoutRef]);
+  }, [runZoomVerify, runHubSpotPreCheck, setStep, setEnrichError, setZoomInfoVerifySummary, setProgress, setEventEnrichmentSummary, advanceToReview, enrichmentBannerTimeoutRef, setPipelineCompleteHold]);
 
   const runEnrichment = useCallback(async (context: EventContext) => {
     if (!resolvedListType) return;
@@ -709,6 +714,7 @@ export function useEnrichmentPipeline(options: EnrichmentPipelineOptions) {
     eventEnrichmentSummary,
     showEnrichmentCompleteBanner,
     completionBannerText,
+    pipelineCompleteHold,
     setShowEnrichmentCompleteBanner,
     setCompletionBannerText,
     enrichmentBannerTimeoutRef,
