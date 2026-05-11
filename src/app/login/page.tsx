@@ -96,7 +96,7 @@ function LoginPageContent() {
   return (
     <main className="relative min-h-screen overflow-hidden bg-(--bg-page) px-4">
       <div
-        className={`absolute inset-0 flex items-center justify-center transition-opacity duration-500 ease-out ${
+        className={`absolute inset-0 flex items-center justify-center transition-opacity duration-300 ease-out ${
           showLoader ? "opacity-100" : "pointer-events-none opacity-0"
         }`}
         aria-hidden={!showLoader}
@@ -104,8 +104,8 @@ function LoginPageContent() {
         <AuthBrandedLoader />
       </div>
       <div
-        className={`flex min-h-screen items-center justify-center transition-opacity duration-500 ease-out ${
-          showLoader ? "pointer-events-none opacity-0" : "opacity-100"
+        className={`flex min-h-screen items-center justify-center transition-opacity duration-300 ease-out ${
+          showLoader ? "pointer-events-none opacity-0" : "delay-300 opacity-100"
         }`}
         aria-hidden={showLoader}
       >

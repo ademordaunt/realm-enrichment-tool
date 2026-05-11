@@ -354,14 +354,7 @@ export function UploadStep({
             ) : null}
 
             {!showBulkSmallListWarning ? (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <button
-                  type="button"
-                  className="text-sm font-medium text-(--realm-purple) hover:text-(--realm-purple-hover) hover:underline"
-                  onClick={startNewImport}
-                >
-                  Change File
-                </button>
+              <div className="flex flex-wrap items-center justify-end gap-3">
                 <button type="button" disabled={!resolvedListType || effectiveRowCount === 0} onClick={() => setStep("context")} className={PRIMARY_ACTION_BUTTON}>
                   Continue →
                 </button>
