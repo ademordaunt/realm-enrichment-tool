@@ -506,7 +506,7 @@ export default function Home() {
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              transition={{ duration: 0.18, ease: "easeOut" }}
+              transition={{ duration: 0.10, ease: "easeOut" }}
             >
               {step === "starter" && (
                 <StarterScreen onSelectMode={(mode) => { setWizardImportMode(mode); setStep("upload"); }} />

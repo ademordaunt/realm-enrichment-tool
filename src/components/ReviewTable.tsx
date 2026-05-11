@@ -698,6 +698,15 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
       byId: new Map(rows.map((row) => [row.id, row.status])),
     }),
   );
+  const [linkedInSortSnapshot, setLinkedInSortSnapshot] = useState<{
+    listType: "companies" | "contacts";
+    byId: Map<string, boolean>;
+  }>(
+    () => ({
+      listType,
+      byId: new Map(rows.map((row) => [row.id, Boolean(row.linkedinUrl?.trim())])),
+    }),
+  );
   const approveAllTimerIdsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
   const editSessionKey = useMemo(
     () => `${listType}:${rows.map((r) => r.id).join("|")}`,
@@ -715,6 +724,16 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
       return next;
     });
   }, [getSessionFieldKey]);
+
+  // After an edit re-sorts the table, scroll the edited row into view so the user can track it.
+  // requestAnimationFrame defers until after React commits the new sort order to the DOM.
+  const scrollToRow = useCallback((id: string) => {
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`tr[data-row-id="${CSS.escape(id)}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }, []);
 
   const setRows = useCallback(
     (next: EnrichedCompany[] | EnrichedContact[]) => {
@@ -773,6 +792,13 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         : new Map(rows.map((row) => [row.id, row.status])),
     [listType, rows, statusSortSnapshot],
   );
+  const linkedInSortSnapshotById = useMemo(
+    () =>
+      linkedInSortSnapshot.listType === listType
+        ? linkedInSortSnapshot.byId
+        : new Map(rows.map((row) => [row.id, Boolean(row.linkedinUrl?.trim())])),
+    [listType, rows, linkedInSortSnapshot],
+  );
 
   const sortedRows = useMemo(() => {
     const statusForSort = (row: EnrichedCompany | EnrichedContact) =>
@@ -814,14 +840,14 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         const kb = (b.resolvedCompany || b.rawEmail || "").toLowerCase();
         return ka.localeCompare(kb, undefined, { sensitivity: "base" });
       }
-      const aMissingLinkedIn = !a.linkedinUrl?.trim();
-      const bMissingLinkedIn = !b.linkedinUrl?.trim();
+      const aMissingLinkedIn = !linkedInSortSnapshotById.get(a.id);
+      const bMissingLinkedIn = !linkedInSortSnapshotById.get(b.id);
       if (aMissingLinkedIn !== bMissingLinkedIn) return aMissingLinkedIn ? -1 : 1;
       return (a.resolvedCompany || "").localeCompare(b.resolvedCompany || "", undefined, {
         sensitivity: "base",
       });
     });
-  }, [rows, listType, statusSortSnapshotById]);
+  }, [rows, listType, statusSortSnapshotById, linkedInSortSnapshotById]);
 
   const isEdited = useCallback(
     (id: string, field: string) => editedKeys.has(getSessionFieldKey(id, field)),
@@ -1103,6 +1129,10 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   listType,
                   byId: new Map(rows.map((row) => [row.id, row.status])),
                 });
+                setLinkedInSortSnapshot({
+                  listType,
+                  byId: new Map(rows.map((row) => [row.id, Boolean(row.linkedinUrl?.trim())])),
+                });
               }}
             >
               <option value="all">All</option>
@@ -1166,7 +1196,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                 <th className="sticky left-[64px] z-21 w-40 min-w-40 max-w-48 border-b border-r border-(--border-default) bg-(--bg-muted) px-2 py-2 shadow-[2px_0_6px_-2px_rgba(0,0,0,0.08)]">
                   {CONTACT_REVIEW_NAME_HEADER}
                 </th>
-                <th className="min-w-[160px] border-b border-(--border-default) px-2 py-2">{CONTACT_FIELD_LABELS.email}</th>
+                <th className="min-w-[200px] border-b border-(--border-default) px-2 py-2">{CONTACT_FIELD_LABELS.email}</th>
                 <th className="border-b border-(--border-default) px-2 py-2">{CONTACT_FIELD_LABELS.company}</th>
                 <th className="border-b border-(--border-default) px-2 py-2">{CONTACT_FIELD_LABELS.title}</th>
                 <th className="border-b border-(--border-default) px-2 py-2">
@@ -1183,7 +1213,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                     />
                   </span>
                 </th>
-                <th className="min-w-[140px] max-w-56 border-b border-(--border-default) px-2 py-2">
+                <th className="min-w-[220px] max-w-56 border-b border-(--border-default) px-2 py-2">
                   {CONTACT_FIELD_LABELS.membershipNotes}
                 </th>
                 <th className="min-w-[120px] border-b border-(--border-default) px-2 py-2">
@@ -1210,7 +1240,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   const mutedCellTextClass = muted ? "text-zinc-500 dark:text-zinc-400" : "";
                   const checked = row.status === "approved";
                   return (
-                    <tr key={row.id} className={`${rowShellClass(row, ri)} transition-colors duration-150`}>
+                    <tr
+                      key={row.id}
+                      data-row-id={row.id}
+                      className={`${rowShellClass(row, ri)} transition-colors duration-150`}
+                    >
                       <td
                         className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
                       >
@@ -1237,6 +1271,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "resolvedName");
+                            scrollToRow(row.id);
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
                                 r.id === row.id ? { ...r, resolvedName: v } : r,
@@ -1258,6 +1293,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "domain");
+                            scrollToRow(row.id);
                             const domain = v.trim();
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
@@ -1281,6 +1317,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           muted={muted}
                           onSave={(v) => {
                             markEdited(row.id, "state");
+                            scrollToRow(row.id);
                             const full = expandStateAbbreviation(sanitizeState(v));
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
@@ -1302,6 +1339,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           muted={muted}
                           onSave={(n) => {
                             markEdited(row.id, "numberOfEmployees");
+                            scrollToRow(row.id);
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
                                 r.id === row.id ? { ...r, numberOfEmployees: n } : r,
@@ -1326,6 +1364,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           amberTooltip="LinkedIn sourced from web search. Verify before trusting."
                           onSave={(v) => {
                             markEdited(row.id, "linkedinUrl");
+                            scrollToRow(row.id);
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
                                 r.id === row.id
@@ -1379,7 +1418,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   const checked = row.status === "approved";
                   const fullName = formatContactFullName(row);
                   return (
-                    <tr key={row.id} className={`${rowShellClass(row, ri)} transition-colors duration-150`}>
+                    <tr
+                      key={row.id}
+                      data-row-id={row.id}
+                      className={`${rowShellClass(row, ri)} transition-colors duration-150`}
+                    >
                       <td
                         className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
                       >
@@ -1403,6 +1446,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "name");
+                            scrollToRow(row.id);
                             const clean = sanitizeUnknown(v);
                             const parts = clean.split(/\s+/).filter(Boolean);
                             const firstName = sanitizeUnknown(parts[0] ?? "");
@@ -1420,7 +1464,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`min-w-[160px] max-w-48 break-all px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
+                      <td className={`min-w-[200px] max-w-48 break-all px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <div className="flex items-center gap-1.5">
                           <EditableCell
                             value={sanitizeUnknown(row.rawEmail)}
@@ -1430,6 +1474,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             pencilOnHover
                             onSave={(v) => {
                               markEdited(row.id, "rawEmail");
+                              scrollToRow(row.id);
                               const next = sanitizeUnknown(v);
                               setRows(
                                 (rows as EnrichedContact[]).map((r) =>
@@ -1466,6 +1511,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "resolvedCompany");
+                            scrollToRow(row.id);
                             const next = sanitizeCompanyName(v);
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
@@ -1488,6 +1534,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "title");
+                            scrollToRow(row.id);
                             const next = sanitizeUnknown(v);
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
@@ -1513,6 +1560,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           amberTooltip="All data verified, but LinkedIn was sourced from AI web search — do a quick check to confirm it's correct."
                           onSave={(v) => {
                             markEdited(row.id, "linkedinUrl");
+                            scrollToRow(row.id);
                             const next = sanitizeUnknown(v);
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
@@ -1530,16 +1578,16 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         />
                       </td>
                       <td
-                        className={`max-w-56 min-w-[140px] px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}
+                        className={`max-w-56 min-w-[220px] px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}
                       >
                         <EditableCell
                           value={row.membershipNotes ?? ""}
                           edited={isEdited(row.id, "membershipNotes")}
                           muted={muted}
-                          breakAll
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "membershipNotes");
+                            scrollToRow(row.id);
                             const next = v.trim();
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>

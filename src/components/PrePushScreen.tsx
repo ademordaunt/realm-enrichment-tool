@@ -71,7 +71,7 @@ const COMPANY_ENRICHED_WRITE = {
   industry: "fill_empty",
 } as const satisfies Record<string, SummaryWriteRule>;
 
-const CONTACT_CORE_STICKY_PX = [96, 96, 132, 148, 120, 120, 128, 168, 152] as const;
+const CONTACT_CORE_STICKY_PX = [96, 96, 132, 148, 120, 120, 128, 168, 200] as const;
 const COMPANY_CORE_STICKY_PX = [148, 136, 136, 132] as const;
 
 function coreStickyOffset(widths: readonly number[], index: number): number {
