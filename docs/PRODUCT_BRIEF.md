@@ -182,6 +182,6 @@ ZoomInfo credits and Anthropic costs tied to Casey's accounts — transfer to sh
 - Architecture and UX are in a stable, production-usable state for the intended operator workflow.
 - Core refactor goals are complete: hook-based orchestration, step-level component extraction, dynamic imports for heavy screens, batch manual-edit hydration, and defensive bulk row validation.
 - Contact Lead Source behavior is now explicit and controllable through Import Settings + per-row CSV override toggles.
-- Remaining work is narrow follow-up polish (bulk polling retry action and full secondary/tiny-type token convergence), not foundational reliability work.
+- The tool is production-stable with no open follow-ups. SPEC-7 (bulk polling retry UX + secondary button normalization), SPEC-8 (bulk stuck-running watchdog), and SPEC-9 (field trust rules visibility, pre-push summary, upload column mapping, pipeline reliability) are all complete.
 
 HubSpot integration health is MEDIUM-HIGH for intended event-list workflows. Residual risk is concentrated in contact identity edge cases rather than pipeline sequencing.

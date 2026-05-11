@@ -59,6 +59,7 @@ Session storage keys in active use:
 - `realm-enrichment-session-v1`
 - `realm-bulk-job-id`
 - `realm-enrichment-manual-edits-v1`
+- `realm-selected-hubspot-folder` — persists the user's last-selected HubSpot destination folder across sessions (set in `PrePushScreen.tsx`)
 
 ---
 
