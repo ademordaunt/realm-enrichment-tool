@@ -31,6 +31,8 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed, rowsById }: 
       ? `https://app.hubspot.com/contacts/${portalId}/objectLists/folders?folderId=${encodeURIComponent(folderId)}`
       : null;
 
+  const isContactsPush = result.contactsAssociated !== undefined;
+
   const failed = result.errors.length;
   const membershipError = result.errors.some((e) => e.rowId === "membership");
   const stats = [
@@ -82,46 +84,53 @@ export function SuccessScreen({ result, onStartNew, leadSourceUsed, rowsById }: 
       ) : null}
 
       {/* Association summary — contacts push only */}
-      {(result.contactsAssociated != null ||
-        result.contactsDomainNotFound != null ||
-        result.contactsNoDomain != null) ? (
+      {isContactsPush ? (
         <div className="flex flex-col gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-950/40">
           <p className="font-semibold text-zinc-800 dark:text-zinc-200">Company Associations</p>
-          {result.contactsAssociated != null && result.contactsAssociated > 0 ? (
-            <p className="text-zinc-700 dark:text-zinc-300">
-              ✓ {result.contactsAssociated} contact{result.contactsAssociated === 1 ? "" : "s"} associated to HubSpot companies
-            </p>
-          ) : null}
-          {result.contactsDomainNotFound != null && result.contactsDomainNotFound > 0 ? (
-            <p className="text-zinc-600 dark:text-zinc-400">
-              ⚠ {result.contactsDomainNotFound} contact{result.contactsDomainNotFound === 1 ? "" : "s"}: company not in HubSpot (no company association made)
-            </p>
-          ) : null}
-          {result.contactsNoDomain != null && result.contactsNoDomain > 0 ? (
-            <p className="text-zinc-600 dark:text-zinc-400">
-              — {result.contactsNoDomain} contact{result.contactsNoDomain === 1 ? "" : "s"}: no company domain available (no company association possible)
-            </p>
-          ) : null}
+          <p className={(result.contactsAssociated ?? 0) > 0 ? "text-zinc-700 dark:text-zinc-300" : "text-zinc-500 dark:text-zinc-500"}>
+            ✓ {result.contactsAssociated ?? 0} contact{(result.contactsAssociated ?? 0) === 1 ? "" : "s"} associated to a company
+          </p>
+          <p className={(result.contactsDomainNotFound ?? 0) > 0 ? "text-zinc-600 dark:text-zinc-400" : "text-zinc-500 dark:text-zinc-500"}>
+            {result.contactsDomainNotFound ?? 0} contact{(result.contactsDomainNotFound ?? 0) === 1 ? "" : "s"}: company domain present but not found in HubSpot
+          </p>
+          <p className={(result.contactsNoDomain ?? 0) > 0 ? "text-zinc-600 dark:text-zinc-400" : "text-zinc-500 dark:text-zinc-500"}>
+            {result.contactsNoDomain ?? 0} contact{(result.contactsNoDomain ?? 0) === 1 ? "" : "s"}: no company domain available
+          </p>
         </div>
       ) : null}
 
       {/* Ownership failure warnings */}
-      {((result.companiesNoState != null && result.companiesNoState > 0) ||
-        (result.contactsNoCompanyAssociation != null && result.contactsNoCompanyAssociation > 0)) ? (
-        <div className="flex flex-col gap-1.5 rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm dark:border-amber-800 dark:bg-amber-950/30">
-          <p className="font-semibold text-amber-900 dark:text-amber-100">Ownership Assignment Warnings</p>
-          <p className="text-xs text-amber-800 dark:text-amber-200">
-            The following records may not receive an owner assigned automatically:
-          </p>
+      {(isContactsPush || (result.companiesNoState != null && result.companiesNoState > 0)) ? (
+        <div className={`flex flex-col gap-1.5 rounded-lg border px-4 py-3 text-sm ${
+          (result.companiesNoState != null && result.companiesNoState > 0) || (result.contactsNoCompanyAssociation ?? 0) > 0
+            ? "border-amber-200 bg-amber-50/80 dark:border-amber-800 dark:bg-amber-950/30"
+            : "border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950/40"
+        }`}>
+          <p className={`font-semibold ${
+            (result.companiesNoState != null && result.companiesNoState > 0) || (result.contactsNoCompanyAssociation ?? 0) > 0
+              ? "text-amber-900 dark:text-amber-100"
+              : "text-zinc-800 dark:text-zinc-200"
+          }`}>Ownership Assignment</p>
           {result.companiesNoState != null && result.companiesNoState > 0 ? (
-            <p className="text-amber-800 dark:text-amber-200">
-              • {result.companiesNoState} {result.companiesNoState === 1 ? "company has" : "companies have"} no state/region
-            </p>
+            <>
+              <p className="text-xs text-amber-800 dark:text-amber-200">
+                The following records may not receive an owner assigned automatically:
+              </p>
+              <p className="text-amber-800 dark:text-amber-200">
+                • {result.companiesNoState} {result.companiesNoState === 1 ? "company has" : "companies have"} no state/region
+              </p>
+            </>
           ) : null}
-          {result.contactsNoCompanyAssociation != null && result.contactsNoCompanyAssociation > 0 ? (
-            <p className="text-amber-800 dark:text-amber-200">
-              • {result.contactsNoCompanyAssociation} {result.contactsNoCompanyAssociation === 1 ? "contact has" : "contacts have"} no HubSpot company association
-            </p>
+          {isContactsPush ? (
+            (result.contactsNoCompanyAssociation ?? 0) > 0 ? (
+              <p className="text-amber-800 dark:text-amber-200">
+                ⚠ {result.contactsNoCompanyAssociation} {(result.contactsNoCompanyAssociation ?? 0) === 1 ? "contact has" : "contacts have"} no company association in HubSpot — {(result.contactsNoCompanyAssociation ?? 0) === 1 ? "this contact" : "these contacts"} will not get an owner assigned automatically
+              </p>
+            ) : (
+              <p className="text-emerald-700 dark:text-emerald-400">
+                ✓ All contacts have a company association
+              </p>
+            )
           ) : null}
         </div>
       ) : null}

@@ -1,7 +1,7 @@
 "use client";
 
 import type { MutableRefObject } from "react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ListType, ParseResponse, RawCompanyRow, RawContactRow } from "@/lib/utils/types";
 import { resolveParsedColumnField } from "@/lib/parsers/column-mapper";
 import { COMPANY_FIELD_LABELS, CONTACT_FIELD_LABELS } from "@/lib/utils/field-labels";
@@ -127,6 +127,13 @@ export function UploadStep({
 }: UploadStepProps) {
   const showBulkSmallListWarning =
     wizardImportMode === "bulk" && effectiveRowCount > 0 && effectiveRowCount < 200 && !bulkSmallListBypass;
+
+  const [switchConfirm, setSwitchConfirm] = useState<string | null>(null);
+  const switchConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (switchConfirmTimerRef.current) clearTimeout(switchConfirmTimerRef.current);
+  }, []);
 
   const mappingListType: "contacts" | "companies" = useMemo(() => {
     if (resolvedListType) return resolvedListType;
@@ -340,13 +347,41 @@ export function UploadStep({
               </table>
             </div>
 
+            {mappingListType === "contacts" ? (
+              <p className="text-xs text-(--text-muted)">
+                If your CSV has a combined name column (e.g. &quot;Full Name&quot;, &quot;Attendee Name&quot;), the tool will automatically split it into first and last name.
+              </p>
+            ) : null}
+
             {effectiveListType === "unknown" ? (
-              <div className="text-xs text-(--text-muted)">Could not detect list type — please select below.</div>
+              <div className="text-xs text-(--text-muted)">We couldn&apos;t automatically detect whether this is a contact or company list. Please select below:</div>
             ) : null}
             {effectiveListType === "unknown" ? (
               <div className="flex gap-2">
                 <button type="button" disabled={busy} className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`} onClick={() => { if (!file) return; void parseFile(file, "companies"); }}>Company list</button>
                 <button type="button" disabled={busy} className={`${PRIMARY_ACTION_BUTTON} px-3 py-1.5 text-xs`} onClick={() => { if (!file) return; void parseFile(file, "contacts"); }}>Contact list</button>
+              </div>
+            ) : null}
+            {(effectiveListType === "contacts" || effectiveListType === "companies") ? (
+              <div className="flex flex-col gap-1">
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="self-start text-xs text-(--text-muted) hover:text-(--text-primary) underline"
+                  onClick={() => {
+                    if (!file) return;
+                    const nextType = effectiveListType === "contacts" ? "companies" : "contacts";
+                    if (switchConfirmTimerRef.current) clearTimeout(switchConfirmTimerRef.current);
+                    setSwitchConfirm(nextType === "companies" ? "Switched to Companies — column mapping updated." : "Switched to Contacts — column mapping updated.");
+                    switchConfirmTimerRef.current = setTimeout(() => setSwitchConfirm(null), 3000);
+                    void parseFile(file, nextType);
+                  }}
+                >
+                  Switch to {effectiveListType === "contacts" ? "Companies" : "Contacts"}
+                </button>
+                {switchConfirm ? (
+                  <p className="text-xs text-(--text-muted)">{switchConfirm}</p>
+                ) : null}
               </div>
             ) : null}
 

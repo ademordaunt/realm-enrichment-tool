@@ -113,7 +113,14 @@ export function normalizeHeader(header: string): string {
     .replace(/[^a-z0-9]+/g, "");
 }
 
-const CONTACT_HEADER_MAP: Record<string, keyof RawContactRow | "ignore"> = {
+const CONTACT_HEADER_MAP: Record<string, keyof RawContactRow | "ignore" | "fullName"> = {
+  // Combined full name (auto-split into firstName + lastName)
+  name: "fullName",
+  fullname: "fullName",
+  attendeename: "fullName",
+  participantname: "fullName",
+  attendee: "fullName",
+  contactname: "fullName",
   // First name
   first: "firstName",
   firstname: "firstName",
@@ -220,6 +227,7 @@ function rowLooksLikeHeaderRow(row: string[]): boolean {
     // Name fields
     "first", "firstname", "givenname", "fname",
     "last", "lastname", "surname", "lname",
+    "name", "fullname", "attendeename", "participantname", "attendee", "contactname",
     // Email fields
     "email", "emailaddress", "businessemail", "workemail",
     "corporateemail", "contactemail", "primaryemail",
@@ -419,6 +427,7 @@ export function resolveParsedColumnField(
   }
   const f = CONTACT_HEADER_MAP[nh];
   if (f === "ignore") return "ignore";
+  if (f === "fullName") return "fullName";
   if (f) return f as string;
   return null;
 }
@@ -469,13 +478,44 @@ function mapContactRow(headers: string[], values: string[]): RawContactRow {
       if (val) row[nh] = val;
       continue;
     }
-    const cur = row[field];
+    const cur = (row as Record<string, string | undefined>)[field];
     if (cur === undefined || cur === "") {
       (row as Record<string, string | undefined>)[field] = val;
     } else if (val) {
       row[nh] = val;
     }
   }
+
+  // Handle combined name columns (fullName sentinel → firstName + lastName)
+  const fullName = (row as Record<string, string | undefined>)["fullName"];
+  if (fullName?.trim() && !row.firstName?.trim() && !row.lastName?.trim()) {
+    const name = fullName.trim();
+    // Strip leading honorifics (case-insensitive, with or without period)
+    const honorifics = /^(dr\.?|mr\.?|mrs\.?|ms\.?|prof\.?|sr\.?|jr\.?)\s+/i;
+    const stripped = name.replace(honorifics, "").trim();
+
+    if (stripped.includes(",")) {
+      // "Last, First" format
+      const commaIdx = stripped.indexOf(",");
+      const lastName = stripped.slice(0, commaIdx).trim();
+      const firstName = stripped.slice(commaIdx + 1).trim();
+      row.firstName = firstName;
+      row.lastName = lastName;
+    } else {
+      const parts = stripped.split(/\s+/).filter(Boolean);
+      if (parts.length === 0) {
+        // nothing to split
+      } else if (parts.length === 1) {
+        row.firstName = parts[0]!;
+        row.lastName = "";
+      } else {
+        row.firstName = parts[0]!;
+        row.lastName = parts.slice(1).join(" ");
+      }
+    }
+  }
+  // Remove the fullName sentinel from the row — it's parsing-only
+  delete (row as Record<string, string | undefined>)["fullName"];
 
   // Parse "City, ST" location field into city + state components
   if (row.location?.trim()) {

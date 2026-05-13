@@ -39,7 +39,7 @@ export const LEAD_SOURCE_OPTIONS: Array<{ label: string; value: string }> = [
   { label: "Marketing - CisoExecNet", value: "Marketing - CisoExecNet" },
   { label: "Marketing - CISO XC", value: "Marketing - CISO XC" },
   { label: "Marketing - Cyalliance", value: "Marketing - Cyalliance" },
-  { label: "Marketing - Cybersecurity Summit", value: "Marekting - Cybersecurity Summit" },
+  { label: "Marketing - Cybersecurity Summit", value: "Marketing - Cybersecurity Summit" },
   { label: "Marketing - ExecWeb", value: "Marketing - ExecWeb" },
   { label: "Marketing - FutureCon", value: "Marketing - FutureCon" },
   { label: "Marketing - SageTap", value: "Marketing - SageTap" },
@@ -128,7 +128,18 @@ function SummaryEmailCell({ row }: { row: EnrichedContact }) {
   return (
     <div className="max-w-44">
       <div className="wrap-break-word break-all">{work || primary}</div>
-      <div className="wrap-break-word break-all text-xs text-(--text-secondary)">{personal}</div>
+      <div className="wrap-break-word break-all text-xs text-(--text-secondary) flex items-center gap-1">
+        {personal}
+        <ReasoningTooltip
+          text="Original email — will be written to additional emails in HubSpot"
+          trigger={
+            <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-(--border-default) px-1 text-[10px] text-(--text-muted)">
+              i
+            </span>
+          }
+          triggerAriaLabel="Personal email note"
+        />
+      </div>
     </div>
   );
 }
@@ -255,6 +266,8 @@ export function PrePushScreen({
   const [useExistingLeadSource, setUseExistingLeadSource] = useState(false);
   const [useExistingLeadSourceDescription, setUseExistingLeadSourceDescription] = useState(false);
 
+  const [liveLeadSourceOptions, setLiveLeadSourceOptions] = useState<Array<{ label: string; value: string }> | null>(null);
+
   const [folders, setFolders] = useState<{ id: string; name: string }[] | null>(null);
   const [foldersLoading, setFoldersLoading] = useState(true);
   const [foldersError, setFoldersError] = useState(false);
@@ -327,6 +340,24 @@ export function PrePushScreen({
     if (typeof window === "undefined") return;
     window.sessionStorage.setItem(FOLDER_SELECTION_SESSION_KEY, folderId);
   }, [folderId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/hubspot/properties/lead-source")
+      .then(async (res) => {
+        const data = (await res.json()) as { options: Array<{ label: string; value: string }> };
+        if (!res.ok) return;
+        if (!cancelled && Array.isArray(data.options)) {
+          setLiveLeadSourceOptions(data.options);
+        }
+      })
+      .catch(() => {
+        /* silently fall back to LEAD_SOURCE_OPTIONS */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const contactRowsForTable = approvedRows as EnrichedContact[];
   const hasExistingLeadSourceValues = useMemo(
@@ -497,20 +528,25 @@ export function PrePushScreen({
                   </label>
                 ) : null}
                 <SelectCaretWrap>
-                  <select
-                    className={`${SELECT_WITH_CARET} ${useExistingLeadSource ? "opacity-60" : ""}`}
-                    value={leadSource}
-                    onChange={(e) => setLeadSource(e.target.value)}
-                    disabled={useExistingLeadSource}
-                    required
-                  >
-                    <option value="">Select lead source</option>
-                    {LEAD_SOURCE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
+                  {(() => {
+                    const optionsToRender = liveLeadSourceOptions ?? LEAD_SOURCE_OPTIONS;
+                    return (
+                      <select
+                        className={`${SELECT_WITH_CARET} ${useExistingLeadSource ? "opacity-60" : ""}`}
+                        value={leadSource}
+                        onChange={(e) => setLeadSource(e.target.value)}
+                        disabled={useExistingLeadSource}
+                        required
+                      >
+                        <option value="">Select lead source</option>
+                        {optionsToRender.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    );
+                  })()}
                 </SelectCaretWrap>
               </label>
 
@@ -713,7 +749,7 @@ export function PrePushScreen({
 
       {/* Section 10b: Ownership failure preview */}
       {(ownershipCompaniesNoState > 0 || ownershipContactsNoDomain > 0) ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-4 dark:border-amber-800 dark:bg-amber-950/30">
+        <div className="rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-4 dark:border-amber-800 dark:bg-amber-950/30 mb-32">
           <p className="mb-2 text-sm font-semibold text-amber-900 dark:text-amber-100">
             After this push, the following records may not have an owner assigned automatically:
           </p>

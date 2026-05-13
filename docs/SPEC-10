@@ -1,0 +1,384 @@
+Status: Complete
+
+PART A
+Please implement SPEC-10 Part A. Keep a running 
+to-do list and check off each item as completed. 
+Report the full list with status at the end.
+
+---
+
+A1. LEAD SOURCE — Fix typo immediately
+
+In src/components/PrePushScreen.tsx, fix the 
+typo in the Lead Source options array:
+
+Change value: "Marekting - Cybersecurity Summit"
+To: "Marketing - Cybersecurity Summit"
+
+One character fix. Do this first — it is 
+writing incorrect data to HubSpot on every 
+push that uses this option.
+
+---
+
+A2. LEAD SOURCE — Live pull from HubSpot
+
+Replace the hardcoded LEAD_SOURCE_OPTIONS array 
+in src/components/PrePushScreen.tsx with a live 
+pull from HubSpot.
+
+Step 1 — Create a new API route:
+GET /api/hubspot/properties/lead-source
+
+This route calls HubSpot:
+GET /crm/v3/properties/contacts/lead_source__deal_source
+
+Use the existing hubspotFetch helper from 
+src/lib/hubspot/http.ts. Follow the same 
+pattern as src/app/api/hubspot/folders/route.ts.
+Return the options array from the response — 
+each option has label and value fields.
+
+Step 2 — Update PrePushScreen.tsx:
+Replace the static array with a useEffect that 
+fetches from /api/hubspot/properties/lead-source 
+on mount. Show a loading state while fetching. 
+Fall back to the existing hardcoded array if 
+the fetch fails so the UI never breaks.
+
+Step 3 — Once live fetch is confirmed working, 
+keep the hardcoded array only as a fallback. 
+Do not delete it entirely.
+
+Note: once the live pull works, the A1 typo 
+fix becomes irrelevant since we're no longer 
+reading from the hardcoded array. But fix A1 
+first anyway as a safety net in case the 
+fetch fails and the fallback is used.
+
+---
+
+A3. OWNER WARNING — Fix fixed footer overlap
+
+In src/components/PrePushScreen.tsx, the owner 
+warning div renders after the main section 
+closes but before the fixed footer. The fixed 
+footer (bottom-0, z-50, ~64px tall) overlaps 
+the bottom of the warning content because the 
+warning div does not have the pb-32 padding 
+that the main section uses.
+
+Fix: add sufficient bottom margin to the owner 
+warning div so all content clears the fixed 
+footer. Use mb-24 or match the pb-32 pattern 
+used by the main section — whichever clears 
+the footer reliably.
+
+Verify: if the warning has multiple records 
+listed, all items are visible above the footer.
+
+---
+
+A4. LIST TYPE OVERRIDE — Manual correction UI
+
+The backend already accepts forcedListType in 
+mapSegment (column-mapper.ts). Wire a UI 
+control to it.
+
+Required behavior:
+- After parsing, the upload screen shows:
+  "57 rows detected as Contacts"
+- Add a small inline control beneath this:
+  "Switch to Companies" (or "Switch to 
+  Contacts" depending on detected type)
+- When clicked, re-run mapSegment with the 
+  overridden list type and update the column 
+  mapping table
+- The override persists through the pipeline
+
+Implementation:
+- Add userListTypeOverride state (null = use 
+  auto-detected, "contacts" or "companies" = 
+  override)
+- On override: call mapSegment(segment, 
+  userListTypeOverride) and update displayed 
+  mapping
+- Visual treatment: subtle — this is an edge 
+  case control, not a primary action. A small 
+  text link beneath the row count is sufficient.
+- If auto-detection returned "unknown", show: 
+  "We couldn't automatically detect the list 
+  type. Please select:" then show both options 
+  as a toggle.
+
+---
+
+A5. 529 OVERLOAD ERROR — Retry with backoff
+
+In src/lib/enrichment/ai-enricher.ts, add 
+exponential backoff retry for Anthropic 529 
+overload errors.
+
+Current behavior: 529 throws uncaught, the 
+affected batch gets fallback unresolved rows, 
+pipeline continues with no retry attempt.
+
+Required behavior: on 529, retry up to 3 times 
+with exponential backoff before falling back.
+
+Implementation:
+- Wrap the client.messages.create() call in 
+  runClaudeWithWebSearch with a retry loop
+- Detect Anthropic.APIError with status === 529
+- Retry delays: 1000ms → 2000ms → 4000ms
+- After 3 failed retries, throw the error and 
+  let the existing batch catch handle it 
+  (fallback unresolved rows)
+- Do not retry on any other error status
+
+Reference: the existing enrichWithRetry 
+pattern in src/lib/enrichment/zoominfo-enricher.ts 
+(lines 138-155) uses the same approach for 
+ZoomInfo 429s — reuse this pattern directly.
+
+---
+
+A6. COMBINED NAME COLUMN — Auto-split detection
+
+In src/lib/parsers/column-mapper.ts, add 
+detection and auto-splitting for single 
+combined name columns.
+
+Context: CSVs from event organizers frequently 
+use a single "Name", "Full Name", or "Attendee 
+Name" column instead of separate First/Last 
+columns. Currently these produce blank 
+firstName and lastName and the contact goes 
+to unresolved confidence.
+
+Step 1 — Detection:
+Add these aliases to CONTACT_HEADER_MAP 
+mapping to a new sentinel value "fullName":
+- name
+- fullname
+- attendeename
+- participantname
+- attendee
+- contactname
+
+Step 2 — Splitting in mapContactRow:
+After building the row, if row.fullName is set 
+and both firstName and lastName are empty:
+
+a. If value contains a comma → treat as 
+   "Last, First" format. Split on comma, 
+   trim both parts, assign: 
+   firstName = second part, lastName = first part
+
+b. Otherwise → split on first whitespace.
+   First token → firstName
+   Remaining tokens joined → lastName
+
+c. If only one token (no space, no comma) → 
+   assign to firstName, leave lastName empty
+
+d. Strip leading honorifics before splitting:
+   Dr., Mr., Mrs., Ms., Prof., Sr., Jr.
+   (case-insensitive, with or without period)
+
+Step 3 — Cleanup:
+Do not store "fullName" on the row object 
+after splitting. It is a parsing-only sentinel 
+and should not appear in the enriched row data.
+
+Step 4 — Docs update:
+In docs/TECHNICAL_ARCHITECTURE.md, add a note 
+in the relevant section that combined name 
+columns are now detected and auto-split during 
+parsing.
+
+---
+
+A7. SUCCESS SCREEN — Always show association 
+    and ownership counts on contacts push
+
+In src/lib/hubspot/push-handler.ts and 
+src/components/SuccessScreen.tsx, fix the 
+association and ownership summary so it always 
+displays on a contacts push.
+
+Current behavior: all association and ownership 
+fields are omitted from the done payload when 
+their value is 0. The success screen renders 
+nothing. This is the worst case — zero 
+associations is a red flag Tyler needs to see, 
+not silence.
+
+Step 1 — push-handler.ts:
+When listType === "contacts", always include 
+these fields in the done payload regardless 
+of value:
+- contactsAssociated
+- contactsDomainNotFound  
+- contactsNoDomain
+- contactsNoCompanyAssociation
+
+Change the spread logic from gating on > 0 
+to always including when listType is contacts.
+
+Step 2 — SuccessScreen.tsx:
+Always render the Company Associations block 
+on a contacts push. Show all three lines 
+regardless of value:
+
+"X contacts associated to a company ✓"
+"X contacts: company domain present but 
+ not found in HubSpot"
+"X contacts: no company domain available"
+
+When X is 0, still show the line. Zero is 
+meaningful information.
+
+Step 3 — Ownership block:
+Always show on a contacts push. Two states:
+
+When contactsNoCompanyAssociation > 0:
+"X contacts have no company association in 
+HubSpot — these contacts will not get an 
+owner assigned automatically"
+
+When contactsNoCompanyAssociation === 0:
+"All contacts have a company association ✓"
+
+Step 4 — companiesNoState:
+No change — remains gated on 
+listType === "companies".
+
+---
+
+Run npm run lint after all changes.
+Report the full to-do list with status, 
+what changed, which files were modified, 
+and lint results.
+
+PART B
+Please implement SPEC-10 Part B. Keep a running 
+to-do list and check off each item as completed. 
+Report the full list with status at the end.
+
+---
+
+B1. PERSONAL EMAIL TOOLTIP — Move to Import 
+    Settings only
+
+Step 1 — In src/components/ReviewTable.tsx:
+Remove the personal email "i" badge tooltip 
+that shows "Work email found by ZoomInfo. 
+Original email: [email]" from the Review & 
+Edit table entirely.
+
+Condition that currently triggers it:
+- row.personalEmail?.trim() is truthy
+- row.resolvedEmail?.trim() is truthy
+- They differ from each other
+
+Remove the badge and tooltip. Do not replace 
+with anything in this component.
+
+Step 2 — In src/components/PrePushScreen.tsx:
+The email cell in the summary table already 
+shows work email on line 1 and personal email 
+on line 2 in muted text (implemented in 
+SPEC-9). Add context to the personal email 
+line so Tyler understands what it means:
+
+Add a small inline note or tooltip on the 
+personal email line:
+"Original email — will be written to 
+additional emails in HubSpot"
+
+This gives Tyler the right context at the 
+moment it matters — before push, not during 
+review.
+
+---
+
+B2. HORIZONTAL SCROLL AFFORDANCE
+
+In src/components/ReviewTable.tsx, add a 
+right-edge gradient fade to signal that the 
+table scrolls horizontally.
+
+Implementation:
+Wrap the existing table container div in a 
+new relative-positioned div. Add an absolute 
+positioned overlay on the right edge:
+- bg-gradient-to-l from-(--bg-page) 
+  to-transparent
+- pointer-events-none (does not block clicks)
+- w-8 wide, full height of the container
+- rounded-r-lg to match table border radius
+
+Add a scroll listener on the table container:
+- When scrollLeft + clientWidth >= scrollWidth: 
+  hide the gradient (user has reached the end)
+- When user scrolls back left: show it again
+
+Use a ref on the scroll container and a 
+boolean state for gradient visibility.
+
+---
+
+B3. LIST AUTO-DETECTION — Messaging improvements
+
+Two copy improvements to complement the A4 
+list type override toggle:
+
+1. When auto-detection returns "unknown":
+   Show above the toggle:
+   "We couldn't automatically detect whether 
+   this is a contact or company list. 
+   Please select below:"
+   Then show the A4 toggle prominently.
+
+2. When the operator uses the A4 toggle to 
+   override the detected type:
+   Show a brief confirmation beneath the 
+   toggle after switching:
+   "Switched to [Contacts / Companies] — 
+   column mapping updated."
+   
+   This confirmation can fade out after 
+   3 seconds or persist — whichever is 
+   simpler to implement.
+
+Copy and state changes only — the A4 toggle 
+mechanism is already implemented. This item 
+only adds messaging around it.
+
+---
+
+B4. UPLOAD SCREEN — Combined name column note
+
+In src/components/UploadStep.tsx, add a small 
+informational note below the column mapping 
+table:
+
+"If your CSV has a combined name column 
+(e.g. 'Full Name', 'Attendee Name'), the tool 
+will automatically split it into first and 
+last name."
+
+Show this note only on contact list uploads, 
+not company list uploads.
+
+Style it as muted secondary text, same visual 
+weight as other helper copy on this screen. 
+Not a warning — a reassurance.
+
+---
+
+Run npm run lint after all changes.
+Report the full to-do list with status, 
+what changed, which files were modified, 
+and lint results.

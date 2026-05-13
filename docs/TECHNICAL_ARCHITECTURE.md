@@ -180,6 +180,12 @@ Associations:
 
 ## 7) Data + Utility Rules
 
+Combined name columns:
+
+- Headers matching `Name`, `Full Name`, `Attendee Name`, `Participant Name`, `Attendee`, or `Contact Name` (normalized) are detected during CSV parsing in `src/lib/parsers/column-mapper.ts` and automatically split into `firstName` and `lastName`.
+- The split handles: "Last, First" comma format, leading honorifics (Dr., Mr., Mrs., Ms., Prof., Sr., Jr.), and defaults to first-token / remaining-tokens split.
+- The `fullName` sentinel is never stored on the final `RawContactRow` — it is resolved and deleted during `mapContactRow`.
+
 Domain normalization:
 
 - Shared helper: `src/lib/utils/domain.ts`
@@ -216,6 +222,7 @@ Caching:
 - Private app token auth
 - List creation/reuse, create/update batching, and membership adds are implemented
 - Folder listing handles multiple response shapes
+- `GET /api/hubspot/properties/lead-source` — fetches live enum options for `lead_source__deal_source` from HubSpot (`GET /crm/v3/properties/contacts/lead_source__deal_source`); used by `PrePushScreen` to populate the Lead Source dropdown dynamically; falls back to hardcoded `LEAD_SOURCE_OPTIONS` if the fetch fails
 
 ---
 

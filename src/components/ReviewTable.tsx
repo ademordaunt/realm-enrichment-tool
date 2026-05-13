@@ -708,6 +708,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     }),
   );
   const approveAllTimerIdsRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const [showScrollHint, setShowScrollHint] = useState(true);
+  const handleTableScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    setShowScrollHint(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  }, []);
   const editSessionKey = useMemo(
     () => `${listType}:${rows.map((r) => r.id).join("|")}`,
     [listType, rows],
@@ -1150,7 +1155,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         </div>
       </div>
 
-      <div className="min-w-0 overflow-x-auto rounded-lg border border-(--border-default)">
+      <div className="relative">
+        <div
+          className="min-w-0 overflow-x-auto rounded-lg border border-(--border-default)"
+          onScroll={handleTableScroll}
+        >
         <table className="min-w-full border-separate border-spacing-0 text-left text-xs sm:text-sm">
           <thead className="bg-(--bg-muted) text-(--text-secondary) text-sm font-semibold">
             {listType === "companies" ? (
@@ -1488,19 +1497,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               );
                             }}
                           />
-                          {row.personalEmail?.trim() &&
-                          row.resolvedEmail?.trim() &&
-                          row.personalEmail.trim().toLowerCase() !== row.resolvedEmail.trim().toLowerCase() ? (
-                            <ReasoningTooltip
-                              text={`Work email found by ZoomInfo. Original email: ${row.personalEmail.trim()}`}
-                              trigger={
-                                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-(--border-default) px-1 text-[10px] text-(--text-muted)">
-                                  i
-                                </span>
-                              }
-                              triggerAriaLabel="Personal email converted to work email"
-                            />
-                          ) : null}
                         </div>
                       </td>
                       <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
@@ -1627,6 +1623,13 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                 })}
           </tbody>
         </table>
+        </div>
+        {showScrollHint ? (
+          <div
+            className="pointer-events-none absolute right-0 top-0 h-full w-8 rounded-r-lg bg-gradient-to-l from-(--bg-page) to-transparent"
+            aria-hidden
+          />
+        ) : null}
       </div>
 
       <div className="pointer-events-none fixed bottom-0 left-0 right-0 z-50 flex justify-center border-t border-(--border-default) bg-(--bg-card) px-6 py-4">

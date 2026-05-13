@@ -524,12 +524,10 @@ export async function handleHubSpotPushRequest(
           ...(listType === "companies" && companiesNoState > 0 ? { companiesNoState } : {}),
           ...(listType === "contacts"
             ? {
-                ...(contactsAssociated > 0 ? { contactsAssociated } : {}),
-                ...(contactsDomainNotFound > 0 ? { contactsDomainNotFound } : {}),
-                ...(contactsNoDomain > 0 ? { contactsNoDomain } : {}),
-                ...(contactsDomainNotFound + contactsNoDomain > 0
-                  ? { contactsNoCompanyAssociation: contactsDomainNotFound + contactsNoDomain }
-                  : {}),
+                contactsAssociated,
+                contactsDomainNotFound,
+                contactsNoDomain,
+                contactsNoCompanyAssociation: contactsDomainNotFound + contactsNoDomain,
               }
             : {}),
         };

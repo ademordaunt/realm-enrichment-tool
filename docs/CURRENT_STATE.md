@@ -22,6 +22,17 @@ Core enrichment and HubSpot push workflows are stable in event and bulk modes. S
   - when disabled, global Import Settings values are used.
 - Contact HubSpot writes keep Lead Source fields fill-empty-only semantics in `contacts.ts`.
 - Company pushes still use global extras (not per-row CSV toggles), which is intentional in current implementation.
+- The Lead Source dropdown in `PrePushScreen` now fetches live enum values from HubSpot (`GET /api/hubspot/properties/lead-source` → `/crm/v3/properties/contacts/lead_source__deal_source`). The hardcoded `LEAD_SOURCE_OPTIONS` array remains as a silent fallback if the fetch fails.
+
+## Parsing
+
+- Combined name columns (`Name`, `Full Name`, `Attendee Name`, `Participant Name`, `Attendee`, `Contact Name`) are now detected during CSV parsing and automatically split into first and last name. Handles "Last, First" comma format, leading honorifics, and single-token names.
+- If auto-detection returns an incorrect list type (contacts vs. companies), the operator can switch it via a "Switch to Companies / Contacts" link on the upload screen. The override re-runs parsing with the forced type.
+
+## Push & Success Screen
+
+- On contacts push, the success screen now always shows the Company Associations block and Ownership Assignment block — zero counts are shown (not hidden). Zero associations is a meaningful red flag, not silence.
+- 529 (API overload) errors from Anthropic now retry with exponential backoff (1 s → 2 s → 4 s, up to 3 retries) before falling back to unresolved rows.
 
 ## Open Follow-Ups
 

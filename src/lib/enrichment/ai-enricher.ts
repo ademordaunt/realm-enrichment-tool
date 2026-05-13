@@ -40,6 +40,8 @@ function withInferredLinkedinSource<T extends EnrichedCompany | EnrichedContact>
   return cached;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /** Strip ```json ... ``` or ``` ... ``` fences from model output */
 function stripMarkdownFences(text: string): string {
   let s = text.trim();
@@ -159,18 +161,30 @@ export async function runClaudeWithWebSearch(
   system: string,
   userText: string,
 ): Promise<string> {
-  const response = await client.messages.create({
-    model: COMPANY_MODEL,
-    max_tokens: 4096,
-    system,
-    messages: [{ role: "user", content: userText }],
-  });
+  for (let attempt = 0; attempt <= 3; attempt++) {
+    try {
+      const response = await client.messages.create({
+        model: COMPANY_MODEL,
+        max_tokens: 4096,
+        system,
+        messages: [{ role: "user", content: userText }],
+      });
 
-  const text = extractTextFromMessage(response);
-  if (!text) {
-    throw new Error("No text content in Claude response; try again or check API logs.");
+      const text = extractTextFromMessage(response);
+      if (!text) {
+        throw new Error("No text content in Claude response; try again or check API logs.");
+      }
+      return text;
+    } catch (err) {
+      if (err instanceof Anthropic.APIError && err.status === 529 && attempt < 3) {
+        await sleep(1000 * Math.pow(2, attempt)); // 1000, 2000, 4000
+        continue;
+      }
+      throw err;
+    }
   }
-  return text;
+  // Unreachable: loop always returns or throws, but satisfies TypeScript.
+  throw new Error("Unexpected exit from retry loop.");
 }
 
 /** Location/date clause for company prompts — avoids a blank region when none was provided. */

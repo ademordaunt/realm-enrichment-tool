@@ -1,6 +1,7 @@
 export const CONTACT_FIELD_LABELS: Record<string, string> = {
   firstName: "First Name",
   lastName: "Last Name",
+  fullName: "Full Name (auto-split)",
   email: "Email",
   company: "Company Name",
   title: "Job Title",
