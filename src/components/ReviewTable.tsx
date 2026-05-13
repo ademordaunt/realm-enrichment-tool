@@ -23,6 +23,13 @@ import type {
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+/** Inset highlight on each `td` while `flashRowId` matches (see `scheduleAfterRowEdit`). */
+const ROW_FLASH_TD_CLASS =
+  "ring-inset ring-2 ring-blue-500/35 transition-shadow duration-300 motion-reduce:ring-1 motion-reduce:ring-blue-400/45 dark:ring-blue-400/28";
+
+const ROW_FLASH_CLEAR_MS = 1350;
+const ROW_FLASH_CLEAR_MS_REDUCED = 450;
+
 export interface ReviewTableProps {
   rows: EnrichedCompany[] | EnrichedContact[];
   listType: "companies" | "contacts";
@@ -730,15 +737,79 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
     });
   }, [getSessionFieldKey]);
 
-  // After an edit re-sorts the table, scroll the edited row into view so the user can track it.
-  // requestAnimationFrame defers until after React commits the new sort order to the DOM.
-  const scrollToRow = useCallback((id: string) => {
-    requestAnimationFrame(() => {
-      document
-        .querySelector(`tr[data-row-id="${CSS.escape(id)}"]`)
-        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
+  const [flashRowId, setFlashRowId] = useState<string | null>(null);
+  const flashClearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const afterEditRafOuterRef = useRef<number | null>(null);
+  const afterEditRafInnerRef = useRef<number | null>(null);
+  const afterEditTokenRef = useRef(0);
+
+  const flashRow = useCallback((id: string) => {
+    if (flashClearTimeoutRef.current != null) {
+      clearTimeout(flashClearTimeoutRef.current);
+      flashClearTimeoutRef.current = null;
+    }
+    setFlashRowId(id);
+    const reduced =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const ms = reduced ? ROW_FLASH_CLEAR_MS_REDUCED : ROW_FLASH_CLEAR_MS;
+    flashClearTimeoutRef.current = setTimeout(() => {
+      flashClearTimeoutRef.current = null;
+      setFlashRowId((current) => (current === id ? null : current));
+    }, ms);
   }, []);
+
+  /**
+   * Stable wrapper — impl lives in `useEffect` so eslint-plugin-react-hooks does not treat rAF
+   * ref reads as happening during render (via inline save handlers).
+   */
+  const scheduleAfterEditImplRef = useRef<(id: string) => void>(() => {});
+  function scheduleAfterRowEdit(id: string) {
+    scheduleAfterEditImplRef.current(id);
+  }
+
+  useEffect(() => {
+    const cancelPendingAfterRowEditRaf = () => {
+      if (afterEditRafOuterRef.current != null) {
+        cancelAnimationFrame(afterEditRafOuterRef.current);
+        afterEditRafOuterRef.current = null;
+      }
+      if (afterEditRafInnerRef.current != null) {
+        cancelAnimationFrame(afterEditRafInnerRef.current);
+        afterEditRafInnerRef.current = null;
+      }
+    };
+
+    scheduleAfterEditImplRef.current = (id: string) => {
+      cancelPendingAfterRowEditRaf();
+      afterEditTokenRef.current += 1;
+      const scheduleToken = afterEditTokenRef.current;
+
+      // Double rAF: defer until after React commit + paint so `<tr>` order matches sorted rows.
+      afterEditRafOuterRef.current = requestAnimationFrame(() => {
+        afterEditRafOuterRef.current = null;
+        afterEditRafInnerRef.current = requestAnimationFrame(() => {
+          afterEditRafInnerRef.current = null;
+          if (scheduleToken !== afterEditTokenRef.current) return;
+          const tr = document.querySelector<HTMLTableRowElement>(
+            `tr[data-row-id="${CSS.escape(id)}"]`,
+          );
+          if (!tr) return;
+          tr.scrollIntoView({ behavior: "auto", block: "nearest" });
+          flashRow(id);
+        });
+      });
+    };
+
+    return () => {
+      cancelPendingAfterRowEditRaf();
+      scheduleAfterEditImplRef.current = () => {};
+      if (flashClearTimeoutRef.current != null) {
+        clearTimeout(flashClearTimeoutRef.current);
+        flashClearTimeoutRef.current = null;
+      }
+    };
+  }, [flashRow]);
 
   const setRows = useCallback(
     (next: EnrichedCompany[] | EnrichedContact[]) => {
@@ -1248,6 +1319,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   const muted = row.status === "skipped";
                   const mutedCellTextClass = muted ? "text-zinc-500 dark:text-zinc-400" : "";
                   const checked = row.status === "approved";
+                  const flashTail = flashRowId === row.id ? ` ${ROW_FLASH_TD_CLASS}` : "";
                   return (
                     <tr
                       key={row.id}
@@ -1255,7 +1327,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       className={`${rowShellClass(row, ri)} transition-colors duration-150`}
                     >
                       <td
-                        className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
+                        className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}${flashTail}`}
                       >
                         <div className="flex items-center justify-center">
                           <input
@@ -1268,11 +1340,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         </div>
                       </td>
                       <td
-                        className={`sticky left-[64px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)} ${muted ? "text-zinc-500" : ""}`}
+                        className={`sticky left-[64px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)} ${muted ? "text-zinc-500" : ""}${flashTail}`}
                       >
                         {row.rawInput}
                       </td>
-                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
                         <EditableCell
                           value={row.resolvedName}
                           edited={isEdited(row.id, "resolvedName")}
@@ -1280,7 +1352,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "resolvedName");
-                            scrollToRow(row.id);
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
                                 r.id === row.id ? { ...r, resolvedName: v } : r,
@@ -1291,10 +1362,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               "resolvedName",
                               v,
                             );
+                            scheduleAfterRowEdit(row.id);
                           }}
                         />
                       </td>
-                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
                         <EditableCell
                           value={row.domain}
                           edited={isEdited(row.id, "domain")}
@@ -1302,7 +1374,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "domain");
-                            scrollToRow(row.id);
                             const domain = v.trim();
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
@@ -1316,17 +1387,17 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               "domain",
                               domain,
                             );
+                            scheduleAfterRowEdit(row.id);
                           }}
                         />
                       </td>
-                      <td className={`max-w-56 px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
+                      <td className={`max-w-56 px-2 py-1.5 align-middle ${mutedCellTextClass}${flashTail}`}>
                         <StateRegionCell
                           value={row.state}
                           edited={isEdited(row.id, "state")}
                           muted={muted}
                           onSave={(v) => {
                             markEdited(row.id, "state");
-                            scrollToRow(row.id);
                             const full = expandStateAbbreviation(sanitizeState(v));
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
@@ -1338,17 +1409,17 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               "state",
                               full,
                             );
+                            scheduleAfterRowEdit(row.id);
                           }}
                         />
                       </td>
-                      <td className={`px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
+                      <td className={`px-2 py-1.5 align-middle ${mutedCellTextClass}${flashTail}`}>
                         <EmployeesCell
                           value={row.numberOfEmployees}
                           edited={isEdited(row.id, "numberOfEmployees")}
                           muted={muted}
                           onSave={(n) => {
                             markEdited(row.id, "numberOfEmployees");
-                            scrollToRow(row.id);
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
                                 r.id === row.id ? { ...r, numberOfEmployees: n } : r,
@@ -1359,10 +1430,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               "numberOfEmployees",
                               n,
                             );
+                            scheduleAfterRowEdit(row.id);
                           }}
                         />
                       </td>
-                      <td className={`min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal ${mutedCellTextClass}`}>
+                      <td className={`min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal ${mutedCellTextClass}${flashTail}`}>
                         <LinkedInProfileCell
                           value={row.linkedinUrl}
                           edited={isEdited(row.id, "linkedinUrl")}
@@ -1373,7 +1445,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           amberTooltip="LinkedIn sourced from web search. Verify before trusting."
                           onSave={(v) => {
                             markEdited(row.id, "linkedinUrl");
-                            scrollToRow(row.id);
                             setRows(
                               (rows as EnrichedCompany[]).map((r) =>
                                 r.id === row.id
@@ -1386,10 +1457,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               "linkedinUrl",
                               v,
                             );
+                            scheduleAfterRowEdit(row.id);
                           }}
                         />
                       </td>
-                      <td className={`min-w-[120px] px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
+                      <td className={`min-w-[120px] px-2 py-1.5 align-middle ${mutedCellTextClass}${flashTail}`}>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <ConfidenceBadge score={getDisplayConfidence(row, "companies")} />
                           {row.hubspotId ? (
@@ -1411,7 +1483,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           ) : null}
                         </div>
                       </td>
-                      <td className={`min-w-[120px] max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
+                      <td className={`min-w-[120px] max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
                         <div className="flex items-center justify-center">
                           <ReasoningTooltip
                             content={buildReasoningTooltipContent(row, "companies")}
@@ -1426,6 +1498,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   const mutedCellTextClass = muted ? "text-zinc-500 dark:text-zinc-400" : "";
                   const checked = row.status === "approved";
                   const fullName = formatContactFullName(row);
+                  const flashTail = flashRowId === row.id ? ` ${ROW_FLASH_TD_CLASS}` : "";
                   return (
                     <tr
                       key={row.id}
@@ -1433,7 +1506,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                       className={`${rowShellClass(row, ri)} transition-colors duration-150`}
                     >
                       <td
-                        className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
+                        className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}${flashTail}`}
                       >
                         <div className="flex items-center justify-center">
                           <input
@@ -1446,7 +1519,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         </div>
                       </td>
                       <td
-                        className={`sticky left-[64px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
+                        className={`sticky left-[64px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}${flashTail}`}
                       >
                         <EditableCell
                           value={fullName}
@@ -1455,7 +1528,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "name");
-                            scrollToRow(row.id);
                             const clean = sanitizeUnknown(v);
                             const parts = clean.split(/\s+/).filter(Boolean);
                             const firstName = sanitizeUnknown(parts[0] ?? "");
@@ -1470,10 +1542,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               "name",
                               clean,
                             );
+                            scheduleAfterRowEdit(row.id);
                           }}
                         />
                       </td>
-                      <td className={`min-w-[200px] max-w-48 break-all px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
+                      <td className={`min-w-[200px] max-w-48 break-all px-2 py-1.5 align-middle ${mutedCellTextClass}${flashTail}`}>
                         <div className="flex items-center gap-1.5">
                           <EditableCell
                             value={sanitizeUnknown(row.rawEmail)}
@@ -1483,7 +1556,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                             pencilOnHover
                             onSave={(v) => {
                               markEdited(row.id, "rawEmail");
-                              scrollToRow(row.id);
                               const next = sanitizeUnknown(v);
                               setRows(
                                 (rows as EnrichedContact[]).map((r) =>
@@ -1495,11 +1567,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                                 "rawEmail",
                                 next,
                               );
+                              scheduleAfterRowEdit(row.id);
                             }}
                           />
                         </div>
                       </td>
-                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
                         <EditableCell
                           value={sanitizeCompanyName(row.resolvedCompany)}
                           edited={isEdited(row.id, "resolvedCompany")}
@@ -1507,7 +1580,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "resolvedCompany");
-                            scrollToRow(row.id);
                             const next = sanitizeCompanyName(v);
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
@@ -1519,10 +1591,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               "resolvedCompany",
                               next,
                             );
+                            scheduleAfterRowEdit(row.id);
                           }}
                         />
                       </td>
-                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
                         <EditableCell
                           value={sanitizeUnknown(row.title)}
                           edited={isEdited(row.id, "title")}
@@ -1530,7 +1603,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "title");
-                            scrollToRow(row.id);
                             const next = sanitizeUnknown(v);
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
@@ -1542,10 +1614,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               "title",
                               next,
                             );
+                            scheduleAfterRowEdit(row.id);
                           }}
                         />
                       </td>
-                      <td className={`min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal ${mutedCellTextClass}`}>
+                      <td className={`min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal ${mutedCellTextClass}${flashTail}`}>
                         <LinkedInProfileCell
                           value={sanitizeUnknown(row.linkedinUrl)}
                           edited={isEdited(row.id, "linkedinUrl")}
@@ -1556,7 +1629,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           amberTooltip="All data verified, but LinkedIn was sourced from AI web search — do a quick check to confirm it's correct."
                           onSave={(v) => {
                             markEdited(row.id, "linkedinUrl");
-                            scrollToRow(row.id);
                             const next = sanitizeUnknown(v);
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
@@ -1570,11 +1642,12 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               "linkedinUrl",
                               next,
                             );
+                            scheduleAfterRowEdit(row.id);
                           }}
                         />
                       </td>
                       <td
-                        className={`max-w-56 min-w-[220px] px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}
+                        className={`max-w-56 min-w-[220px] px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}
                       >
                         <EditableCell
                           value={row.membershipNotes ?? ""}
@@ -1583,7 +1656,6 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           pencilOnHover
                           onSave={(v) => {
                             markEdited(row.id, "membershipNotes");
-                            scrollToRow(row.id);
                             const next = v.trim();
                             setRows(
                               (rows as EnrichedContact[]).map((r) =>
@@ -1595,10 +1667,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                               "membershipNotes",
                               next,
                             );
+                            scheduleAfterRowEdit(row.id);
                           }}
                         />
                       </td>
-                      <td className={`min-w-[120px] px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
+                      <td className={`min-w-[120px] px-2 py-1.5 align-middle ${mutedCellTextClass}${flashTail}`}>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <ConfidenceBadge score={getDisplayConfidence(row, "contacts")} />
                           {row.hubspotId ? (
@@ -1611,7 +1684,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           ) : null}
                         </div>
                       </td>
-                      <td className={`min-w-[120px] max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
+                      <td className={`min-w-[120px] max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
                         <div className="flex items-center justify-center">
                           <ReasoningTooltip
                             content={buildReasoningTooltipContent(row, "contacts")}
@@ -1626,7 +1699,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
         </div>
         {showScrollHint ? (
           <div
-            className="pointer-events-none absolute right-0 top-0 h-full w-8 rounded-r-lg bg-gradient-to-l from-(--bg-page) to-transparent"
+            className="pointer-events-none absolute right-0 top-0 h-full w-8 rounded-r-lg bg-linear-to-l from-(--bg-page) to-transparent"
             aria-hidden
           />
         ) : null}
