@@ -1,6 +1,7 @@
 import type { HubSpotCompanyPushExtras } from "@/lib/hubspot/companies";
 import type { EnrichedContact } from "@/lib/utils/types";
 import { hubspotFetch, readHubSpotError } from "@/lib/hubspot/http";
+import { toHubSpotIndustry } from "@/lib/hubspot/industry-map";
 
 type HubSpotContactPrecheckResult = {
   hubspotId: string;
@@ -157,7 +158,8 @@ function contactProperties(
 
   // industry — Fill empty only
   if (contact.ziCompanyPrimaryIndustry?.trim() && isEmpty(ex.industry)) {
-    props.industry = contact.ziCompanyPrimaryIndustry.trim();
+    const industryEnum = toHubSpotIndustry(contact.ziCompanyPrimaryIndustry);
+    if (industryEnum) props.industry = industryEnum;
   }
 
   // numemployees — Overwrite
@@ -695,7 +697,8 @@ export async function updateContact(
     updates.job_function = contact.ziJobFunction.trim();
   }
   if (contact.ziCompanyPrimaryIndustry?.trim() && isEmpty(ex.industry)) {
-    updates.industry = contact.ziCompanyPrimaryIndustry.trim();
+    const industryEnum = toHubSpotIndustry(contact.ziCompanyPrimaryIndustry);
+    if (industryEnum) updates.industry = industryEnum;
   }
   if (
     contact.ziCompanyEmployeeCount?.trim() &&

@@ -23,9 +23,9 @@ import type {
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-/** Inset highlight on each `td` while `flashRowId` matches (see `scheduleAfterRowEdit`). */
-const ROW_FLASH_TD_CLASS =
-  "ring-inset ring-2 ring-blue-500/35 transition-shadow duration-300 motion-reduce:ring-1 motion-reduce:ring-blue-400/45 dark:ring-blue-400/28";
+/** Inset ring on the `tr` while `flashRowId` matches (see `scheduleAfterRowEdit`). */
+const ROW_FLASH_TR_CLASS =
+  "ring-inset ring-1 ring-blue-400/35 motion-reduce:ring-blue-400/40";
 
 const ROW_FLASH_CLEAR_MS = 1350;
 const ROW_FLASH_CLEAR_MS_REDUCED = 450;
@@ -1319,15 +1319,15 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   const muted = row.status === "skipped";
                   const mutedCellTextClass = muted ? "text-zinc-500 dark:text-zinc-400" : "";
                   const checked = row.status === "approved";
-                  const flashTail = flashRowId === row.id ? ` ${ROW_FLASH_TD_CLASS}` : "";
+                  const flashTail = flashRowId === row.id ? ` ${ROW_FLASH_TR_CLASS}` : "";
                   return (
                     <tr
                       key={row.id}
                       data-row-id={row.id}
-                      className={`${rowShellClass(row, ri)} transition-colors duration-150`}
+                      className={`${rowShellClass(row, ri)} transition duration-150${flashTail}`}
                     >
                       <td
-                        className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}${flashTail}`}
+                        className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
                       >
                         <div className="flex items-center justify-center">
                           <input
@@ -1340,11 +1340,11 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         </div>
                       </td>
                       <td
-                        className={`sticky left-[64px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)} ${muted ? "text-zinc-500" : ""}${flashTail}`}
+                        className={`sticky left-[64px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)} ${muted ? "text-zinc-500" : ""}`}
                       >
                         {row.rawInput}
                       </td>
-                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <EditableCell
                           value={row.resolvedName}
                           edited={isEdited(row.id, "resolvedName")}
@@ -1366,7 +1366,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <EditableCell
                           value={row.domain}
                           edited={isEdited(row.id, "domain")}
@@ -1391,7 +1391,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`max-w-56 px-2 py-1.5 align-middle ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`max-w-56 px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <StateRegionCell
                           value={row.state}
                           edited={isEdited(row.id, "state")}
@@ -1413,7 +1413,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`px-2 py-1.5 align-middle ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <EmployeesCell
                           value={row.numberOfEmployees}
                           edited={isEdited(row.id, "numberOfEmployees")}
@@ -1434,7 +1434,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal ${mutedCellTextClass}`}>
                         <LinkedInProfileCell
                           value={row.linkedinUrl}
                           edited={isEdited(row.id, "linkedinUrl")}
@@ -1461,7 +1461,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`min-w-[120px] px-2 py-1.5 align-middle ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`min-w-[120px] px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <ConfidenceBadge score={getDisplayConfidence(row, "companies")} />
                           {row.hubspotId ? (
@@ -1483,7 +1483,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           ) : null}
                         </div>
                       </td>
-                      <td className={`min-w-[120px] max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`min-w-[120px] max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <div className="flex items-center justify-center">
                           <ReasoningTooltip
                             content={buildReasoningTooltipContent(row, "companies")}
@@ -1498,15 +1498,15 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                   const mutedCellTextClass = muted ? "text-zinc-500 dark:text-zinc-400" : "";
                   const checked = row.status === "approved";
                   const fullName = formatContactFullName(row);
-                  const flashTail = flashRowId === row.id ? ` ${ROW_FLASH_TD_CLASS}` : "";
+                  const flashTail = flashRowId === row.id ? ` ${ROW_FLASH_TR_CLASS}` : "";
                   return (
                     <tr
                       key={row.id}
                       data-row-id={row.id}
-                      className={`${rowShellClass(row, ri)} transition-colors duration-150`}
+                      className={`${rowShellClass(row, ri)} transition duration-150${flashTail}`}
                     >
                       <td
-                        className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}${flashTail}`}
+                        className={`sticky left-0 z-10 w-16 min-w-16 max-w-16 border-r border-(--border-default) px-2 py-1.5 align-middle shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
                       >
                         <div className="flex items-center justify-center">
                           <input
@@ -1519,7 +1519,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         </div>
                       </td>
                       <td
-                        className={`sticky left-[64px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}${flashTail}`}
+                        className={`sticky left-[64px] z-11 max-w-48 border-r border-(--border-default) px-2 py-1.5 align-middle wrap-break-word shadow-[2px_0_6px_-2px_rgba(0,0,0,0.06)] ${rowStickyBgClass(row, ri)}`}
                       >
                         <EditableCell
                           value={fullName}
@@ -1546,7 +1546,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`min-w-[200px] max-w-48 break-all px-2 py-1.5 align-middle ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`min-w-[200px] max-w-48 break-all px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <div className="flex items-center gap-1.5">
                           <EditableCell
                             value={sanitizeUnknown(row.rawEmail)}
@@ -1572,7 +1572,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           />
                         </div>
                       </td>
-                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <EditableCell
                           value={sanitizeCompanyName(row.resolvedCompany)}
                           edited={isEdited(row.id, "resolvedCompany")}
@@ -1595,7 +1595,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`max-w-48 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <EditableCell
                           value={sanitizeUnknown(row.title)}
                           edited={isEdited(row.id, "title")}
@@ -1618,7 +1618,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`min-w-[180px] max-w-[220px] px-2 py-1.5 align-middle break-all whitespace-normal ${mutedCellTextClass}`}>
                         <LinkedInProfileCell
                           value={sanitizeUnknown(row.linkedinUrl)}
                           edited={isEdited(row.id, "linkedinUrl")}
@@ -1647,7 +1647,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                         />
                       </td>
                       <td
-                        className={`max-w-56 min-w-[220px] px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}
+                        className={`max-w-56 min-w-[220px] px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}
                       >
                         <EditableCell
                           value={row.membershipNotes ?? ""}
@@ -1671,7 +1671,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           }}
                         />
                       </td>
-                      <td className={`min-w-[120px] px-2 py-1.5 align-middle ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`min-w-[120px] px-2 py-1.5 align-middle ${mutedCellTextClass}`}>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <ConfidenceBadge score={getDisplayConfidence(row, "contacts")} />
                           {row.hubspotId ? (
@@ -1684,7 +1684,7 @@ export function ReviewTable({ rows, listType, onRowsChange, onApprove }: ReviewT
                           ) : null}
                         </div>
                       </td>
-                      <td className={`min-w-[120px] max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}${flashTail}`}>
+                      <td className={`min-w-[120px] max-w-56 px-2 py-1.5 align-middle wrap-break-word ${mutedCellTextClass}`}>
                         <div className="flex items-center justify-center">
                           <ReasoningTooltip
                             content={buildReasoningTooltipContent(row, "contacts")}

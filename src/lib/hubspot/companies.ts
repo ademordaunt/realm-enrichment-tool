@@ -1,6 +1,7 @@
 import type { EnrichedCompany } from "@/lib/utils/types";
 import { hubspotFetch, readHubSpotError } from "@/lib/hubspot/http";
 import { normalizeDomain } from "@/lib/utils/domain";
+import { toHubSpotIndustry } from "@/lib/hubspot/industry-map";
 export { normalizeDomain };
 
 export type HubSpotCompanyPushExtras = {
@@ -196,7 +197,8 @@ function companyProperties(
   // industry — Fill empty only
   if (company.industry?.trim() && isEmpty(ex.industry)) {
     // WRITE RULE: fill-empty-only — never overwrite a manually curated industry value. ZoomInfo industry is lower trust than an existing HubSpot value for this field.
-    props.industry = company.industry.trim();
+    const industryEnum = toHubSpotIndustry(company.industry);
+    if (industryEnum) props.industry = industryEnum;
   }
 
   // description — Fill empty only
@@ -374,7 +376,8 @@ export async function updateCompany(
   }
   if (isEmpty(ex.industry) && company.industry?.trim()) {
     // WRITE RULE: fill-empty-only — never overwrite a manually curated industry value. ZoomInfo industry is lower trust than an existing HubSpot value for this field.
-    updates.industry = company.industry.trim();
+    const industryEnum = toHubSpotIndustry(company.industry);
+    if (industryEnum) updates.industry = industryEnum;
   }
   if (isEmpty(ex.description) && company.description?.trim()) {
     updates.description = company.description.trim();

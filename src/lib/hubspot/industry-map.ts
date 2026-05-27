@@ -1,0 +1,178 @@
+const VALID_HUBSPOT_INDUSTRIES = new Set([
+  "ACCOUNTING", "AIRLINES_AVIATION", "ALTERNATIVE_DISPUTE_RESOLUTION", "ALTERNATIVE_MEDICINE",
+  "ANIMATION", "APPAREL_FASHION", "ARCHITECTURE_PLANNING", "ARTS_AND_CRAFTS", "AUTOMOTIVE",
+  "AVIATION_AEROSPACE", "BANKING", "BIOTECHNOLOGY", "BROADCAST_MEDIA", "BUILDING_MATERIALS",
+  "BUSINESS_SUPPLIES_AND_EQUIPMENT", "CAPITAL_MARKETS", "CHEMICALS", "CIVIC_SOCIAL_ORGANIZATION",
+  "CIVIL_ENGINEERING", "COMMERCIAL_REAL_ESTATE", "COMPUTER_NETWORK_SECURITY", "COMPUTER_GAMES",
+  "COMPUTER_HARDWARE", "COMPUTER_NETWORKING", "COMPUTER_SOFTWARE", "INTERNET", "CONSTRUCTION",
+  "CONSUMER_ELECTRONICS", "CONSUMER_GOODS", "CONSUMER_SERVICES", "COSMETICS", "DAIRY",
+  "DEFENSE_SPACE", "DESIGN", "EDUCATION_MANAGEMENT", "E_LEARNING",
+  "ELECTRICAL_ELECTRONIC_MANUFACTURING", "ENTERTAINMENT", "ENVIRONMENTAL_SERVICES",
+  "EVENTS_SERVICES", "EXECUTIVE_OFFICE", "FACILITIES_SERVICES", "FARMING", "FINANCIAL_SERVICES",
+  "FINE_ART", "FISHERY", "FOOD_BEVERAGES", "FOOD_PRODUCTION", "FUND_RAISING", "FURNITURE",
+  "GAMBLING_CASINOS", "GLASS_CERAMICS_CONCRETE", "GOVERNMENT_ADMINISTRATION",
+  "GOVERNMENT_RELATIONS", "GRAPHIC_DESIGN", "HEALTH_WELLNESS_AND_FITNESS", "HIGHER_EDUCATION",
+  "HOSPITAL_HEALTH_CARE", "HOSPITALITY", "HUMAN_RESOURCES", "IMPORT_AND_EXPORT",
+  "INDIVIDUAL_FAMILY_SERVICES", "INDUSTRIAL_AUTOMATION", "INFORMATION_SERVICES",
+  "INFORMATION_TECHNOLOGY_AND_SERVICES", "INSURANCE", "INTERNATIONAL_AFFAIRS",
+  "INTERNATIONAL_TRADE_AND_DEVELOPMENT", "INVESTMENT_BANKING", "INVESTMENT_MANAGEMENT",
+  "JUDICIARY", "LAW_ENFORCEMENT", "LAW_PRACTICE", "LEGAL_SERVICES", "LEGISLATIVE_OFFICE",
+  "LEISURE_TRAVEL_TOURISM", "LIBRARIES", "LOGISTICS_AND_SUPPLY_CHAIN", "LUXURY_GOODS_JEWELRY",
+  "MACHINERY", "MANAGEMENT_CONSULTING", "MARITIME", "MARKET_RESEARCH",
+  "MARKETING_AND_ADVERTISING", "MECHANICAL_OR_INDUSTRIAL_ENGINEERING", "MEDIA_PRODUCTION",
+  "MEDICAL_DEVICES", "MEDICAL_PRACTICE", "MENTAL_HEALTH_CARE", "MILITARY", "MINING_METALS",
+  "MOTION_PICTURES_AND_FILM", "MUSEUMS_AND_INSTITUTIONS", "MUSIC", "NANOTECHNOLOGY",
+  "NEWSPAPERS", "NON_PROFIT_ORGANIZATION_MANAGEMENT", "OIL_ENERGY", "ONLINE_MEDIA",
+  "OUTSOURCING_OFFSHORING", "PACKAGE_FREIGHT_DELIVERY", "PACKAGING_AND_CONTAINERS",
+  "PAPER_FOREST_PRODUCTS", "PERFORMING_ARTS", "PHARMACEUTICALS", "PHILANTHROPY", "PHOTOGRAPHY",
+  "PLASTICS", "POLITICAL_ORGANIZATION", "PRIMARY_SECONDARY_EDUCATION", "PRINTING",
+  "PROFESSIONAL_TRAINING_COACHING", "PROGRAM_DEVELOPMENT", "PUBLIC_POLICY",
+  "PUBLIC_RELATIONS_AND_COMMUNICATIONS", "PUBLIC_SAFETY", "PUBLISHING", "RAILROAD_MANUFACTURE",
+  "RANCHING", "REAL_ESTATE", "RECREATIONAL_FACILITIES_AND_SERVICES", "RELIGIOUS_INSTITUTIONS",
+  "RENEWABLES_ENVIRONMENT", "RESEARCH", "RESTAURANTS", "RETAIL", "SECURITY_AND_INVESTIGATIONS",
+  "SEMICONDUCTORS", "SHIPBUILDING", "SPORTING_GOODS", "SPORTS", "STAFFING_AND_RECRUITING",
+  "SUPERMARKETS", "TELECOMMUNICATIONS", "TEXTILES", "THINK_TANKS", "TOBACCO",
+  "TRANSLATION_AND_LOCALIZATION", "TRANSPORTATION_TRUCKING_RAILROAD", "UTILITIES",
+  "VENTURE_CAPITAL_PRIVATE_EQUITY", "VETERINARY", "WAREHOUSING", "WHOLESALE",
+  "WINE_AND_SPIRITS", "WIRELESS", "WRITING_AND_EDITING", "MOBILE_GAMES",
+]);
+
+/** Irregular mappings where mechanical uppercasing doesn't yield the correct enum. */
+const INDUSTRY_LOOKUP: Record<string, string> = {
+  "nonprofit organization management": "NON_PROFIT_ORGANIZATION_MANAGEMENT",
+  "non profit organization management": "NON_PROFIT_ORGANIZATION_MANAGEMENT",
+  "non-profit organization management": "NON_PROFIT_ORGANIZATION_MANAGEMENT",
+  "e-learning": "E_LEARNING",
+  "elearning": "E_LEARNING",
+  "oil & energy": "OIL_ENERGY",
+  "oil and energy": "OIL_ENERGY",
+  "fundraising": "FUND_RAISING",
+  "fund raising": "FUND_RAISING",
+  "computer & network security": "COMPUTER_NETWORK_SECURITY",
+  "computer and network security": "COMPUTER_NETWORK_SECURITY",
+  "civic & social organization": "CIVIC_SOCIAL_ORGANIZATION",
+  "civic and social organization": "CIVIC_SOCIAL_ORGANIZATION",
+  "apparel & fashion": "APPAREL_FASHION",
+  "apparel and fashion": "APPAREL_FASHION",
+  "architecture & planning": "ARCHITECTURE_PLANNING",
+  "architecture and planning": "ARCHITECTURE_PLANNING",
+  "arts & crafts": "ARTS_AND_CRAFTS",
+  "aviation & aerospace": "AVIATION_AEROSPACE",
+  "aviation and aerospace": "AVIATION_AEROSPACE",
+  "broadcast media": "BROADCAST_MEDIA",
+  "defense & space": "DEFENSE_SPACE",
+  "defense and space": "DEFENSE_SPACE",
+  "electrical/electronic manufacturing": "ELECTRICAL_ELECTRONIC_MANUFACTURING",
+  "electrical & electronic manufacturing": "ELECTRICAL_ELECTRONIC_MANUFACTURING",
+  "food & beverages": "FOOD_BEVERAGES",
+  "food and beverages": "FOOD_BEVERAGES",
+  "gambling & casinos": "GAMBLING_CASINOS",
+  "gambling and casinos": "GAMBLING_CASINOS",
+  "glass, ceramics & concrete": "GLASS_CERAMICS_CONCRETE",
+  "glass ceramics & concrete": "GLASS_CERAMICS_CONCRETE",
+  "glass ceramics and concrete": "GLASS_CERAMICS_CONCRETE",
+  "health, wellness and fitness": "HEALTH_WELLNESS_AND_FITNESS",
+  "health wellness and fitness": "HEALTH_WELLNESS_AND_FITNESS",
+  "health & wellness": "HEALTH_WELLNESS_AND_FITNESS",
+  "hospital & health care": "HOSPITAL_HEALTH_CARE",
+  "hospital and health care": "HOSPITAL_HEALTH_CARE",
+  "import and export": "IMPORT_AND_EXPORT",
+  "import & export": "IMPORT_AND_EXPORT",
+  "individual & family services": "INDIVIDUAL_FAMILY_SERVICES",
+  "individual and family services": "INDIVIDUAL_FAMILY_SERVICES",
+  "leisure, travel & tourism": "LEISURE_TRAVEL_TOURISM",
+  "leisure travel & tourism": "LEISURE_TRAVEL_TOURISM",
+  "leisure travel and tourism": "LEISURE_TRAVEL_TOURISM",
+  "logistics and supply chain": "LOGISTICS_AND_SUPPLY_CHAIN",
+  "logistics & supply chain": "LOGISTICS_AND_SUPPLY_CHAIN",
+  "luxury goods & jewelry": "LUXURY_GOODS_JEWELRY",
+  "luxury goods and jewelry": "LUXURY_GOODS_JEWELRY",
+  "marketing and advertising": "MARKETING_AND_ADVERTISING",
+  "marketing & advertising": "MARKETING_AND_ADVERTISING",
+  "mechanical or industrial engineering": "MECHANICAL_OR_INDUSTRIAL_ENGINEERING",
+  "mining & metals": "MINING_METALS",
+  "mining and metals": "MINING_METALS",
+  "motion pictures and film": "MOTION_PICTURES_AND_FILM",
+  "motion pictures & film": "MOTION_PICTURES_AND_FILM",
+  "museums and institutions": "MUSEUMS_AND_INSTITUTIONS",
+  "museums & institutions": "MUSEUMS_AND_INSTITUTIONS",
+  "online media": "ONLINE_MEDIA",
+  "outsourcing/offshoring": "OUTSOURCING_OFFSHORING",
+  "outsourcing & offshoring": "OUTSOURCING_OFFSHORING",
+  "outsourcing and offshoring": "OUTSOURCING_OFFSHORING",
+  "package/freight delivery": "PACKAGE_FREIGHT_DELIVERY",
+  "package & freight delivery": "PACKAGE_FREIGHT_DELIVERY",
+  "package and freight delivery": "PACKAGE_FREIGHT_DELIVERY",
+  "packaging and containers": "PACKAGING_AND_CONTAINERS",
+  "packaging & containers": "PACKAGING_AND_CONTAINERS",
+  "paper & forest products": "PAPER_FOREST_PRODUCTS",
+  "paper and forest products": "PAPER_FOREST_PRODUCTS",
+  "performing arts": "PERFORMING_ARTS",
+  "political organization": "POLITICAL_ORGANIZATION",
+  "primary/secondary education": "PRIMARY_SECONDARY_EDUCATION",
+  "primary & secondary education": "PRIMARY_SECONDARY_EDUCATION",
+  "primary and secondary education": "PRIMARY_SECONDARY_EDUCATION",
+  "professional training & coaching": "PROFESSIONAL_TRAINING_COACHING",
+  "professional training and coaching": "PROFESSIONAL_TRAINING_COACHING",
+  "program development": "PROGRAM_DEVELOPMENT",
+  "public policy": "PUBLIC_POLICY",
+  "public relations and communications": "PUBLIC_RELATIONS_AND_COMMUNICATIONS",
+  "public relations & communications": "PUBLIC_RELATIONS_AND_COMMUNICATIONS",
+  "public safety": "PUBLIC_SAFETY",
+  "railroad manufacture": "RAILROAD_MANUFACTURE",
+  "real estate": "REAL_ESTATE",
+  "recreational facilities and services": "RECREATIONAL_FACILITIES_AND_SERVICES",
+  "recreational facilities & services": "RECREATIONAL_FACILITIES_AND_SERVICES",
+  "religious institutions": "RELIGIOUS_INSTITUTIONS",
+  "renewables & environment": "RENEWABLES_ENVIRONMENT",
+  "renewables and environment": "RENEWABLES_ENVIRONMENT",
+  "security and investigations": "SECURITY_AND_INVESTIGATIONS",
+  "security & investigations": "SECURITY_AND_INVESTIGATIONS",
+  "sporting goods": "SPORTING_GOODS",
+  "staffing and recruiting": "STAFFING_AND_RECRUITING",
+  "staffing & recruiting": "STAFFING_AND_RECRUITING",
+  "think tanks": "THINK_TANKS",
+  "translation and localization": "TRANSLATION_AND_LOCALIZATION",
+  "translation & localization": "TRANSLATION_AND_LOCALIZATION",
+  "transportation/trucking/railroad": "TRANSPORTATION_TRUCKING_RAILROAD",
+  "transportation trucking railroad": "TRANSPORTATION_TRUCKING_RAILROAD",
+  "venture capital & private equity": "VENTURE_CAPITAL_PRIVATE_EQUITY",
+  "venture capital and private equity": "VENTURE_CAPITAL_PRIVATE_EQUITY",
+  "wine and spirits": "WINE_AND_SPIRITS",
+  "wine & spirits": "WINE_AND_SPIRITS",
+  "writing and editing": "WRITING_AND_EDITING",
+  "writing & editing": "WRITING_AND_EDITING",
+  "mobile games": "MOBILE_GAMES",
+  "it & services": "INFORMATION_TECHNOLOGY_AND_SERVICES",
+  "it and services": "INFORMATION_TECHNOLOGY_AND_SERVICES",
+  "information technology & services": "INFORMATION_TECHNOLOGY_AND_SERVICES",
+  "information technology and services": "INFORMATION_TECHNOLOGY_AND_SERVICES",
+};
+
+/**
+ * Converts a human-readable industry string (e.g. from ZoomInfo) to the HubSpot enum value
+ * (e.g. "Consumer Services" → "CONSUMER_SERVICES"). Returns undefined if the value cannot
+ * be mapped to a valid HubSpot industry enum, so the field is omitted rather than rejected.
+ */
+export function toHubSpotIndustry(industry: string | undefined | null): string | undefined {
+  if (!industry?.trim()) return undefined;
+  const trimmed = industry.trim();
+
+  // Already a valid enum — pass through.
+  if (VALID_HUBSPOT_INDUSTRIES.has(trimmed)) return trimmed;
+
+  const lower = trimmed.toLowerCase();
+
+  // Explicit lookup table for irregular / non-mechanical mappings.
+  const explicit = INDUSTRY_LOOKUP[lower];
+  if (explicit) return explicit;
+
+  // Mechanical fallback: uppercase and replace runs of non-alphanumeric chars with underscore.
+  const mechanical = trimmed
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "_")
+    .replace(/^_|_$/g, "");
+  if (VALID_HUBSPOT_INDUSTRIES.has(mechanical)) return mechanical;
+
+  return undefined;
+}
