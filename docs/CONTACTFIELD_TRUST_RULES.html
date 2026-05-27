@@ -92,11 +92,11 @@
 
       <tr>
         <td><span class="field-name">LinkedIn URL</span></td>
-        <td>Common Room → HubSpot → ZoomInfo → AI<br><span class="note">Common Room = self-reported by community member</span></td>
+        <td>Common Room → CSV → ZoomInfo Prospector → AI → ZoomInfo<br><span class="note">Common Room = self-reported by community member. CSV = operator-supplied; beats enrichment tools.</span></td>
         <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
-        <td>Flag if Common Room/HubSpot and ZoomInfo differ. ZoomInfo returns nothing → keep existing silently (null ≠ conflict). AI-sourced → always amber flag regardless of other signals.</td>
+        <td>CSV wins over ZoomInfo and AI when present. Common Room always wins over CSV. ZoomInfo returns nothing → keep existing silently (null ≠ conflict). AI-sourced with no CSV or Common Room → amber flag.</td>
         <td><span class="badge b-fill">Fill if HubSpot empty</span><br><span class="note">Pre-review: never overwrite. Post-review: operator decision is truth.</span></td>
-        <td>Common Room leads — self-reported LinkedIn is highest possible trust for this field.</td>
+        <td>Common Room leads — self-reported LinkedIn is highest possible trust. CSV is second — operator-supplied beats enrichment tools. Only Common Room can override CSV.</td>
       </tr>
 
       <tr>

@@ -282,6 +282,7 @@ function mapCompanyAiToEnriched(
     csvState: row.state?.trim() || undefined,
     csvEmployees: row.employees?.trim() || undefined,
     csvIndustry: row.industry?.trim() || undefined,
+    csvLinkedinUrl: row.linkedinUrl?.trim() || undefined,
   };
 }
 
@@ -341,6 +342,7 @@ function mapContactAiToEnriched(
     csvState: row.state?.trim() || undefined,
     csvEmployees: row.employees?.trim() || undefined,
     csvIndustry: row.industry?.trim() || undefined,
+    csvLinkedinUrl: row.linkedinUrl?.trim() || undefined,
     emailSource: rawEmail ? "csv" : undefined,
   };
 }

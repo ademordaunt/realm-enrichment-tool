@@ -36,6 +36,8 @@ export interface RawCompanyRow {
   employees?: string;
   /** Industry pre-populated in CSV. */
   industry?: string;
+  /** LinkedIn Company Page URL pre-populated in CSV. */
+  linkedinUrl?: string;
   [key: string]: string | undefined;
 }
 
@@ -108,6 +110,8 @@ export interface EnrichedCompany {
   csvEmployees?: string;
   /** CSV-sourced industry (Phase 1 fallback). */
   csvIndustry?: string;
+  /** CSV-sourced LinkedIn Company Page URL (Phase 1 fallback). */
+  csvLinkedinUrl?: string;
   /** True when LinkedIn URL came from AI web search — row stays Trusted but flagged amber. */
   linkedinAmberFlag?: boolean;
   /** Sort tier within Trusted bucket: 1 = amber flag (top), 2 = clean. */
@@ -178,6 +182,8 @@ export interface EnrichedContact {
   csvEmployees?: string;
   /** CSV-sourced industry (Phase 1 fallback). */
   csvIndustry?: string;
+  /** CSV-sourced LinkedIn URL (trusted above AI/ZoomInfo; only Common Room overrides). */
+  csvLinkedinUrl?: string;
   /** True when LinkedIn URL came from AI web search — row stays Trusted but flagged amber. */
   linkedinAmberFlag?: boolean;
   /** Sort tier within Trusted bucket: 1 = amber flag (top), 2 = clean. */

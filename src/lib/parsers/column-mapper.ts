@@ -406,6 +406,13 @@ const COMPANY_ENRICHED_ALIASES: Record<string, keyof RawCompanyRow> = {
   primaryindustry: "industry",
   sector: "industry",
   vertical: "industry",
+  linkedinurl: "linkedinUrl",
+  linkedincompanyurl: "linkedinUrl",
+  linkedincompanypage: "linkedinUrl",
+  linkedincompanyprofileurl: "linkedinUrl",
+  linkedinprofileurl: "linkedinUrl",
+  linkedin: "linkedinUrl",
+  liurl: "linkedinUrl",
 };
 
 /**

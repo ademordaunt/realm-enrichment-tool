@@ -110,11 +110,11 @@
       </tr>
       <tr>
         <td><span class="field-name">LinkedIn URL</span></td>
-        <td>HubSpot → ZoomInfo → AI</td>
+        <td>Common Room → CSV → AI → ZoomInfo<br><span class="note">CSV = operator-supplied; beats enrichment tools. Common Room = platform-verified; beats all.</span></td>
         <td><span class="badge b-conf-hi">High confidence</span><br>Use consensus, no flag needed</td>
-        <td>Flag if HubSpot and ZoomInfo both have different values.<br>ZoomInfo returns nothing → keep HubSpot silently. A null result is not a conflict.<br>AI-sourced → always amber flag.</td>
+        <td>CSV wins over AI and ZoomInfo when present. Common Room always wins. If sources conflict below CSV (AI vs ZoomInfo), confidence level breaks the tie — AI wins on high-confidence rows, ZoomInfo on low-confidence.<br>AI-sourced with no CSV or Common Room → amber flag.</td>
         <td><span class="badge b-fill">Fill if HubSpot empty</span><br><span class="note">Pre-review: never overwrite existing. Post-review: operator decision is truth — write whatever was approved, including overwrite.</span></td>
-        <td>HubSpot wins pre-review. Post-review the table is the source of truth.</td>
+        <td>Operator-supplied CSV LinkedIn is trusted above enrichment tools. Only Common Room (platform-verified self-reported) can override it.</td>
       </tr>
       <tr>
         <td><span class="field-name">Phone</span></td>

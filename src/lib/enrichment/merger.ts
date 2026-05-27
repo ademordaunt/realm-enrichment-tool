@@ -66,12 +66,16 @@ export function mergeEnrichedCompany(
 
   const merged: EnrichedCompany = { ...ai };
 
+  // LinkedIn: CommonRoom > CSV > AI/ZoomInfo (AI wins tiebreak on high-confidence, ZI on low)
+  const aiLinkedin = ai.linkedinUrl?.trim() || "";
+  const ziLinkedin = zi.linkedinUrl?.trim() || "";
+  merged.linkedinUrl =
+    commonroom.linkedinUrl?.trim() ||
+    ai.csvLinkedinUrl?.trim() ||
+    (isHighConfidence ? aiLinkedin || ziLinkedin : ziLinkedin || aiLinkedin) ||
+    "";
+
   if (isHighConfidence) {
-    merged.linkedinUrl =
-      ai.linkedinUrl?.trim() ||
-      zi.linkedinUrl?.trim() ||
-      commonroom.linkedinUrl?.trim() ||
-      "";
     merged.numberOfEmployees = (ai.numberOfEmployees || zi.numberOfEmployees) ?? null;
     merged.state = ai.state?.trim() || zi.state?.trim() || "";
     merged.domain =
@@ -83,11 +87,6 @@ export function mergeEnrichedCompany(
     merged.description = ai.description?.trim() || zi.description || "";
     merged.confidenceScore = "high";
   } else {
-    merged.linkedinUrl =
-      zi.linkedinUrl?.trim() ||
-      ai.linkedinUrl?.trim() ||
-      commonroom.linkedinUrl?.trim() ||
-      "";
     // ZoomInfo wins on fast-aging fields; CSV fills when ZoomInfo returns nothing
     merged.numberOfEmployees = (zi.numberOfEmployees || ai.numberOfEmployees) ?? null;
     merged.state = zi.state?.trim() || ai.state?.trim() || "";
@@ -117,12 +116,12 @@ export function mergeEnrichedCompany(
   if (!merged.industry?.trim() && ai.csvIndustry?.trim()) {
     merged.industry = ai.csvIndustry.trim();
   }
-
   // Carry csv fields forward on the merged row
   merged.csvDomain = ai.csvDomain;
   merged.csvState = ai.csvState;
   merged.csvEmployees = ai.csvEmployees;
   merged.csvIndustry = ai.csvIndustry;
+  merged.csvLinkedinUrl = ai.csvLinkedinUrl;
 
   merged.website = websiteFromDomain(merged.domain);
   merged.enrichedByZoomInfo = ai.enrichedByZoomInfo || Boolean(zi.enrichedByZoomInfo);
@@ -241,6 +240,7 @@ export function mergeEnrichedContact(
 
   const linkedinUrl = firstNonEmptyString(
     commonroom.linkedinUrl,
+    ai.csvLinkedinUrl,
     prospector?.linkedinUrl,
     ai.linkedinUrl,
     zi.linkedinUrl,
@@ -332,6 +332,7 @@ export function mergeEnrichedContact(
     csvState: ai.csvState,
     csvEmployees: ai.csvEmployees,
     csvIndustry: ai.csvIndustry,
+    csvLinkedinUrl: ai.csvLinkedinUrl,
     ziManagementLevel:
       firstNonEmptyString(ai.ziManagementLevel, zi.ziManagementLevel) || undefined,
     ziJobFunction:
