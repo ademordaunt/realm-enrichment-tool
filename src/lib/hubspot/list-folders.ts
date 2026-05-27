@@ -17,7 +17,10 @@ export function parseHubSpotFoldersJson(json: unknown): HubSpotFolderRow[] {
       if (name != null && id != null) {
         folders.push({ id: String(id), name: String(name) });
       }
-      walkFolderNodes(folderNode.childNodes);
+      // HubSpot may use childFolders, childNodes, or children depending on API version
+      walkFolderNodes(
+        folderNode.childFolders ?? folderNode.childNodes ?? folderNode.children,
+      );
     }
   };
 
@@ -27,7 +30,8 @@ export function parseHubSpotFoldersJson(json: unknown): HubSpotFolderRow[] {
     const o = json as Record<string, unknown>;
     const folder = o.folder;
     if (folder && typeof folder === "object") {
-      walkFolderNodes((folder as Record<string, unknown>).childNodes);
+      const f = folder as Record<string, unknown>;
+      walkFolderNodes(f.childFolders ?? f.childNodes ?? f.children);
     }
     const list =
       (Array.isArray(o.objects) && o.objects) ||
