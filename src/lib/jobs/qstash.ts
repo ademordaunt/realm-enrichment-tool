@@ -8,6 +8,8 @@ type QueuePayload = {
   phase: JobPhase;
 };
 
+const INTERNAL_AUTH_HEADER = "x-realm-internal-auth";
+
 export function getJobsCallbackUrl(): string {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   return `${appUrl}/api/jobs/process`;
@@ -15,11 +17,18 @@ export function getJobsCallbackUrl(): string {
 
 export async function queueJobChunk(payload: QueuePayload): Promise<void> {
   const token = process.env.QSTASH_TOKEN;
+  const internalSecret = process.env.INTERNAL_API_SECRET?.trim() ?? "";
+  if (!internalSecret) {
+    console.warn("[QStash] INTERNAL_API_SECRET is not set; /api/jobs/process may reject the delivery.");
+  }
+
   if (process.env.NODE_ENV === "development") {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (internalSecret) headers[INTERNAL_AUTH_HEADER] = internalSecret;
     void fetch(`${appUrl}/api/jobs/process`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(payload),
     })
       .then(async (res) => {
@@ -42,5 +51,6 @@ export async function queueJobChunk(payload: QueuePayload): Promise<void> {
     url: getJobsCallbackUrl(),
     body: payload,
     retries: 3,
+    ...(internalSecret && { headers: { [INTERNAL_AUTH_HEADER]: internalSecret } }),
   });
 }
