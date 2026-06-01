@@ -50,7 +50,7 @@ function deduplicateApproved(
   });
 }
 
-type NdjsonProgress = { type: "progress"; current: number; total: number };
+type NdjsonProgress = { type: "progress"; current: number; total: number; message?: string };
 type NdjsonListCreated = {
   type: "list_created";
   listId: string;
@@ -180,7 +180,7 @@ async function deduplicateAndMatchContacts(rowsT: EnrichedContact[]): Promise<Co
       toUpdate.push({ id: fallbackId, contact: t });
       matchedIds.add(t.id);
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
 
   const toUpdateIds = new Set(toUpdate.map((x) => x.contact.id));
@@ -445,6 +445,7 @@ export async function handleHubSpotPushRequest(
           cOk.forEach((r) => recordIds.push(r.id));
         } else {
           const rowsT = approved as EnrichedContact[];
+          write({ type: "progress", current: 0, total, message: "Matching contacts in HubSpot…" });
           const {
             toUpdate,
             toCreate,
