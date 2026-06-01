@@ -12,7 +12,6 @@ import {
   batchCreateContacts,
   batchFindContactsByEmail,
   batchUpdateContacts,
-  findContactByNameAndCompany,
 } from "@/lib/hubspot/contacts";
 import { getHubSpotAccessToken, hubspotFetch, readHubSpotError } from "@/lib/hubspot/http";
 import { addRecordsToList } from "@/lib/hubspot/lists";
@@ -168,21 +167,10 @@ async function deduplicateAndMatchContacts(rowsT: EnrichedContact[]): Promise<Co
     if (hid) toUpdate.push({ id: hid, contact: t });
   }
 
-  const matchedIds = new Set<string>(toUpdate.map((x) => x.contact.id));
-  for (const t of unknown) {
-    if (matchedIds.has(t.id)) continue;
-    const firstName = t.firstName?.trim() ?? "";
-    const lastName = t.lastName?.trim() ?? "";
-    const company = t.resolvedCompany?.trim() ?? "";
-    if (!firstName || !lastName || !company) continue;
-    const fallbackId = await findContactByNameAndCompany(firstName, lastName, company);
-    if (fallbackId) {
-      toUpdate.push({ id: fallbackId, contact: t });
-      matchedIds.add(t.id);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-
+  // Name+company fallback removed: for net-new event lists, sequential per-contact HubSpot
+  // searches return null for every contact and cause push timeouts on lists > 100 rows.
+  // Unmatched contacts go to batchCreateContacts which handles "already exists" errors by
+  // updating the existing record instead.
   const toUpdateIds = new Set(toUpdate.map((x) => x.contact.id));
   const toCreate = unknown.filter((t) => !toUpdateIds.has(t.id));
 
