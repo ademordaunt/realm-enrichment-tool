@@ -29,7 +29,7 @@ Conflicts surface as Needs Review with a tooltip reason.
 The merge produces one record per row. No source "wins overall" — each field has its own winner.
 ### Phase 3 — Push Only What's Better
 Use domain as the match key for company create vs. update.
-Use work email as the match key for contact create vs. update, with name + company as fallback.
+Use work email as the match key for contact create vs. update. At push time, contacts without a HubSpot id and without an email match are created in batch; HubSpot duplicate errors on create can route rows to update instead. Sequential name+company CRM lookup before create was removed to keep large pushes within serverless time limits.
 Write only fields where the merged value improves on what HubSpot already has, per field-specific write rules.
 Never overwrite email or domain.
 Before writing each contact, attempt domain-based company lookup and write a structural HubSpot association if found.
@@ -140,9 +140,8 @@ For contacts, Lead Source and Lead Source Description are resolved per row from 
 During a contact push, the tool always attempts a domain-based company lookup before writing the contact.
 Logic:
 Use companyDomain (top-level field, from AI resolution) as primary key. Fall back to ziCompanyWebsite if companyDomain is empty.
-Call batchFindCompaniesByDomain against enriched contact domains.
-If one match found: write the contact, then call HubSpot associations API to link contact → company.
-If multiple matches found: associate to the most recently modified company record. Flag in push summary.
+Call batchFindCompaniesByDomain against enriched contact domains (batched search, sorted by `hs_lastmodifieddate` descending; first result per normalized domain wins).
+If a match is found: after contact create/update, call HubSpot associations API (batch, type 279) to link contact → company.
 If no match found: write the contact unassociated. Surface in post-push report.
 Post-push report surfaces two counters:
 "X contacts: company domain present but not found in HubSpot — consider running a company list to backfill"
@@ -181,7 +180,8 @@ ZoomInfo credits and Anthropic costs tied to Casey's accounts — transfer to sh
 
 - Architecture and UX are in a stable, production-usable state for the intended operator workflow.
 - Core refactor goals are complete: hook-based orchestration, step-level component extraction, dynamic imports for heavy screens, batch manual-edit hydration, and defensive bulk row validation.
-- Contact Lead Source behavior is now explicit and controllable through Import Settings + per-row CSV override toggles.
-- The tool is production-stable with no open follow-ups, including bulk polling retry UX, secondary button normalization, bulk stuck-running watchdog (heartbeat + stale detection), field-trust rule visibility, pre-push summary, upload column mapping, and related pipeline reliability improvements.
+- Contact Lead Source behavior is explicit and controllable through Import Settings + per-row CSV override toggles (live HubSpot enum fetch with hardcoded fallback).
+- Bulk import runs as a background job (QStash + Redis); event lists run in the browser with streaming progress.
+- HubSpot contact push uses batched email/domain matching; large net-new lists rely on batched creates rather than per-row CRM search before write. Push route allows up to **120** seconds serverless duration with NDJSON streaming progress.
 
-HubSpot integration health is MEDIUM-HIGH for intended event-list workflows. Residual risk is concentrated in contact identity edge cases rather than pipeline sequencing.
+HubSpot integration health is MEDIUM-HIGH for intended event-list workflows. Residual risk is concentrated in contact identity edge cases (email mismatch, no-email rows) rather than pipeline sequencing. See `docs/CURRENT_STATE.md` and `docs/TECHNICAL_ARCHITECTURE.md` for implementation detail.
