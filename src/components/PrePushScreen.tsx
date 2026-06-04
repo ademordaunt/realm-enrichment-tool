@@ -348,7 +348,17 @@ export function PrePushScreen({
         const data = (await res.json()) as { options: Array<{ label: string; value: string }> };
         if (!res.ok) return;
         if (!cancelled && Array.isArray(data.options)) {
-          setLiveLeadSourceOptions(data.options);
+          // Prefer the known-correct internal value from LEAD_SOURCE_OPTIONS when the
+          // label matches. HubSpot sometimes stores the display label as the option
+          // value (label === value), which would cause rejections on write. The
+          // hardcoded list has the verified internal API values (e.g. "trade_show").
+          const normalized = data.options.map((opt) => {
+            const hardcoded = LEAD_SOURCE_OPTIONS.find(
+              (k) => k.label.trim().toLowerCase() === opt.label.trim().toLowerCase(),
+            );
+            return { label: opt.label, value: hardcoded?.value ?? opt.value };
+          });
+          setLiveLeadSourceOptions(normalized);
         }
       })
       .catch(() => {
