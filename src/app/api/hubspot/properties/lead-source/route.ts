@@ -1,4 +1,5 @@
 import { getHubSpotAccessToken, hubspotFetch } from "@/lib/hubspot/http";
+import { normalizeLeadSourceOptions } from "@/lib/hubspot/lead-source-options";
 
 interface HubSpotPropertyOption {
   label: string;
@@ -33,9 +34,11 @@ export async function GET(): Promise<Response> {
     }
 
     const data = (await res.json()) as HubSpotPropertyResponse;
-    const options = (data.options ?? [])
-      .filter((opt) => !opt.hidden)
-      .map((opt) => ({ label: opt.label, value: opt.value }));
+    const options = normalizeLeadSourceOptions(
+      (data.options ?? [])
+        .filter((opt) => !opt.hidden)
+        .map((opt) => ({ label: opt.label, value: opt.value })),
+    );
 
     return Response.json({ options });
   } catch (err) {

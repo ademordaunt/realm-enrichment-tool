@@ -11,6 +11,11 @@ import type {
 } from "@/lib/utils/types";
 import { FieldTrustRulesSubline } from "@/components/FieldTrustRulesSubline";
 import { ReasoningTooltip } from "@/components/ReasoningTooltip";
+import {
+  LEAD_SOURCE_OPTIONS,
+  leadSourceLabelForValue,
+  type LeadSourceOption,
+} from "@/lib/hubspot/lead-source-options";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 
 const CARD_PANEL =
@@ -34,20 +39,7 @@ const SELECT_WITH_CARET =
 const FOLDER_SELECTION_SESSION_KEY = "realm-selected-hubspot-folder";
 
 
-export const LEAD_SOURCE_OPTIONS: Array<{ label: string; value: string }> = [
-  { label: "Marketing - Advertisement", value: "advertisement" },
-  { label: "Marketing - CisoExecNet", value: "Marketing - CisoExecNet" },
-  { label: "Marketing - CISO XC", value: "Marketing - CISO XC" },
-  { label: "Marketing - Cyalliance", value: "Marketing - Cyalliance" },
-  { label: "Marketing - Cybersecurity Summit", value: "Marketing - Cybersecurity Summit" },
-  { label: "Marketing - ExecWeb", value: "Marketing - ExecWeb" },
-  { label: "Marketing - FutureCon", value: "Marketing - FutureCon" },
-  { label: "Marketing - SageTap", value: "Marketing - SageTap" },
-  { label: "Marketing - Social Media", value: "social_media" },
-  { label: "Marketing - Trade Show", value: "trade_show" },
-  { label: "Marketing - Webinar", value: "Marketing - Webinar" },
-  { label: "Marketing - Website", value: "website" },
-];
+export { LEAD_SOURCE_OPTIONS };
 
 const SUMMARY_TOOLTIP_OVERWRITE = "Overwrites existing HubSpot value";
 const SUMMARY_TOOLTIP_FILL = "Fills empty only — existing value preserved";
@@ -97,11 +89,11 @@ function resolvedLeadSourceDisplay(
   row: EnrichedContact,
   useExisting: boolean,
   globalValue: string,
+  options: LeadSourceOption[],
 ): string {
   if (useExisting) return (row.leadSource ?? "").trim() || "—";
   if (!globalValue.trim()) return "—";
-  const opt = LEAD_SOURCE_OPTIONS.find((o) => o.value === globalValue);
-  return opt?.label ?? globalValue;
+  return leadSourceLabelForValue(globalValue, options) || "—";
 }
 
 function resolvedLeadSourceDescriptionDisplay(
@@ -266,7 +258,7 @@ export function PrePushScreen({
   const [useExistingLeadSource, setUseExistingLeadSource] = useState(false);
   const [useExistingLeadSourceDescription, setUseExistingLeadSourceDescription] = useState(false);
 
-  const [liveLeadSourceOptions, setLiveLeadSourceOptions] = useState<Array<{ label: string; value: string }> | null>(null);
+  const [liveLeadSourceOptions, setLiveLeadSourceOptions] = useState<LeadSourceOption[] | null>(null);
 
   const [folders, setFolders] = useState<{ id: string; name: string }[] | null>(null);
   const [foldersLoading, setFoldersLoading] = useState(true);
@@ -345,20 +337,10 @@ export function PrePushScreen({
     let cancelled = false;
     void fetch("/api/hubspot/properties/lead-source")
       .then(async (res) => {
-        const data = (await res.json()) as { options: Array<{ label: string; value: string }> };
+        const data = (await res.json()) as { options: LeadSourceOption[] };
         if (!res.ok) return;
         if (!cancelled && Array.isArray(data.options)) {
-          // Prefer the known-correct internal value from LEAD_SOURCE_OPTIONS when the
-          // label matches. HubSpot sometimes stores the display label as the option
-          // value (label === value), which would cause rejections on write. The
-          // hardcoded list has the verified internal API values (e.g. "trade_show").
-          const normalized = data.options.map((opt) => {
-            const hardcoded = LEAD_SOURCE_OPTIONS.find(
-              (k) => k.label.trim().toLowerCase() === opt.label.trim().toLowerCase(),
-            );
-            return { label: opt.label, value: hardcoded?.value ?? opt.value };
-          });
-          setLiveLeadSourceOptions(normalized);
+          setLiveLeadSourceOptions(data.options);
         }
       })
       .catch(() => {
@@ -368,6 +350,8 @@ export function PrePushScreen({
       cancelled = true;
     };
   }, []);
+
+  const leadSourceOptions = liveLeadSourceOptions ?? LEAD_SOURCE_OPTIONS;
 
   const contactRowsForTable = approvedRows as EnrichedContact[];
   const hasExistingLeadSourceValues = useMemo(
@@ -539,7 +523,6 @@ export function PrePushScreen({
                 ) : null}
                 <SelectCaretWrap>
                   {(() => {
-                    const optionsToRender = liveLeadSourceOptions ?? LEAD_SOURCE_OPTIONS;
                     return (
                       <select
                         className={`${SELECT_WITH_CARET} ${useExistingLeadSource ? "opacity-60" : ""}`}
@@ -549,7 +532,7 @@ export function PrePushScreen({
                         required
                       >
                         <option value="">Select lead source</option>
-                        {optionsToRender.map((opt) => (
+                        {leadSourceOptions.map((opt) => (
                           <option key={opt.value} value={opt.value}>
                             {opt.label}
                           </option>
@@ -710,6 +693,7 @@ export function PrePushScreen({
                                 row,
                                 useExistingLeadSource,
                                 leadSource,
+                                leadSourceOptions,
                               )}
                             </span>
                           </CoreTd>
